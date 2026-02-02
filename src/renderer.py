@@ -248,23 +248,28 @@ class SimulationWindow(arcade.Window):
         # Reset physics accumulator
         self.physics_accumulator = 0.0
         
-        # Load Track Telemetry
-        raw_coords = self.track_service.get_track_layout()
-        
-        # Reverted B-Spline Downsampling due to stability issues (cars flying off track)
-        # We go back to using raw_coords directly.
         from src.utils import fit_to_screen, generate_track_walls
         
-        # Fit track to screen (accounting for sidebar)
-        # Use available width: screen width (removed sidebar offset)
-        available_width = self.width
-        # Reduced padding to Make Map Bigger
-        self.track_points, scale, min_pt, offset = fit_to_screen(raw_coords, available_width, self.height, padding=20)
+        # ===== LOAD TRACK DATA =====
+        # Use telemetry for BOTH track and ghost car to ensure alignment
+        raw_coords = self.track_service.get_telemetry_track_layout()
+        print(f"[TRACK] Using telemetry track layout ({len(raw_coords)} points)")
         
-        # Procedurally Generate Walls
+        # ===== FIT TO SCREEN =====
+        available_width = self.width
+        self.track_points, scale, min_pt, offset = fit_to_screen(
+            raw_coords, available_width, self.height, padding=20
+        )
+        
+        # Store transformation for Ghost Car (same as track)
+        self._scale = scale
+        self._min_pt = min_pt
+        self._offset = offset
+        
+        # ===== GENERATE WALLS =====
         self.inner_wall, self.outer_wall = generate_track_walls(self.track_points, track_width=TRACK_WIDTH)
         
-        # Create Shapely LineStrings for collisions (legacy fallback)
+        # Create Shapely LineStrings for collisions
         if len(self.inner_wall) > 1:
             self.inner_wall_ls = LineString(self.inner_wall + [self.inner_wall[0]])
             self.outer_wall_ls = LineString(self.outer_wall + [self.outer_wall[0]])
@@ -272,7 +277,7 @@ class SimulationWindow(arcade.Window):
         # PERFORMANCE: Create Spatial Hash for O(1) raycasting
         from src.spatial_hash import SpatialHash
         self.spatial_hash = SpatialHash(cell_size=50.0)
-        self.spatial_hash.add_wall(self.inner_wall + [self.inner_wall[0]])  # Close the loop
+        self.spatial_hash.add_wall(self.inner_wall + [self.inner_wall[0]])
         self.spatial_hash.add_wall(self.outer_wall + [self.outer_wall[0]])
         print(f"[PERF] SpatialHash built with {len(self.spatial_hash.grid)} cells")
         
@@ -285,23 +290,22 @@ class SimulationWindow(arcade.Window):
             self.track_ls = None
             self.track_length = 0.0
 
-        # GHOST CAR: Lewis Hamilton
+        # ===== GHOST CAR =====
         print("Fetching Lewis Hamilton's Ghost Data...")
         raw_trajectory = self.track_service.get_fastest_lap_trajectory()
         
-        # Transform trajectory to match track alignment
+        # Transform trajectory using SAME transformation as track
         # Formula: (P - min_pt) * scale + offset
         trajectory = []
         for x, y, t in raw_trajectory:
-            tx = (x - min_pt[0]) * scale + offset[0]
-            ty = (y - min_pt[1]) * scale + offset[1]
+            tx = (x - self._min_pt[0]) * self._scale + self._offset[0]
+            ty = (y - self._min_pt[1]) * self._scale + self._offset[1]
             trajectory.append([tx, ty, t])
             
-        # SMOOTH TRAJECTORY: Apply light smoothing (60Hz data is already clean from resampling)
+        # SMOOTH TRAJECTORY
         if len(trajectory) > 10:
             from src.utils import smooth_coords
             coords_only = [[p[0], p[1]] for p in trajectory]
-            # Minimal window (3) to avoid introducing lag - 60Hz data is already smooth
             smoothed_pts = smooth_coords(coords_only, window_size=3)
             for i in range(len(trajectory)):
                 trajectory[i][0] = smoothed_pts[i][0]
@@ -316,6 +320,8 @@ class SimulationWindow(arcade.Window):
 
         self.is_loading = False
         print("Setup complete.")
+
+
 
     def spawn_population(self, brains=None):
         """Spawns a new generation of cars."""

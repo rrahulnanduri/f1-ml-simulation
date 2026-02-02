@@ -2,13 +2,18 @@
 Track Service using FastF1 and MVPAPI (MultiViewer) as suggested by user.
 """
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List, Tuple
 import fastf1
 import fastf1.mvapi.api
 import numpy as np
 import pandas as pd
 import os
-import arcade
+import json
+from rapidfuzz import fuzz, process
+
+# Additional rotation (degrees) to convert portrait tracks to landscape
+# Set to 0 for now - the track should already have correct orientation from MVAPI
+LANDSCAPE_ROTATION = 0.0
 
 @dataclass
 class CircuitInfo:
@@ -17,12 +22,41 @@ class CircuitInfo:
     marshal_sectors: pd.DataFrame
     rotation: float
 
+# Mapping from FastF1 GP names to GeoJSON circuit names
+CIRCUIT_NAME_MAP = {
+    'British Grand Prix': 'Silverstone Circuit',
+    'Monaco Grand Prix': 'Circuit de Monaco',
+    'Italian Grand Prix': 'Monza Circuit',
+    'Belgian Grand Prix': 'Circuit de Spa-Francorchamps',
+    'Australian Grand Prix': 'Albert Park Circuit',
+    'Bahrain Grand Prix': 'Bahrain International Circuit',
+    'Saudi Arabian Grand Prix': 'Jeddah Corniche Circuit',
+    'Japanese Grand Prix': 'Suzuka International Racing Course',
+    'Chinese Grand Prix': 'Shanghai International Circuit',
+    'Miami Grand Prix': 'Miami International Autodrome',
+    'Emilia Romagna Grand Prix': 'Imola Circuit',
+    'Canadian Grand Prix': 'Circuit Gilles Villeneuve',
+    'Spanish Grand Prix': 'Circuit de Barcelona-Catalunya',
+    'Austrian Grand Prix': 'Red Bull Ring',
+    'Hungarian Grand Prix': 'Hungaroring',
+    'Dutch Grand Prix': 'Circuit Zandvoort',
+    'Azerbaijan Grand Prix': 'Baku City Circuit',
+    'Singapore Grand Prix': 'Marina Bay Street Circuit',
+    'United States Grand Prix': 'Circuit of the Americas',
+    'Mexico City Grand Prix': 'Autódromo Hermanos Rodríguez',
+    'São Paulo Grand Prix': 'Interlagos Circuit',
+    'Las Vegas Grand Prix': 'Las Vegas Strip Circuit',
+    'Qatar Grand Prix': 'Lusail International Circuit',
+    'Abu Dhabi Grand Prix': 'Yas Marina Circuit',
+}
+
 class TrackService:
     def __init__(self, year=2024, circuit_key=None, gp_name='Silverstone'):
         self.year = year
         self.circuit_key = circuit_key
         self.gp_name = gp_name
         self.cache_dir = "cache/"
+        self.geojson_path = "data/f1-circuits.geojson"
         
         if not os.path.exists(self.cache_dir):
             os.makedirs(self.cache_dir)
@@ -83,9 +117,113 @@ class TrackService:
         
         return CircuitInfo(corners=corners_df, marshal_lights=pd.DataFrame(), marshal_sectors=pd.DataFrame(), rotation=rotation)
 
-    def get_track_layout(self):
+    def _find_circuit_in_geojson(self, geojson_data: dict) -> Optional[dict]:
         """
-        Fallback to telemetry if needed, or use the MVAPI data to construct spacing.
+        Find the matching circuit in GeoJSON using fuzzy matching.
+        """
+        # First try exact mapping
+        mapped_name = CIRCUIT_NAME_MAP.get(self.gp_name)
+        
+        # Get all circuit names from GeoJSON
+        circuit_names = []
+        for feature in geojson_data.get('features', []):
+            name = feature.get('properties', {}).get('Name', '')
+            location = feature.get('properties', {}).get('Location', '')
+            circuit_names.append((name, location, feature))
+        
+        # Try exact match first
+        if mapped_name:
+            for name, location, feature in circuit_names:
+                if name.lower() == mapped_name.lower():
+                    print(f"[GEOJSON] Exact match found: {name}")
+                    return feature
+        
+        # Try fuzzy match on GP name
+        search_terms = [self.gp_name, self.gp_name.replace(' Grand Prix', '')]
+        for search_term in search_terms:
+            # Try matching against circuit name
+            name_matches = process.extract(search_term, [n[0] for n in circuit_names], scorer=fuzz.partial_ratio, limit=3)
+            for match_name, score, _ in name_matches:
+                if score > 70:
+                    for name, location, feature in circuit_names:
+                        if name == match_name:
+                            print(f"[GEOJSON] Fuzzy match found: {name} (score: {score})")
+                            return feature
+            
+            # Try matching against location
+            location_matches = process.extract(search_term, [n[1] for n in circuit_names], scorer=fuzz.partial_ratio, limit=3)
+            for match_loc, score, _ in location_matches:
+                if score > 70:
+                    for name, location, feature in circuit_names:
+                        if location == match_loc:
+                            print(f"[GEOJSON] Location match found: {name} @ {location} (score: {score})")
+                            return feature
+        
+        print(f"[GEOJSON] No match found for: {self.gp_name}")
+        return None
+
+    def get_fixed_track_layout(self) -> Optional[List[Tuple[float, float]]]:
+        """
+        Load fixed track layout from GeoJSON file.
+        Returns list of (x, y) coordinates in meters, or None if not found.
+        """
+        import pickle
+        from src.utils import convert_lat_lon_to_xy
+        
+        # Try cache first
+        cache_key = f"fixed_track_{self.gp_name.replace(' ', '_')}.pkl"
+        cache_path = os.path.join(self.cache_dir, cache_key)
+        
+        if os.path.exists(cache_path):
+            print(f"[CACHE HIT] Loading fixed track layout from {cache_key}")
+            with open(cache_path, 'rb') as f:
+                return pickle.load(f)
+        
+        # Load GeoJSON
+        if not os.path.exists(self.geojson_path):
+            print(f"[ERROR] GeoJSON file not found: {self.geojson_path}")
+            return None
+        
+        with open(self.geojson_path, 'r') as f:
+            geojson_data = json.load(f)
+        
+        # Find matching circuit
+        circuit_feature = self._find_circuit_in_geojson(geojson_data)
+        if not circuit_feature:
+            print(f"[WARN] Circuit not found in GeoJSON, falling back to telemetry")
+            return None
+        
+        # Extract coordinates (lon, lat format in GeoJSON)
+        coords = circuit_feature.get('geometry', {}).get('coordinates', [])
+        if not coords:
+            print(f"[ERROR] No coordinates in GeoJSON feature")
+            return None
+        
+        # Convert lat/lon to XY (meters)
+        # Use first point as origin
+        origin_lon, origin_lat = coords[0][0], coords[0][1]
+        
+        xy_coords = []
+        for lon, lat in coords:
+            x, y = convert_lat_lon_to_xy(lat, lon, origin_lat, origin_lon)
+            xy_coords.append((x, y))
+        
+        # Close the loop if not already closed
+        if xy_coords[0] != xy_coords[-1]:
+            xy_coords.append(xy_coords[0])
+        
+        print(f"[GEOJSON] Loaded {len(xy_coords)} points for {self.gp_name}")
+        
+        # Save to cache
+        with open(cache_path, 'wb') as f:
+            pickle.dump(xy_coords, f)
+        print(f"[CACHE SAVE] Saved fixed track layout to {cache_key}")
+        
+        return xy_coords
+
+    def get_telemetry_track_layout(self):
+        """
+        Get track layout from fastest lap telemetry.
         Uses pickle caching for faster subsequent loads.
         """
         import pickle
@@ -108,12 +246,15 @@ class TrackService:
         x = tel['X'].values
         y = tel['Y'].values
         
-        # rotation
+        # rotation from MVAPI
         circuit_info = self.load_circuit_info()
         rotation_deg = circuit_info.rotation if circuit_info else 0.0
         
+        # Add landscape rotation to convert portrait to landscape
+        total_rotation = rotation_deg + LANDSCAPE_ROTATION
+        
         # Apply rotation
-        theta = np.radians(rotation_deg)
+        theta = np.radians(total_rotation)
         c, s = np.cos(theta), np.sin(theta)
         
         # Rotate coordinates
@@ -128,6 +269,16 @@ class TrackService:
         print(f"[CACHE SAVE] Saved track layout to {cache_key}")
         
         return result
+
+    def get_track_layout(self):
+        """
+        Get track layout - tries fixed map first, falls back to telemetry.
+        """
+        fixed_layout = self.get_fixed_track_layout()
+        if fixed_layout:
+            return fixed_layout
+        return self.get_telemetry_track_layout()
+
 
     def get_fastest_lap_trajectory(self):
         """
@@ -166,12 +317,13 @@ class TrackService:
         t_raw = tel['Time'].dt.total_seconds().values
         t = t_raw - t_raw[0] # RELATIVE TO LAP START
         
-        # rotation
+        # rotation from MVAPI + landscape
         circuit_info = self.load_circuit_info()
         rotation_deg = circuit_info.rotation if circuit_info else 0.0
+        total_rotation = rotation_deg + LANDSCAPE_ROTATION
         
         # Apply rotation
-        theta = np.radians(rotation_deg)
+        theta = np.radians(total_rotation)
         c, s = np.cos(theta), np.sin(theta)
         
         # Rotate coordinates
