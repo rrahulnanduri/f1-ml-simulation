@@ -208,6 +208,21 @@ class TrackService:
             x, y = convert_lat_lon_to_xy(lat, lon, origin_lat, origin_lon)
             xy_coords.append((x, y))
         
+        # Apply same rotation as telemetry uses (from MVAPI)
+        circuit_info = self.load_circuit_info()
+        rotation_deg = circuit_info.rotation if circuit_info else 0.0
+        
+        if rotation_deg != 0:
+            theta = np.radians(rotation_deg)
+            c, s = np.cos(theta), np.sin(theta)
+            rotated_coords = []
+            for x, y in xy_coords:
+                x_rot = x * c - y * s
+                y_rot = x * s + y * c
+                rotated_coords.append((x_rot, y_rot))
+            xy_coords = rotated_coords
+            print(f"[GEOJSON] Applied rotation: {rotation_deg}°")
+        
         # Close the loop if not already closed
         if xy_coords[0] != xy_coords[-1]:
             xy_coords.append(xy_coords[0])

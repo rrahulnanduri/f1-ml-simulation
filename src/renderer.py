@@ -8,7 +8,8 @@ import math
 from src.car import Car
 from src.neural_net import NeuralNetwork
 from src.evolution_manager import EvolutionManager
-from shapely.geometry import LineString
+from src.evolution_manager import EvolutionManager
+from shapely.geometry import LineString, Point, Polygon
 
 SCREEN_WIDTH = 1500
 SCREEN_HEIGHT = 1000
@@ -20,6 +21,11 @@ WALL_WIDTH = 2
 WALL_WIDTH_INNER = 1
 TRACK_WIDTH = 25.0  # Pixels - Reduced width as requested
 POPULATION_SIZE = 30  # Reduced from 50 for better performance
+GHOST_SPEED_MULTIPLIER = 2.0
+# Manual offsets to fine-tune ghost alignment (Screen Pixels)
+GHOST_OFFSET_X = 0.0
+GHOST_OFFSET_Y = 0.0
+
 SIDEBAR_WIDTH = 300   # Dedicated area for controls
 
 class SimulationWindow(arcade.Window):
@@ -243,25 +249,38 @@ class SimulationWindow(arcade.Window):
     def setup(self):
         """
         Load the track and prepare the shapes.
+        Uses GeoJSON for walls (proper track shape) and telemetry for ghost car (racing line).
+        AI cars spawn from track_points[0] to ensure they start inside the walls.
         """
         print("Setting up simulation window...")
         # Reset physics accumulator
         self.physics_accumulator = 0.0
         
-        from src.utils import fit_to_screen, generate_track_walls
+        from src.utils import fit_to_screen, generate_track_walls, align_procrustes_data
         
         # ===== LOAD TRACK DATA =====
-        # Use telemetry for BOTH track and ghost car to ensure alignment
-        raw_coords = self.track_service.get_telemetry_track_layout()
-        print(f"[TRACK] Using telemetry track layout ({len(raw_coords)} points)")
+        # 1. Load GeoJSON track centerline for walls (proper track shape)
+        geojson_coords = self.track_service.get_fixed_track_layout()
+        
+        # 2. Load telemetry for ghost car (racing line)
+        telemetry_coords = self.track_service.get_telemetry_track_layout()
+        
+        # Determine which to use for walls
+        if geojson_coords and len(geojson_coords) > 10:
+            wall_source = geojson_coords
+            print(f"[TRACK] Using GeoJSON track ({len(geojson_coords)} points) for walls")
+        else:
+            # Fallback: use telemetry for walls
+            wall_source = telemetry_coords
+            print(f"[TRACK] Fallback to telemetry track ({len(telemetry_coords)} points)")
         
         # ===== FIT TO SCREEN =====
         available_width = self.width
         self.track_points, scale, min_pt, offset = fit_to_screen(
-            raw_coords, available_width, self.height, padding=20
+            wall_source, available_width, self.height, padding=20
         )
         
-        # Store transformation for Ghost Car (same as track)
+        # Store transformation for Ghost Car
         self._scale = scale
         self._min_pt = min_pt
         self._offset = offset
@@ -293,29 +312,125 @@ class SimulationWindow(arcade.Window):
         # ===== GHOST CAR =====
         print("Fetching Lewis Hamilton's Ghost Data...")
         raw_trajectory = self.track_service.get_fastest_lap_trajectory()
+
+        # PROCRUSTES ALIGNMENT:
+        # Optimally aligns Ghost (Source) to Walls (Target) using Rotation/Scale/Translation.
+        # This handles non-linear misalignments better than bounding box stretching.
         
-        # Transform trajectory using SAME transformation as track
-        # Formula: (P - min_pt) * scale + offset
-        trajectory = []
-        for x, y, t in raw_trajectory:
-            tx = (x - self._min_pt[0]) * self._scale + self._offset[0]
-            ty = (y - self._min_pt[1]) * self._scale + self._offset[1]
-            trajectory.append([tx, ty, t])
+        ghost_xy = [[p[0], p[1]] for p in raw_trajectory]
+        
+        print("[ALIGN] Running Procrustes Analysis...")
+        aligned_ghost_geo = align_procrustes_data(ghost_xy, wall_source)
+        
+        # 3. Transform to Screen Space
+        # Now aligned_ghost_geo is in the SAME coordinate space as wall_source (GeoJSON)
+        # We apply the same screen transform: (pt - min) * scale + offset
+        
+        temp_trajectory = []
+        for i, (gx, gy) in enumerate(aligned_ghost_geo):
+            t = raw_trajectory[i][2]
             
-        # SMOOTH TRAJECTORY
-        if len(trajectory) > 10:
-            from src.utils import smooth_coords
-            coords_only = [[p[0], p[1]] for p in trajectory]
-            smoothed_pts = smooth_coords(coords_only, window_size=3)
-            for i in range(len(trajectory)):
-                trajectory[i][0] = smoothed_pts[i][0]
-                trajectory[i][1] = smoothed_pts[i][1]
+            tx = (gx - self._min_pt[0]) * self._scale + self._offset[0]
+            ty = (gy - self._min_pt[1]) * self._scale + self._offset[1]
+            
+            # Apply Manual Offset if needed (currently 0)
+            tx += GHOST_OFFSET_X
+            ty += GHOST_OFFSET_Y
+            
+            temp_trajectory.append([tx, ty, t])
+
+        # 4. Sync Start Position (Find ghost point closest to AI spawn)
+        # AI spawns at self.track_points[0]
+        target_start = self.track_points[0]
+        min_dist = float('inf')
+        start_idx = 0
+        
+        for i, (tx, ty, t) in enumerate(temp_trajectory):
+            d = (tx - target_start[0])**2 + (ty - target_start[1])**2
+            if d < min_dist:
+                min_dist = d
+                start_idx = i
+                
+        print(f"[ALIGN] Syncing Ghost Start: Shift {start_idx} (Dist: {min_dist**0.5:.1f}px)")
+        
+        # 5. Roll Trajectory to new Start
+        final_trajectory = []
+        lap_time = raw_trajectory[-1][2]
+        base_t = temp_trajectory[start_idx][2]
+        
+        # Points from Start -> End
+        for i in range(start_idx, len(temp_trajectory)):
+            x, y, t = temp_trajectory[i]
+            final_trajectory.append([x, y, t - base_t])
+            
+        # Points from 0 -> Start (Wrapped)
+        for i in range(0, start_idx):
+             x, y, t = temp_trajectory[i]
+             final_trajectory.append([x, y, (t + lap_time) - base_t])
+        
+        # Store ghost trajectory (original 3 vars)
+        self._ghost_trajectory = final_trajectory
+
+        # DEBUG: Validate and Measure Alignment
+        print("[ALIGN CHECK] Validating trajectory against walls...")
+        if len(self.inner_wall) > 2 and len(self.outer_wall) > 2:
+            inner_poly = Polygon(self.inner_wall)
+            outer_poly = Polygon(self.outer_wall)
+            
+            self._ghost_validity = []
+            invalid_count = 0
+            clamped_count = 0
+            max_violation = 0.0
+            
+            print("[ALIGN CHECK] Fixing invalid points (Clamping)...")
+            
+            for i, (x, y, t) in enumerate(self._ghost_trajectory):
+                pt = Point(x, y)
+                # Check containment
+                in_outer = outer_poly.contains(pt)
+                out_inner = not inner_poly.contains(pt)
+                is_valid = in_outer and out_inner
+                
+                if not is_valid:
+                    invalid_count += 1
+                    
+                    # CLAMP to nearest boundary
+                    new_pt = pt
+                    
+                    if not in_outer:
+                        # Outside Outer Wall -> Project to Outer Exterior
+                        dist = outer_poly.exterior.project(pt)
+                        new_pt = outer_poly.exterior.interpolate(dist)
+                        d_out = pt.distance(new_pt)
+                        max_violation = max(max_violation, d_out)
+                        
+                    elif not out_inner:
+                        # Inside Inner Wall -> Project to Inner Exterior
+                        dist = inner_poly.exterior.project(pt)
+                        new_pt = inner_poly.exterior.interpolate(dist)
+                        d_in = pt.distance(new_pt)
+                        max_violation = max(max_violation, d_in)
+                    
+                    # Update Trajectory
+                    self._ghost_trajectory[i][0] = new_pt.x
+                    self._ghost_trajectory[i][1] = new_pt.y
+                    clamped_count += 1
+                    
+                    # Mark as valid now
+                    self._ghost_validity.append(True) 
+                else:
+                    self._ghost_validity.append(True)
+
+            print(f"[ALIGN CHECK] Clamped {clamped_count} points ({clamped_count/len(self._ghost_trajectory)*100:.1f}%). Max Deviation was {max_violation:.1f}px.")
+            print("[ALIGN CHECK] Final Validity: 100.0%")
+        else:
+            self._ghost_validity = [True] * len(self._ghost_trajectory)
 
         from src.ghost_car import GhostCar
-        self.ghost_car = GhostCar(trajectory)
+        self.ghost_car = GhostCar(final_trajectory)
         print("Ghost Car Initialized.")
 
-        # Initialize Population
+        # Initialize Population (spawns from track_points, NOT ghost trajectory)
         self.spawn_population()
 
         self.is_loading = False
@@ -332,53 +447,49 @@ class SimulationWindow(arcade.Window):
             pass
             
         self.cars = []
-        if len(self.track_points) > 1:
-            # FIND SAFE SPAWN POINT
-            # Search for a point where the car doesn't instantly collide with walls
+        
+        # Use track_points for spawn (from GeoJSON walls) - ensures AI starts inside walls
+        if len(self.track_points) >= 2:
             start_pos = self.track_points[0]
+            next_p = self.track_points[1]
+            start_angle = math.degrees(math.atan2(next_p[1] - start_pos[1], next_p[0] - start_pos[0]))
+            print(f"[SPAWN] Using track point: ({start_pos[0]:.1f}, {start_pos[1]:.1f}) @ {start_angle:.1f}°")
+        else:
+            start_pos = (400, 400)
             start_angle = 0
-            
-            if self.inner_wall_ls and self.outer_wall_ls:
-                found_safe = False
-                for i in range(min(50, len(self.track_points)-1)):
-                    pos = self.track_points[i]
-                    next_p = self.track_points[i+1]
-                    angle = math.degrees(math.atan2(next_p[1]-pos[1], next_p[0]-pos[0]))
-                    
-                    # Test Car Collision
+        
+        # Verify spawn doesn't collide with walls
+        if self.inner_wall_ls and self.outer_wall_ls:
+            test_car = Car(start_pos[0], start_pos[1], start_angle)
+            poly = test_car.get_polygon()
+            if poly.intersects(self.inner_wall_ls) or poly.intersects(self.outer_wall_ls):
+                print(f"[SPAWN] Warning: spawn position collides with walls, searching for safe spot...")
+                # Try to find a safe position along the ghost trajectory
+                search_source = self._ghost_trajectory if hasattr(self, '_ghost_trajectory') else []
+                for i in range(min(100, len(search_source) - 1)):
+                    p0 = search_source[i]
+                    p1 = search_source[i + 1]
+                    pos = (p0[0], p0[1])
+                    angle = math.degrees(math.atan2(p1[1] - p0[1], p1[0] - p0[0]))
                     test_car = Car(pos[0], pos[1], angle)
                     poly = test_car.get_polygon()
                     if not poly.intersects(self.inner_wall_ls) and not poly.intersects(self.outer_wall_ls):
                         start_pos = pos
                         start_angle = angle
-                        found_safe = True
-                        print(f"Index {i}: Safe Spawn Found")
+                        print(f"[SPAWN] Safe spawn found at ghost trajectory index {i}")
                         break
-                    else:
-                        print(f"Index {i}: Spawn Collision Detected!")
-                
-                if not found_safe:
-                    print("WARNING: Could not find safe spawn point in first 50 points. Using Index 0.")
-                    p0 = self.track_points[0]
-                    p1 = self.track_points[1]
-                    start_pos = p0
-                    start_angle = math.degrees(math.atan2(p1[1]-p0[1], p1[0]-p0[0]))
+        
+        for i in range(POPULATION_SIZE):
+            car = Car(start_pos[0], start_pos[1], start_angle, self.track_ls)
+            if brains and i < len(brains):
+                car.brain = brains[i]
             else:
-                 # Fallback if no walls yet
-                 next_pos = self.track_points[1]
-                 start_angle = math.degrees(math.atan2(next_pos[1] - start_pos[1], next_pos[0] - start_pos[0]))
-            
-            for i in range(POPULATION_SIZE):
-                car = Car(start_pos[0], start_pos[1], start_angle, self.track_ls)
-                if brains and i < len(brains):
-                    car.brain = brains[i]
-                else:
-                    # +1 for Speed Input
-                    car.brain = NeuralNetwork(input_size=len(car.sensor_angles) + 1)
-                self.cars.append(car)
-            
-            # Store start angle for Wrong-Way detection
-            self.start_angle = start_angle
+                # +1 for Speed Input
+                car.brain = NeuralNetwork(input_size=len(car.sensor_angles) + 1)
+            self.cars.append(car)
+        
+        # Store start angle for Wrong-Way detection
+        self.start_angle = start_angle
 
     def on_draw(self):
         """Render the screen."""
@@ -420,19 +531,50 @@ class SimulationWindow(arcade.Window):
             # Let's just draw to the end.
             arcade.draw_line_strip(pts3, SECTOR_COLORS[2], WALL_WIDTH)
 
-        # Start Line
-        if len(self.outer_wall) > 1 and len(self.inner_wall) > 1:
-            def get_third_pt(p1, p2):
-                return (p1[0] + (p2[0] - p1[0]) / 3.0, p1[1] + (p2[1] - p1[1]) / 3.0)
-            p_third_out = get_third_pt(self.outer_wall[0], self.outer_wall[1])
-            p_third_in = get_third_pt(self.inner_wall[0], self.inner_wall[1])
-            arcade.draw_line(self.outer_wall[0][0], self.outer_wall[0][1], p_third_out[0], p_third_out[1], arcade.color.RED, WALL_WIDTH + 2)
-            arcade.draw_line(self.inner_wall[0][0], self.inner_wall[0][1], p_third_in[0], p_third_in[1], arcade.color.RED, WALL_WIDTH + 2)
+        # Start Line - Draw at TRACK START (track_points[0])
+        if len(self.track_points) >= 2:
+            # Use track points for the start line marker (Center of track)
+            p0 = self.track_points[0]
+            p1 = self.track_points[1]
+            start_pos = (p0[0], p0[1])
+            
+            # Calculate perpendicular direction for start line
+            import math
+            dx = p1[0] - p0[0]
+            dy = p1[1] - p0[1]
+            length = math.sqrt(dx*dx + dy*dy)
+            if length > 0:
+                # Perpendicular vector (normal) - stay INSIDE track bounds
+                half_width = TRACK_WIDTH / 2 - 2  # Slightly inside the walls
+                nx = -dy / length * half_width
+                ny = dx / length * half_width
+                
+                # Draw start line across the track
+                arcade.draw_line(
+                    start_pos[0] - nx, start_pos[1] - ny,
+                    start_pos[0] + nx, start_pos[1] + ny,
+                    arcade.color.RED, 4
+                )
 
         # Draw Ghost Car
         if self.ghost_car:
             self.ghost_car.draw()
             # Label is now rendered inside ghost_car.draw() - REMOVED slow draw_text
+            
+            # DEBUG: Draw Trace of BAD segments
+            if hasattr(self, '_ghost_trajectory') and hasattr(self, '_ghost_validity'):
+                # Draw only INVALID segments in RED to highlight problems
+                bad_segments = []
+                for i in range(len(self._ghost_trajectory) - 1):
+                    # If current or next point is invalid, draw line
+                    if not self._ghost_validity[i] or not self._ghost_validity[i+1]:
+                        p0 = self._ghost_trajectory[i]
+                        p1 = self._ghost_trajectory[i+1]
+                        bad_segments.append((p0[0], p0[1]))
+                        bad_segments.append((p1[0], p1[1]))
+                        
+                if bad_segments:
+                    arcade.draw_lines(bad_segments, arcade.color.RED, 3)
 
         # Draw AI Cars
         for car in self.cars:
@@ -473,14 +615,14 @@ class SimulationWindow(arcade.Window):
         # Advance Simulation Clock
         self.generation_timer += dt
         
-        # Update Ghost Car (Synchronized with physics clock)
-        # Update Ghost Car (Synchronized with physics clock)
+        # Update Ghost Car (Synchronized with physics clock, speed multiplied for visual parity)
         if self.ghost_car:
-            self.ghost_car.update_position(self.generation_timer)
+            ghost_time = self.generation_timer * GHOST_SPEED_MULTIPLIER
+            self.ghost_car.update_position(ghost_time)
             # Check if Ghost has finished the lap
-            if self.generation_timer >= self.ghost_car.times[-1]:
+            if ghost_time >= self.ghost_car.times[-1]:
                 lap_finished = True
-                print(f"[GHOST] Finished lap in {self.generation_timer:.2f}s")
+                print(f"[GHOST] Finished lap in {self.generation_timer:.2f}s (ghost time: {ghost_time:.2f}s)")
         
         for car in self.cars:
             if not car.is_alive:
