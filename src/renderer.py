@@ -22,9 +22,6 @@ WALL_WIDTH_INNER = 1
 TRACK_WIDTH = 25.0  # Pixels - Reduced width as requested
 POPULATION_SIZE = 30  # Reduced from 50 for better performance
 GHOST_SPEED_MULTIPLIER = 2.0
-# Manual offsets to fine-tune ghost alignment (Screen Pixels)
-GHOST_OFFSET_X = 0.0
-GHOST_OFFSET_Y = 0.0
 
 SIDEBAR_WIDTH = 300   # Dedicated area for controls
 
@@ -256,7 +253,7 @@ class SimulationWindow(arcade.Window):
         # Reset physics accumulator
         self.physics_accumulator = 0.0
         
-        from src.utils import fit_to_screen, generate_track_walls, align_procrustes_data
+        from src.utils import fit_to_screen, generate_track_walls
         
         # ===== LOAD TRACK DATA =====
         # 1. Load GeoJSON track centerline for walls (proper track shape)
@@ -266,13 +263,18 @@ class SimulationWindow(arcade.Window):
         telemetry_coords = self.track_service.get_telemetry_track_layout()
         
         # Determine which to use for walls
-        if geojson_coords and len(geojson_coords) > 10:
-            wall_source = geojson_coords
-            print(f"[TRACK] Using GeoJSON track ({len(geojson_coords)} points) for walls")
-        else:
-            # Fallback: use telemetry for walls
+        # TELEMETRY-FIRST: Use telemetry as wall source so ghost and walls share
+        # the same coordinate system, eliminating cross-source alignment issues.
+        if telemetry_coords and len(telemetry_coords) > 10:
             wall_source = telemetry_coords
-            print(f"[TRACK] Fallback to telemetry track ({len(telemetry_coords)} points)")
+            print(f"[TRACK] Using telemetry track ({len(telemetry_coords)} points) for walls")
+        elif geojson_coords and len(geojson_coords) > 10:
+            # Fallback: use GeoJSON if telemetry unavailable
+            wall_source = geojson_coords
+            print(f"[TRACK] Fallback to GeoJSON track ({len(geojson_coords)} points)")
+        else:
+            wall_source = telemetry_coords or geojson_coords
+            print(f"[TRACK] Using available track data ({len(wall_source)} points)")
         
         # ===== FIT TO SCREEN =====
         available_width = self.width
@@ -313,29 +315,18 @@ class SimulationWindow(arcade.Window):
         print("Fetching Lewis Hamilton's Ghost Data...")
         raw_trajectory = self.track_service.get_fastest_lap_trajectory()
 
-        # PROCRUSTES ALIGNMENT:
-        # Optimally aligns Ghost (Source) to Walls (Target) using Rotation/Scale/Translation.
-        # This handles non-linear misalignments better than bounding box stretching.
+        # DIRECT COORDINATE TRANSFORM:
+        # Since walls and ghost now share the same telemetry coordinate system,
+        # we simply apply the same fit_to_screen transform (no Procrustes needed).
         
         ghost_xy = [[p[0], p[1]] for p in raw_trajectory]
         
-        print("[ALIGN] Running Procrustes Analysis...")
-        aligned_ghost_geo = align_procrustes_data(ghost_xy, wall_source)
-        
-        # 3. Transform to Screen Space
-        # Now aligned_ghost_geo is in the SAME coordinate space as wall_source (GeoJSON)
-        # We apply the same screen transform: (pt - min) * scale + offset
+        print("[ALIGN] Using direct transform (same coordinate system)")
         
         temp_trajectory = []
-        for i, (gx, gy) in enumerate(aligned_ghost_geo):
-            t = raw_trajectory[i][2]
-            
-            tx = (gx - self._min_pt[0]) * self._scale + self._offset[0]
-            ty = (gy - self._min_pt[1]) * self._scale + self._offset[1]
-            
-            # Apply Manual Offset if needed (currently 0)
-            tx += GHOST_OFFSET_X
-            ty += GHOST_OFFSET_Y
+        for i, (x, y, t) in enumerate(raw_trajectory):
+            tx = (x - self._min_pt[0]) * self._scale + self._offset[0]
+            ty = (y - self._min_pt[1]) * self._scale + self._offset[1]
             
             temp_trajectory.append([tx, ty, t])
 
