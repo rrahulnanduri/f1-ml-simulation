@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -212,6 +213,57 @@ def _cmd_ghost(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_train(args: argparse.Namespace) -> int:
+    import dataclasses
+    import time
+
+    from f1sim.data.track_pipeline import load_track
+    from f1sim.train.trainer import TrainConfig, Trainer, load_train_config
+
+    cfg = load_train_config(Path(args.config)) if args.config else TrainConfig()
+    overrides = {
+        "track_id": args.track,
+        "seed": args.seed,
+        "optimiser": args.optimiser,
+        "max_generations": args.generations,
+        "max_wall_s": None if args.minutes is None else args.minutes * 60.0,
+    }
+    cfg = dataclasses.replace(cfg, **{k: v for k, v in overrides.items() if v is not None})
+    try:
+        track = load_track(cfg.track_id)
+    except FileNotFoundError:
+        print(
+            f"error: {cfg.track_id} isn't built; run `f1sim build-track {cfg.track_id}`",
+            file=sys.stderr,
+        )
+        return 1
+    run_dir = Path(args.run_dir or f"runs/{cfg.track_id}-{time.strftime('%Y%m%d-%H%M%S')}")
+    print(f"training on {track.data.name} -> {run_dir.resolve()}")
+
+    def report(row: dict) -> None:
+        lap = row.get("best_lap_s")
+        lap_ok = lap not in (None, "") and math.isfinite(float(lap))
+        lap_txt = f"{float(lap):7.3f} s" if lap_ok else "      -  "
+        print(
+            f"gen {int(row['gen']):4d}  stage {row['stage']}  {float(row['wall_s']):7.0f} s  "
+            f"best {float(row['best_fitness']):9.1f}  "
+            f"progress {float(row['best_progress_m']):6.0f} m  "
+            f"laps {float(row['completion_rate']):5.1%}  best lap {lap_txt}  "
+            f"sigma {float(row['sigma']):.3f}",
+            flush=True,
+        )
+
+    result = Trainer(track, cfg, run_dir).run(on_generation=report)
+    first = result.first_lap_wall_s
+    print(f"done: {result.generations} generations, stage {result.stage}")
+    print(
+        f"  best lap     {result.best_lap_s:.3f} s" if result.best_lap_s else "  best lap     none"
+    )
+    print(f"  first lap    after {first:.0f} s of training" if first else "  first lap    none")
+    print(f"  replay with  f1sim replay {cfg.track_id} {run_dir}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="f1sim", description=__doc__)
     parser.add_argument("--version", action="version", version=f"f1sim {__version__}")
@@ -247,6 +299,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--centre-line", action="store_true", help="follow the centre line instead")
     p.add_argument("--save", help="write the lap trace to this .npz (for f1sim replay)")
     p.set_defaults(func=_cmd_reference_lap)
+
+    p = sub.add_parser("train", help="train cars by neuroevolution (headless)")
+    p.add_argument("--config", help="training TOML (default: built-in defaults)")
+    p.add_argument("--track", help="track id (default from config: silverstone)")
+    p.add_argument("--minutes", type=float, help="wall-clock limit")
+    p.add_argument("--generations", type=int, help="generation limit")
+    p.add_argument("--seed", type=int)
+    p.add_argument("--optimiser", choices=("ga", "cmaes"))
+    p.add_argument("--run-dir", help="output folder (default: runs/<track>-<timestamp>)")
+    p.set_defaults(func=_cmd_train)
 
     p = sub.add_parser("ghost", help="build a smoothed ghost of a real driver's fastest lap")
     p.add_argument("track_id")
