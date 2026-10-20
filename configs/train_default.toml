@@ -7,8 +7,9 @@ seed = 0                     # one numpy Generator: optimiser seed, then every s
 optimiser = "ga"             # "ga" or "cmaes" (cmaes needs the [es] extra)
 population = 64              # genomes per generation
 episodes_per_genome = 3      # stage-1 episodes per genome (random starts); fitness is the mean
-hidden = [64, 64]            # policy hidden layer sizes (19 -> 64 -> 64 -> 2, tanh)
+hidden = [16, 16]            # policy hidden layer sizes (19 -> 16 -> 16 -> 2, tanh; 626 params)
 sigma0 = 0.1                 # initial mutation / search step size
+sigma_max = 0.15             # GA only: cap on the adaptive mutation step (0.5 scrambled the policy)
 max_generations = 1000       # stop after this many generations ...
 max_wall_s = 1800.0          # ... or this much wall time, whichever comes first
 checkpoint_every = 10        # checkpoint every N generations (and whenever the best improves)
@@ -17,4 +18,4 @@ checkpoint_every = 10        # checkpoint every N generations (and whenever the 
 stage1_episode_s = 30.0           # stage 1: random starts, fitness = progress in metres
 stage1_promote_progress_m = 0.0   # promote when the best mean progress reaches this; 0 = auto (0.8 * stage1_episode_s * 40 m/s)
 stage2_lead_in_m = 80.0           # stage 2: start this far before the line, at min(60, profile speed)
-stage2_time_factor = 1.5          # stage-2 episode cap = factor * T_ref (scripted reference lap)
+stage2_time_factor = 3.0          # stage-2 episode cap = factor * T_ref; generous so slow full laps count

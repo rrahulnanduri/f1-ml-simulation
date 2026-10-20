@@ -98,8 +98,9 @@ class TrainConfig:
     optimiser: str = "ga"
     population: int = 64
     episodes_per_genome: int = 3
-    hidden: tuple[int, ...] = (64, 64)
+    hidden: tuple[int, ...] = (16, 16)
     sigma0: float = 0.1
+    sigma_max: float = 0.15  # GA only: cap on the adaptive mutation step
     max_generations: int = 1000
     max_wall_s: float = 1800.0
     checkpoint_every: int = 10
@@ -107,7 +108,7 @@ class TrainConfig:
     stage1_episode_s: float = 30.0  # random starts, fitness = progress
     stage1_promote_progress_m: float = 0.0  # 0 = auto: 0.8 * (stage1_episode_s * 40 m/s)
     stage2_lead_in_m: float = 80.0  # start this far before the line at reference-profile speed
-    stage2_time_factor: float = 1.5  # episode cap = factor * T_ref
+    stage2_time_factor: float = 3.0  # episode cap = factor * T_ref; generous so slow laps count
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "hidden", tuple(int(h) for h in self.hidden))
@@ -121,6 +122,8 @@ class TrainConfig:
             raise ValueError("checkpoint_every must be >= 0 (0 = only on improvement)")
         if not self.sigma0 > 0:
             raise ValueError("sigma0 must be > 0")
+        if not self.sigma_max > 0:
+            raise ValueError("sigma_max must be > 0")
         if not self.max_wall_s >= 0:
             raise ValueError("max_wall_s must be >= 0")
         if not self.stage1_episode_s > 0:
@@ -332,6 +335,12 @@ class Trainer:
             "sigma0": float(config.sigma0),
             "seed": self.optimiser_seed,
         }
+        if config.optimiser == "ga":
+            # The cap never sits below the starting step
+            kwargs["sigma_max"] = max(float(config.sigma_max), float(config.sigma0))
+        if init is None and config.optimiser == "ga":
+            # Fan-in scaled starting weights rather than the GA's N(0, sigma0) fallback
+            init = self._policy.init_params(self.spec, self.population, self._rng)
         if init is not None:
             kwargs["init"] = np.asarray(init, dtype=np.float32)
         self.optimiser = optimisers.make_optimiser(config.optimiser, self.spec.n_params, **kwargs)
