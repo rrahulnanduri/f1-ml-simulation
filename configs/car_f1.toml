@@ -1,0 +1,16 @@
+# F1 car parameters for f1sim.sim.car_model (SI units). Loaded by load_car_params:
+# keys must be CarParams field names (unknown keys are rejected); missing keys keep defaults.
+# Values are the revamp-plan section 6 starting point, to be tuned in M2 calibration.
+
+length_m = 5.6            # overall car length, m (drawing and footprint only)
+width_m = 2.0             # overall car width, m (drawing and track-limit margin)
+wheelbase_m = 3.6         # front-to-rear axle distance for the kinematic bicycle, m
+max_steer_rad = 0.30      # maximum front-wheel steering angle, rad
+steer_rate_rad_s = 1.5    # maximum steering-angle change rate, rad/s
+power_w = 750e3           # engine + ERS power at the wheels, W
+mass_kg = 800.0           # car + driver mass, kg
+max_drive_g = 1.3         # traction cap on drive acceleration, g
+drag_coeff = 0.0012       # drag deceleration = drag_coeff * v^2, 1/m (top speed ~92 m/s)
+grip_base_g = 1.6         # mechanical grip at zero speed, g
+grip_aero_coeff = 0.00069 # downforce grip growth: a_max = g * (base + coeff * v^2), s^2/m^2
+max_brake_g = 5.5         # braking deceleration cap (also limited by grip), g
