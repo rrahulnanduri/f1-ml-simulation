@@ -51,4 +51,7 @@ select = ["E", "F", "W", "I", "B", "UP", "NPY"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+# src/ first so each git worktree tests its own code, not the editable install
+pythonpath = ["src"]
+addopts = "-ra -m 'not network'"
+markers = ["network: needs internet (FastF1 / GitHub); run with -m network"]
