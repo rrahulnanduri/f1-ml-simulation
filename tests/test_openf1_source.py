@@ -105,6 +105,60 @@ def test_unknown_driver_lists_known_ones(canned):
         o.fastest_lap_xy({"session_key": 1}, "VER")
 
 
+def _car_samples():
+    """car_data records every 0.25 s around the lap, shuffled, with a duplicate and a gap."""
+    out = []
+    for t in np.arange(-2.0, LAP_TIME + 2.0, 0.25):
+        out.append(
+            {
+                "date": (START + timedelta(seconds=float(t))).isoformat(),
+                "speed": 180,
+                "throttle": 100 if t < 30 else 0,
+                "brake": 0 if t < 30 else 100,
+                "n_gear": 7 if t < 30 else 3,
+            }
+        )
+    out.append(dict(out[5]))  # duplicate timestamp
+    out.append({**out[6], "date": (START + timedelta(seconds=99)).isoformat(), "speed": None})
+    return out[::-1]
+
+
+@pytest.fixture
+def canned_car(monkeypatch):
+    drivers = [{**d, "team_name": "Mercedes"} for d in DRIVERS[:1]] + DRIVERS[1:]
+    responses = {"drivers": drivers, "laps": LAPS, "car_data": _car_samples()}
+    calls = []
+
+    def fake_get(endpoint, params, filters=(), max_age_s=None):
+        calls.append((endpoint, params, filters))
+        return responses[endpoint]
+
+    monkeypatch.setattr(o, "_get", fake_get)
+    return calls
+
+
+def test_fastest_lap_car_data_converts_units_and_times(canned_car):
+    car = o.fastest_lap_car_data({"session_key": 9554})
+    assert (car.driver, car.team) == ("RUS", "Mercedes")
+    assert car.t[0] == pytest.approx(-2.0) and car.t[-1] == pytest.approx(LAP_TIME + 1.75)
+    assert np.all(np.diff(car.t) > 0)  # sorted, duplicate and incomplete record dropped
+    assert car.speed_ms == pytest.approx(np.full(car.t.size, 50.0))  # km/h -> m/s
+    before = car.t < 30
+    assert np.all(car.throttle01[before] == 1.0) and np.all(car.throttle01[~before] == 0.0)
+    assert np.all(car.brake01[before] == 0.0) and np.all(car.brake01[~before] == 1.0)
+    assert car.gear.dtype == np.int64 and set(car.gear.tolist()) == {3, 7}
+    # Same date window as the positions, on the car_data endpoint
+    endpoint, params, filters = canned_car[-1]
+    assert endpoint == "car_data" and params == {"session_key": 9554, "driver_number": 63}
+    assert filters[0].startswith("date>=2024-07-06T15:08:46") and filters[1].startswith("date<=")
+
+
+def test_fastest_lap_car_data_for_one_driver_without_team(canned_car):
+    car = o.fastest_lap_car_data({"session_key": 1}, "HAM")
+    assert (car.driver, car.team) == ("HAM", "")
+    assert canned_car[-1][1]["driver_number"] == 44
+
+
 def test_find_session_matches_catalogue_location(monkeypatch):
     sessions = [
         {"session_key": 1, "location": "Imola", "is_cancelled": False},
@@ -147,6 +201,15 @@ def test_get_caches_responses_and_maps_404_to_empty(monkeypatch, tmp_path):
     assert len(hits) == 1
     assert hits[0] == "https://api.openf1.org/v1/laps?session_key=7"
     assert o._get("missing", {}) == []
+
+
+@pytest.mark.network
+def test_silverstone_2024_hamilton_car_data():
+    car = o.fastest_lap_car_data(o.find_session(2024, "silverstone"), "HAM")
+    assert (car.driver, car.team) == ("HAM", "Mercedes")
+    assert car.t[0] < 0.0 and car.t[-1] > 85.99
+    assert 300 / 3.6 < car.speed_ms.max() < 360 / 3.6
+    assert set(car.gear.tolist()) <= set(range(9))
 
 
 @pytest.mark.network

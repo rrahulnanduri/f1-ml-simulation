@@ -19,9 +19,17 @@ import numpy as np
 import pandas as pd
 
 from f1sim import paths
-from f1sim.data.laps import LapXY
+from f1sim.data.laps import CarTrace, LapXY
 
-__all__ = ["EventInfo", "LapXY", "event_schedule", "fastest_lap_xy", "load_session"]
+__all__ = [
+    "CarTrace",
+    "EventInfo",
+    "LapXY",
+    "event_schedule",
+    "fastest_lap_car_data",
+    "fastest_lap_xy",
+    "load_session",
+]
 
 _cache_enabled = False
 
@@ -211,3 +219,76 @@ def fastest_lap_xy(session, driver: str | int | None = None) -> LapXY:
         y_m=y_m,
         sector_end_t=sector_end_t,
     )
+
+
+# ---------------------------------------------------------------- car data (speed, pedals, gear)
+
+
+def _pick_lap(session, driver: str | int | None):
+    """The lap ``fastest_lap_xy`` uses: fastest valid lap, overall or for one driver."""
+    laps = session.laps
+    if driver is None:
+        lap = laps.pick_fastest()
+        if lap is None:
+            raise ValueError(f"No valid timed lap in session {session}")
+        return lap
+    ident = _driver_identifier(driver)
+    drv_laps = laps.pick_drivers(ident)
+    if len(drv_laps) == 0:
+        known = ", ".join(sorted(set(laps["Driver"].dropna().astype(str))))
+        raise ValueError(f"Driver {driver!r} has no laps in {session}. Drivers: {known}")
+    lap = drv_laps.pick_fastest()
+    if lap is None:
+        raise ValueError(f"Driver {driver!r} has no valid timed lap in {session}")
+    return lap
+
+
+def _car_trace(
+    t_s: Any, speed_kmh: Any, throttle: Any, brake: Any, gear: Any, driver: str, team: str
+) -> CarTrace:
+    """Car-data columns -> a ``CarTrace``: sorted, non-finite rows and duplicate times dropped.
+
+    ``speed_kmh`` is km/h, ``throttle`` 0-100 and ``brake`` a switch (bool or 0/100).
+    """
+    cols = [np.asarray(c, dtype=np.float64) for c in (t_s, speed_kmh, throttle, brake, gear)]
+    ok = np.logical_and.reduce([np.isfinite(c) for c in cols])
+    t, speed, thr, brk, gr = (c[ok] for c in cols)
+    order = np.argsort(t, kind="stable")
+    t, speed, thr, brk, gr = (c[order] for c in (t, speed, thr, brk, gr))
+    keep = np.ones(t.size, dtype=bool)
+    keep[1:] = np.diff(t) > 0
+    return CarTrace(
+        t=t[keep],
+        speed_ms=speed[keep] / 3.6,
+        throttle01=np.clip(thr[keep] / 100.0, 0.0, 1.0),
+        brake01=(brk[keep] > 0).astype(np.float64),
+        gear=gr[keep].astype(np.int64),
+        driver=driver,
+        team=team,
+    )
+
+
+def fastest_lap_car_data(session, driver: str | int | None = None) -> CarTrace:
+    """Car data (``lap.get_car_data()``) of the lap ``fastest_lap_xy`` picks.
+
+    ``t`` runs from the lap's ``LapStartTime``; one sample either side of the lap is kept
+    (``pad=1``) so the lap's ends can be interpolated.
+    """
+    lap = _pick_lap(session, driver)
+    car = lap.get_car_data(pad=1, pad_side="both")
+    if car.empty:
+        raise ValueError(f"No car data for {lap['Driver']}'s fastest lap")
+    t_rel = (car["SessionTime"] - lap["LapStartTime"]).dt.total_seconds().to_numpy()
+    team = lap.get("Team")
+    trace = _car_trace(
+        t_rel,
+        car["Speed"].to_numpy(),
+        car["Throttle"].to_numpy(),
+        car["Brake"].to_numpy(),
+        car["nGear"].to_numpy(),
+        driver=str(lap["Driver"]),
+        team="" if team is None or pd.isna(team) else str(team),
+    )
+    if trace.t.size < 10:
+        raise ValueError(f"Too few car-data samples ({trace.t.size}) for {lap['Driver']}'s lap")
+    return trace

@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 from f1sim.data import laps
@@ -25,6 +26,29 @@ def test_openf1_before_2023_is_refused():
 def test_unknown_source_is_refused():
     with pytest.raises(ValueError, match="Unknown lap source"):
         laps.resolve_source(2024, "ergast")
+
+
+@pytest.mark.parametrize(("year", "module"), [(2024, "openf1_source"), (2019, "fastf1_source")])
+def test_reference_car_data_uses_the_same_source_and_lap(monkeypatch, year, module):
+    import importlib
+
+    src = importlib.import_module(f"f1sim.data.{module}")
+    calls = []
+    sentinel = laps.CarTrace(*(np.zeros(3) for _ in range(5)))
+    if module == "openf1_source":
+        monkeypatch.setattr(src, "find_session", lambda y, tid, kind: calls.append((y, tid, kind)))
+    else:
+        monkeypatch.setattr(src, "load_session", lambda y, loc, kind: calls.append((y, loc, kind)))
+
+    def fake_car(session, driver):
+        calls.append(driver)
+        return sentinel
+
+    monkeypatch.setattr(src, "fastest_lap_car_data", fake_car)
+    got = laps.reference_car_data("silverstone", year, kind="Q", driver="HAM")
+    assert got is sentinel
+    place = "silverstone" if module == "openf1_source" else "Silverstone"
+    assert calls == [(year, place, "Q"), "HAM"]
 
 
 def test_fastf1_source_still_exports_lapxy():

@@ -33,7 +33,7 @@ from typing import Any
 import numpy as np
 
 from f1sim import paths
-from f1sim.data.laps import OPENF1_FIRST_YEAR, LapXY
+from f1sim.data.laps import OPENF1_FIRST_YEAR, CarTrace, LapXY
 
 BASE_URL = "https://api.openf1.org/v1"
 SESSION_NAMES = {"Q": "Qualifying", "R": "Race", "S": "Sprint", "SQ": "Sprint Qualifying"}
@@ -224,3 +224,68 @@ def fastest_lap_xy(session: dict, driver: str | int | None = None) -> LapXY:
     return LapXY(
         driver=acronym, lap_time_s=lap_time, t=tt, x_m=xm, y_m=ym, sector_end_t=sector_end_t
     )
+
+
+# ---------------------------------------------------------------- car data (speed, pedals, gear)
+
+
+def _car_trace(samples: list[dict], start: datetime, driver: str, team: str) -> CarTrace:
+    """OpenF1 ``car_data`` records -> a ``CarTrace`` timed from ``start``, sorted, deduplicated.
+
+    ``speed`` is km/h, ``throttle`` 0-100 and ``brake`` 0/100 (any value above 0 counts as on).
+    Records with a missing channel are dropped.
+    """
+    keys = ("speed", "throttle", "brake", "n_gear")
+    rows = [p for p in samples if all(p.get(k) is not None for k in keys)]
+    t = np.array([(_parse_time(p["date"]) - start).total_seconds() for p in rows], dtype=float)
+    cols = {k: np.array([p[k] for p in rows], dtype=np.float64) for k in keys}
+    order = np.argsort(t, kind="stable")
+    t = t[order]
+    keep = np.ones(t.size, dtype=bool)
+    keep[1:] = np.diff(t) > 0  # keep the first sample of each timestamp
+    t = t[keep]
+    cols = {k: v[order][keep] for k, v in cols.items()}
+    return CarTrace(
+        t=t,
+        speed_ms=cols["speed"] / 3.6,
+        throttle01=np.clip(cols["throttle"] / 100.0, 0.0, 1.0),
+        brake01=(cols["brake"] > 0).astype(np.float64),
+        gear=cols["n_gear"].astype(np.int64),
+        driver=driver,
+        team=team,
+    )
+
+
+def fastest_lap_car_data(session: dict, driver: str | int | None = None) -> CarTrace:
+    """Car data of the lap :func:`fastest_lap_xy` picks, timed from that lap's ``date_start``.
+
+    Samples run from 2 s before the lap to 2 s after it, the same window as the positions.
+    The team comes from the ``drivers`` endpoint's ``team_name`` (``""`` if missing).
+    """
+    key = session["session_key"]
+    drivers = _get("drivers", {"session_key": key})
+    number = None if driver is None else _driver_number(drivers, driver)
+    lap = _pick_fastest(_get("laps", {"session_key": key}), number)
+    number = int(lap["driver_number"])
+    lap_time = float(lap["lap_duration"])
+
+    start = _parse_time(lap["date_start"])
+    pad = timedelta(seconds=_EDGE_PAD_S)
+    lo = (start - pad).isoformat(timespec="milliseconds").replace("+00:00", "")
+    hi = (start + timedelta(seconds=lap_time) + pad).isoformat(timespec="milliseconds")
+    hi = hi.replace("+00:00", "")
+    samples = _get(
+        "car_data",
+        {"session_key": key, "driver_number": number},
+        filters=(f"date>={lo}", f"date<={hi}"),
+    )
+    record = next((d for d in drivers if int(d["driver_number"]) == number), {})
+    trace = _car_trace(
+        samples,
+        start,
+        driver=str(record.get("name_acronym") or number),
+        team=str(record.get("team_name") or ""),
+    )
+    if trace.t.size < 10:
+        raise OpenF1Error(f"Too few car-data samples ({trace.t.size}) for car {number}'s lap")
+    return trace
