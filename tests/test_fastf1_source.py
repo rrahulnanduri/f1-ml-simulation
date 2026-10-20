@@ -242,6 +242,58 @@ def test_fastest_lap_errors(session):
         fs.fastest_lap_xy(FakeLoadedSession([]))
 
 
+# ---------------------------------------------------------------- car data
+
+
+class FakeCarLap(FakeLap):
+    """A FakeLap that also serves get_car_data()."""
+
+    _metadata = ["pos", "car"]
+
+    @property
+    def _constructor(self):
+        return FakeCarLap
+
+    def get_car_data(self, **kwargs):
+        assert kwargs == {"pad": 1, "pad_side": "both"}
+        return self.car
+
+
+def _car_lap(driver, number, lap_time, team="Mercedes", start=1000.0):
+    lap = FakeCarLap({**_lap(driver, number, lap_time, start=start), "Team": team})
+    t = np.arange(-0.25, lap_time + 0.5, 0.25)
+    car = pd.DataFrame(
+        {
+            "SessionTime": pd.to_timedelta(start + t, unit="s"),
+            "Speed": np.full(t.size, 180.0),
+            "Throttle": np.where(t < lap_time / 2, 100.0, 104.0),  # 104 = sensor overrange
+            "Brake": t > lap_time / 2,
+            "nGear": np.full(t.size, 7),
+        }
+    )
+    lap.car = pd.concat([car, car.iloc[[3]]]).sort_values("SessionTime")  # one duplicate
+    return lap
+
+
+def test_fastest_lap_car_data_matches_the_fastest_lap():
+    session = FakeLoadedSession(
+        [_car_lap("RUS", "63", 85.819), _car_lap("HAM", "44", 85.99, team=np.nan)]
+    )
+    car = fs.fastest_lap_car_data(session)
+    assert (car.driver, car.team) == ("RUS", "Mercedes")
+    assert car.t[0] == pytest.approx(-0.25)  # from the lap start, padded by one sample
+    assert np.all(np.diff(car.t) > 0)  # sorted, duplicate dropped
+    assert car.speed_ms == pytest.approx(np.full(car.t.size, 50.0))  # km/h -> m/s
+    assert car.throttle01.max() == 1.0  # 0-100 -> 0..1, clipped
+    assert set(car.brake01.tolist()) == {0.0, 1.0}
+    assert car.gear.dtype == np.int64 and set(car.gear.tolist()) == {7}
+
+    ham = fs.fastest_lap_car_data(session, 44)
+    assert (ham.driver, ham.team) == ("HAM", "")
+    with pytest.raises(ValueError, match="no laps"):
+        fs.fastest_lap_car_data(session, "VER")
+
+
 # ---------------------------------------------------------------- network
 
 
@@ -288,3 +340,12 @@ def test_event_schedule_2024():
     assert [e.round for e in events] == list(range(1, 25))
     silverstone = events[11]
     assert (silverstone.name, silverstone.location) == ("British Grand Prix", "Silverstone")
+
+
+@pytest.mark.network
+def test_silverstone_2024_q_hamilton_car_data(silverstone_q):
+    car = fs.fastest_lap_car_data(silverstone_q, "HAM")
+    assert (car.driver, car.team) == ("HAM", "Mercedes")
+    assert car.t[0] <= 0.0 and car.t[-1] >= 85.9
+    assert 300 / 3.6 < car.speed_ms.max() < 360 / 3.6
+    assert set(car.gear.tolist()) <= set(range(9))
