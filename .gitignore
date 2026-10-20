@@ -24,3 +24,6 @@ runs/
 Thumbs.db
 .vscode/
 .idea/
+
+# Claude Code agent worktrees
+.claude/worktrees/
