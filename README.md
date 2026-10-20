@@ -22,8 +22,8 @@ The project is mid-revamp; see [docs/revamp-plan.md](docs/revamp-plan.md).
 |---|---|---|
 | M0 | Repo cleanup, packaging, tooling | done |
 | M1 | Real track pipeline (TUM racetrack-database + FastF1 alignment) | done |
-| M2 | Vectorised simulation core in SI units | next (car model done) |
-| M3 | Headless neuroevolution training | planned |
+| M2 | Vectorised simulation core in SI units | done |
+| M3 | Headless neuroevolution training | next |
 | M4 | New app; legacy code removed | planned |
 | M5 | More circuits, multi-track training, polish | planned |
 
@@ -54,6 +54,16 @@ f1sim tracks
 
 ```bash
 f1sim build-track silverstone
+```
+
+Drive it yourself, or run the scripted reference lap that calibrates the physics:
+
+```bash
+f1sim drive silverstone
+```
+
+```bash
+f1sim reference-lap silverstone
 ```
 
 - **Without FastF1:** add `--no-fastf1` to build the geometry only, which skips the start line, sectors and alignment check.

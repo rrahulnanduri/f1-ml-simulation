@@ -173,6 +173,13 @@ Moved to [data-formats.md](data-formats.md), the canonical spec. It covers track
 | braking | limited by `a_max(v)`, cap 5.5 g | |
 | limit rule | if `√(a_lat² + a_long²) > a_max` | the car slides: yaw rate is cut to the limit and speed is scrubbed |
 
+**Calibration result (M2).** With the defaults, the scripted lap is 91.24 s (+6.3%) on the TUM raceline pulled 0.3 m inside the track limit. The raw TUM line comes within 1 m of our built edges at 353 of 1161 points, so it would count as off track. Known deviations from real F1:
+- Braking from 300 to 80 km/h takes 81 m (real: 100–130 m).
+- Corners above a radius of about 150 m are flat out.
+- Medium-speed corners are too slow (Becketts 153 km/h, Stowe 163 km/h).
+
+Optional retune: `max_brake_g=3.0, grip_base_g=1.9` gives 87.46 s (+1.9%) and 98 m braking.
+
 **Calibration.** `scripted.py` follows TUM's racing line using a forward/backward speed-profile pass under these limits, and its lap time is compared with real pole: Silverstone 2024 Q was 1:25.819. Tune the parameters until it lands within ±10%. This number is the M2 acceptance test.
 
 **Track limits and progress** (`progress.py`):
@@ -257,6 +264,7 @@ Each milestone ends with every test passing, and is committed on its own.
 | **M0** | Repo cleanup and tooling | `.gitignore`, untrack generated files, `pyproject.toml`, ruff, pytest skeleton, real README, `docs/data-formats.md` | `git status` stays clean after running the app; `pip install -e .[dev]` works; `ruff check` and `pytest` pass | 0.5–1 day |
 | **M1** | Track pipeline | `tum_source`, `track_builder`, `Track`, `alignment`, track JSON, `f1sim tracks`, `f1sim build-track silverstone`, debug plot | Silverstone: length 5891 ± 1%, walls simple (0 crossings, down from 31), widths 10–25 m; Russell's and Hamilton's 2024 laps are ≥ 98% within 1 m of the edges and median ≤ 6 m from the centre line; at least 5 TUM tracks build | 2–3 days |
 | **M2** | Simulation core | `car_model`, `progress`, `sensors`, `grid`, `world`, `scripted`, a minimal Drive viewer, benchmark | All sim tests pass; scripted reference lap at Silverstone within ±10% of 1:25.8; ≥ 50× real time with 64 cars headless (today: 6.6× with 30) | 3–4 days |
+| | **M2 result (2026-10-20)** | Done | All sim tests pass (303). Scripted lap on Silverstone's TUM raceline 91.24 s, +6.3% against 85.819 s, on track. 64 cars at 64.1× real time with numba (17.6× numpy only). Lap and sector timing are interpolated within the step | |
 | **M3** | Training | `policy`, `ga`, `es`, `trainer`, checkpoints, metrics, `f1sim train` / `replay` | Silverstone: first clean full lap within 30 min of wall time; best lap time improves across the run; no flat best-fitness run longer than 20 generations without σ adapting; same seed reproduces the run | 3–4 days |
 | **M4** | App rebuild | Replay, Watch-training and Drive modes, camera, HUD, ghost driver picker, live delta, background loading; delete old `src/`, `main.py`, `generate_track.py` | Loading any supported track never freezes the UI; ghost stays inside the track; 60 fps with 64 cars; the old code is gone | 3–5 days |
 | **M5** | Breadth and polish | FastF1-spread fallback tracks, multi-track training and evaluation, PPO comparison, speed-trace charts, GIF/video export | The fallback builds Monaco and Baku within the M1 criteria; an agent trained on 3 tracks completes a lap on an unseen TUM track | ongoing |

@@ -124,6 +124,46 @@ def _cmd_drive(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_reference_lap(args: argparse.Namespace) -> int:
+    from f1sim.data import catalog, tum_source
+    from f1sim.data.track_pipeline import load_track
+    from f1sim.sim.car_model import CarParams, load_car_params
+    from f1sim.sim.scripted import drive_reference_lap
+
+    try:
+        track = load_track(args.track_id)
+    except FileNotFoundError:
+        print(
+            f"error: {args.track_id} isn't built; run `f1sim build-track {args.track_id}`",
+            file=sys.stderr,
+        )
+        return 1
+    params = load_car_params(args.car) if args.car else CarParams()
+    raceline = None
+    line = "centre line"
+    if not args.centre_line:
+        tum_name = catalog.get(args.track_id).tum_name
+        if tum_name is None:
+            print(f"error: no TUM raceline for {args.track_id}", file=sys.stderr)
+            return 1
+        raceline = tum_source.parse_tum_raceline(tum_source.fetch_tum_raceline(tum_name))
+        line = "TUM raceline"
+    lap = drive_reference_lap(track, params, raceline_xy=raceline)
+    print(f"{track.data.name}, {line}, car {args.car or 'defaults'}")
+    if not lap.completed or not np.isfinite(lap.lap_time_s):
+        print(f"  lap not completed cleanly (worst excess {lap.max_abs_n_excess_m:+.2f} m)")
+        return 1
+    print(f"  lap time     {lap.lap_time_s:.3f} s")
+    print(f"  top speed    {lap.v.max() * 3.6:.1f} km/h")
+    print(f"  on track     yes (closest to the limit: {lap.max_abs_n_excess_m:+.2f} m)")
+    ref = (track.data.fastf1_alignment or {}).get("reference_lap_s")
+    if ref:
+        driver = track.data.fastf1_alignment.get("reference_driver", "")
+        delta = lap.lap_time_s / ref - 1
+        print(f"  real pole    {driver} {ref:.3f} s -> {delta:+.1%} (M2 target: within 10%)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="f1sim", description=__doc__)
     parser.add_argument("--version", action="version", version=f"f1sim {__version__}")
@@ -152,6 +192,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", help="output path (default: <track_id>.png)")
     p.add_argument("--dpi", type=int, default=150)
     p.set_defaults(func=_cmd_plot_track)
+
+    p = sub.add_parser("reference-lap", help="drive the scripted reference lap (calibration)")
+    p.add_argument("track_id")
+    p.add_argument("--car", help="car parameters TOML (default: built-in CarParams)")
+    p.add_argument("--centre-line", action="store_true", help="follow the centre line instead")
+    p.set_defaults(func=_cmd_reference_lap)
 
     p = sub.add_parser("drive", help="drive a built track with the keyboard")
     p.add_argument("track_id")
