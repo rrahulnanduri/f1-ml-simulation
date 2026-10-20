@@ -29,6 +29,9 @@ class WorldConfig:
     dt: float = 1.0 / 60.0
     action_repeat: int = 2
     episode_time_s: float = 180.0
+    # Drive on the track limits (where real cars go) rather than the white line, when the
+    # track has them (data/track_limits.py)
+    use_track_limits: bool = True
     car: CarParams = field(default_factory=CarParams)
     progress: ProgressParams = field(default_factory=ProgressParams)
 
@@ -49,14 +52,14 @@ class StepResult:
 
 class World:
     def __init__(self, track: Track, config: WorldConfig | None = None):
-        self.track = track
         self.config = config or WorldConfig()
+        self.track = track.sim_track() if self.config.use_track_limits else track
         n = self.config.n_cars
         if n < 1:
             raise ValueError(f"n_cars must be >= 1, got {n}")
-        self.grid = SegmentGrid.from_track(track)
-        self.sensors = Sensors(track, self.grid)
-        self.progress = ProgressTracker(track, n, self.config.progress)
+        self.grid = SegmentGrid.from_track(self.track)
+        self.sensors = Sensors(self.track, self.grid)
+        self.progress = ProgressTracker(self.track, n, self.config.progress)
         self.car = CarState.at(n, 0.0, 0.0, 0.0)
         self.prev_action = np.zeros((n, 2), dtype=np.float64)
 

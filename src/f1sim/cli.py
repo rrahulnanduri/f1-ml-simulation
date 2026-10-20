@@ -31,7 +31,11 @@ def _cmd_build_track(args: argparse.Namespace) -> int:
     year = None if args.no_fastf1 else args.year
     try:
         report = build_and_cache(
-            args.track_id, year=year, resolution_m=args.resolution, source=args.source
+            args.track_id,
+            year=year,
+            resolution_m=args.resolution,
+            source=args.source,
+            limit_years=tuple(args.limit_years) if args.limits else None,
         )
     except (
         KeyError,
@@ -66,6 +70,19 @@ def _cmd_build_track(args: argparse.Namespace) -> int:
             f"mirrored={a.mirrored}"
         )
         print(f"  sectors at   {', '.join(f'{s:.0f}' for s in t.sectors_s)} m")
+    if t.has_limits:
+        from f1sim.data.track_limits import limit_self_crossings
+
+        el, er = t.limit_left - t.w_left, t.limit_right - t.w_right
+        print(
+            f"  limits       {t.limits['laps']} laps from {t.limits['years']}: beyond the white "
+            f"line by median {np.median(el):.2f}/{np.median(er):.2f} m, p90 "
+            f"{np.percentile(el, 90):.2f}/{np.percentile(er, 90):.2f} m, max "
+            f"{max(el.max(), er.max()):.2f} m (left/right); widened on "
+            f"{np.mean((el > 0.1) | (er > 0.1)):.0%} of the lap"
+        )
+        lx, rx = limit_self_crossings(t)
+        print(f"  limit lines  {lx} left / {rx} right self-crossings")
     return 0
 
 
@@ -149,13 +166,20 @@ def _cmd_reference_lap(args: argparse.Namespace) -> int:
             return 1
         raceline = tum_source.parse_tum_raceline(tum_source.fetch_tum_raceline(tum_name))
         line = "TUM raceline"
+    if args.white_line:
+        edges = "white line"
+    elif track.has_limits:
+        edges = "track limits"
+        track = track.sim_track()
+    else:
+        edges = "white line (no limits built; see build-track --limits)"
     lap = drive_reference_lap(track, params, raceline_xy=raceline)
     if args.save:
         out = Path(args.save)
         out.parent.mkdir(parents=True, exist_ok=True)
         np.savez(out, t=lap.t, x=lap.x, y=lap.y, s=lap.s, speed=lap.v)
         print(f"  saved trace  {out.resolve()}")
-    print(f"{track.data.name}, {line}, car {args.car or 'defaults'}")
+    print(f"{track.data.name}, {line}, {edges}, car {args.car or 'defaults'}")
     if not lap.completed or not np.isfinite(lap.lap_time_s):
         print(f"  lap not completed cleanly (worst excess {lap.max_abs_n_excess_m:+.2f} m)")
         return 1
@@ -285,6 +309,18 @@ def main(argv: list[str] | None = None) -> int:
         help="reference-lap source; auto = OpenF1 for 2023+, FastF1 (cached only) before",
     )
     p.add_argument("--resolution", type=float, default=2.0, help="point spacing in metres")
+    p.add_argument(
+        "--limits",
+        action="store_true",
+        help="add track limits from real drivers' qualifying laps (OpenF1)",
+    )
+    p.add_argument(
+        "--limit-years",
+        type=int,
+        nargs="+",
+        default=[2023, 2024, 2025],
+        help="seasons whose qualifying laps define the limits",
+    )
     p.set_defaults(func=_cmd_build_track)
 
     p = sub.add_parser("plot-track", help="draw a built track to a PNG")
@@ -298,6 +334,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--car", help="car parameters TOML (default: built-in CarParams)")
     p.add_argument("--centre-line", action="store_true", help="follow the centre line instead")
     p.add_argument("--save", help="write the lap trace to this .npz (for f1sim replay)")
+    p.add_argument(
+        "--white-line", action="store_true", help="drive within the white line, not the limits"
+    )
     p.set_defaults(func=_cmd_reference_lap)
 
     p = sub.add_parser("train", help="train cars by neuroevolution (headless)")

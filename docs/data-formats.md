@@ -43,6 +43,11 @@ All generated data goes in the user cache folder (`paths.py`), not the repo. The
 
 - Points are stored as columns (a few thousand per track, which is fine as JSON).
 - Walls aren't stored; they're derived from the points when the track loads.
+- **Version 2 adds track limits (optional).** The columns `points.limit_left` and `points.limit_right` hold how far cars may drive on each side, and a `limits` block records how they were made: `source`, `years`, `laps`, `lap_percentile`, `car_half_width_m`, `margin_m`, `max_extra_m`.
+  - **What they are:** `f1sim.data.track_limits` builds them from every driver's fastest qualifying lap of those years, smoothed like the ghosts and projected onto the track.
+  - **Bounds:** they are never inside the white line (`w_left`/`w_right`), and never more than `max_extra_m` beyond it.
+  - **Who uses them:** the simulation drives on the limits (`Track.sim_track()`, `WorldConfig.use_track_limits`). Drawing uses `w_*` for the white line, and the band between the white line and the limit is the kerb and run-off.
+  - **Older files:** version 1 files load without limits.
 - `fastf1_alignment.lap_source` says which source served the reference lap ("openf1" or "fastf1"). Both use the same raw frame.
 - `fastf1_alignment` maps FastF1 metres (X/Y ÷ 10) into the track frame: `p' = scale · R(rotation_rad) · diag(1, −1 if mirrored else 1) · p + (tx_m, ty_m)` (`f1sim.data.alignment.apply_alignment`).
   - `inside_ratio` counts the reference lap's samples strictly inside the edges.

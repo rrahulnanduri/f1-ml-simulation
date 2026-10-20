@@ -13,6 +13,7 @@ sigma_max = 0.15             # GA only: cap on the adaptive mutation step (0.5 s
 max_generations = 1000       # stop after this many generations ...
 max_wall_s = 1800.0          # ... or this much wall time, whichever comes first
 checkpoint_every = 10        # checkpoint every N generations (and whenever the best improves)
+use_track_limits = true      # drive on the track limits (real drivers' envelope) when the track has them
 
 # Curriculum
 stage1_episode_s = 30.0           # stage 1: random starts, fitness = progress in metres

@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -69,7 +70,7 @@ def test_file_layout(tmp_path, track):
     write_track_json(track, path)
     doc = json.loads(path.read_text(encoding="utf-8"))
     assert doc["format"] == "f1sim.track"
-    assert doc["version"] == 1
+    assert doc["version"] == 2
     assert doc["built_with"]["builder_version"] == BUILDER_VERSION
     assert "f1sim" in doc["built_with"]
     assert set(doc["points"]) == set(DECIMALS)
@@ -98,7 +99,7 @@ def test_optional_fields_default(tmp_path, track):
     [
         ({"format": "something.else"}, "format"),
         ({"format": None}, "format"),
-        ({"version": 2}, "version"),
+        ({"version": 3}, "version"),
         ({"version": "1"}, "version"),
     ],
 )
@@ -123,3 +124,25 @@ def test_rejects_malformed(tmp_path, track):
     path.write_text("[1, 2", encoding="utf-8")
     with pytest.raises(ValueError, match="JSON"):
         read_track_json(path)
+
+
+def test_limits_round_trip_and_v1_files_still_load(tmp_path, track):
+    data = track.data if hasattr(track, "data") else track
+    lim_l = data.w_left + 1.5
+    lim_r = data.w_right + 0.5
+    limited = replace(data, limit_left=lim_l, limit_right=lim_r, limits={"source": "test"})
+    path = tmp_path / "limited.track.json"
+    write_track_json(limited, path)
+    back = read_track_json(path)
+    assert back.has_limits and back.limits == {"source": "test"}
+    np.testing.assert_allclose(back.limit_left, lim_l, atol=1e-4)
+    np.testing.assert_allclose(back.limit_right, lim_r, atol=1e-4)
+    # A version-1 file (no limit columns) still reads, with no limits
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc["version"] = 1
+    for col in ("limit_left", "limit_right"):
+        doc["points"].pop(col)
+    doc.pop("limits")
+    v1 = tmp_path / "v1.track.json"
+    v1.write_text(json.dumps(doc), encoding="utf-8")
+    assert not read_track_json(v1).has_limits

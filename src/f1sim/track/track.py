@@ -7,7 +7,7 @@ Conventions (docs/m1-interfaces.md): closed loop without a repeated end point, `
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 
 import numpy as np
 
@@ -52,6 +52,10 @@ class TrackData:
     direction: str = ""  # "clockwise" | "counterclockwise"
     source: dict = field(default_factory=dict)
     fastf1_alignment: dict | None = None
+    # Optional track limits (data/track_limits.py): where cars may drive, >= the white line
+    limit_left: np.ndarray | None = None
+    limit_right: np.ndarray | None = None
+    limits: dict | None = None
 
     def __post_init__(self) -> None:
         m = None
@@ -84,14 +88,44 @@ class TrackData:
             )
         if self.direction not in _DIRECTIONS:
             raise ValueError(f"TrackData.direction must be one of {_DIRECTIONS}")
+        if (self.limit_left is None) != (self.limit_right is None):
+            raise ValueError("TrackData.limit_left and limit_right must both be set or both None")
+        for name, white in (("limit_left", self.w_left), ("limit_right", self.w_right)):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            arr = np.array(value, dtype=np.float64)
+            if arr.shape != (m,) or not np.all(np.isfinite(arr)):
+                raise ValueError(f"TrackData.{name} must be {m} finite values")
+            if np.any(arr < white - 1e-6):
+                raise ValueError(f"TrackData.{name} must not be inside the white line")
+            arr.setflags(write=False)
+            object.__setattr__(self, name, arr)
+
+    @property
+    def has_limits(self) -> bool:
+        return self.limit_left is not None
+
+    def limits_as_widths(self) -> TrackData:
+        """This track with the limits as its widths (and no separate limits); self if none."""
+        if not self.has_limits:
+            return self
+        return replace(
+            self,
+            w_left=self.limit_left,
+            w_right=self.limit_right,
+            limit_left=None,
+            limit_right=None,
+            limits=None,
+        )
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, TrackData):
             return NotImplemented
         for f in fields(self):
             a, b = getattr(self, f.name), getattr(other, f.name)
-            if f.name in _ARRAY_FIELDS:
-                if not np.array_equal(a, b):
+            if f.name in _ARRAY_FIELDS or f.name in ("limit_left", "limit_right"):
+                if (a is None) != (b is None) or (a is not None and not np.array_equal(a, b)):
                     return False
             elif a != b:
                 return False
@@ -139,6 +173,37 @@ class Track:
     def right_wall(self) -> np.ndarray:
         """Right wall vertices, ``(M, 2)``: ``p - nL * w_right``."""
         return self._pts - self._nl * self.data.w_right[:, None]
+
+    # ------------------------------------------------------------------------- limits
+
+    @property
+    def has_limits(self) -> bool:
+        """Whether the track carries limits beyond the white line (data/track_limits.py)."""
+        return self.data.has_limits
+
+    def limits_at(self, s) -> tuple[np.ndarray, np.ndarray]:
+        """``(limit_left, limit_right)`` at ``s``; the white-line widths when there are none."""
+        if not self.has_limits:
+            return self.widths_at(s)
+        return self._lerp(self.data.limit_left, s), self._lerp(self.data.limit_right, s)
+
+    def limit_left_wall(self) -> np.ndarray:
+        """Left limit line, ``(M, 2)``; the left wall when there are no limits."""
+        w = self.data.limit_left if self.has_limits else self.data.w_left
+        return self._pts + self._nl * w[:, None]
+
+    def limit_right_wall(self) -> np.ndarray:
+        """Right limit line, ``(M, 2)``; the right wall when there are no limits."""
+        w = self.data.limit_right if self.has_limits else self.data.w_right
+        return self._pts - self._nl * w[:, None]
+
+    def sim_track(self) -> Track:
+        """The track the simulation drives on: the limits as its edges (self without limits).
+
+        Car physics, progress, sensors and the trainer use the edges of whatever ``Track``
+        they're given, so passing this one makes them use the limits.
+        """
+        return self if not self.has_limits else Track(self.data.limits_as_widths())
 
     # ------------------------------------------------------------------- interpolation
 

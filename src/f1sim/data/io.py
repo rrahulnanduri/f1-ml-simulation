@@ -14,7 +14,9 @@ from f1sim.track.track import TrackData
 BUILDER_VERSION: int = 1
 
 TRACK_FORMAT = "f1sim.track"
-TRACK_FORMAT_VERSION = 1
+TRACK_FORMAT_VERSION = 2
+# Version 2 adds the optional limit_left/limit_right columns and the limits block
+READABLE_VERSIONS = (1, 2)
 
 # Decimals kept per column: 0.1 mm for lengths, ~1e-6 rad for heading, 1e-8 /m for curvature.
 _DECIMALS = {
@@ -46,7 +48,18 @@ def track_to_dict(data: TrackData) -> dict:
         "length_m": round(float(data.length_m), 4),
         "direction": data.direction,
         "sectors_s": _round_list(data.sectors_s, 4),
-        "points": {c: _round_list(getattr(data, c), _DECIMALS[c]) for c in _COLUMNS},
+        "points": {
+            **{c: _round_list(getattr(data, c), _DECIMALS[c]) for c in _COLUMNS},
+            **(
+                {
+                    "limit_left": _round_list(data.limit_left, 4),
+                    "limit_right": _round_list(data.limit_right, 4),
+                }
+                if data.has_limits
+                else {}
+            ),
+        },
+        "limits": data.limits,
         "fastf1_alignment": data.fastf1_alignment,
         "built_with": {"f1sim": __version__, "builder_version": BUILDER_VERSION},
     }
@@ -88,10 +101,10 @@ def _load(path: Path) -> dict:
         raise ValueError(
             f"{path}: not an f1sim track file (format {found!r}, expected {TRACK_FORMAT!r})"
         )
-    if doc.get("version") != TRACK_FORMAT_VERSION:
+    if doc.get("version") not in READABLE_VERSIONS:
         raise ValueError(
             f"{path}: unsupported track file version {doc.get('version')!r} "
-            f"(this f1sim reads version {TRACK_FORMAT_VERSION}); rebuild the track"
+            f"(this f1sim reads versions {READABLE_VERSIONS}); rebuild the track"
         )
     return doc
 
@@ -100,6 +113,11 @@ def read_track_builder_version(path: Path) -> int | None:
     """``built_with.builder_version`` of a track file, to spot files built by older code."""
     v = _load(path).get("built_with", {}).get("builder_version")
     return int(v) if v is not None else None
+
+
+def _optional(points: dict, column: str) -> np.ndarray | None:
+    values = points.get(column)
+    return None if values is None else np.asarray(values, dtype=np.float64)
 
 
 def read_track_json(path: Path) -> TrackData:
@@ -119,6 +137,9 @@ def read_track_json(path: Path) -> TrackData:
             direction=doc.get("direction", ""),
             source=dict(doc.get("source") or {}),
             fastf1_alignment=doc.get("fastf1_alignment"),
+            limit_left=_optional(points, "limit_left"),
+            limit_right=_optional(points, "limit_right"),
+            limits=doc.get("limits"),
         )
     except (KeyError, TypeError, ValueError) as e:
         raise ValueError(f"{path}: malformed track file ({e!r})") from e

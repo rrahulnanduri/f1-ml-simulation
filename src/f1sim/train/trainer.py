@@ -101,6 +101,7 @@ class TrainConfig:
     hidden: tuple[int, ...] = (16, 16)
     sigma0: float = 0.1
     sigma_max: float = 0.15  # GA only: cap on the adaptive mutation step
+    use_track_limits: bool = True  # drive on the track limits when the track has them
     max_generations: int = 1000
     max_wall_s: float = 1800.0
     checkpoint_every: int = 10
@@ -310,6 +311,8 @@ class Trainer:
         optimisers = importlib.import_module("f1sim.agents.optimisers")
         self._checkpoint = importlib.import_module("f1sim.agents.checkpoint")
 
+        # The trainer resolves the limits once; its Worlds get the track as is
+        track = track.sim_track() if config.use_track_limits else track
         self.track = track
         self.config = config
         self.car = car
@@ -355,6 +358,7 @@ class Trainer:
                 n_cars=self.population * self.episodes,
                 episode_time_s=config.stage1_episode_s,
                 car=car,
+                use_track_limits=False,
             ),
         )
         self._world2: World | None = None  # built on promotion
@@ -374,7 +378,12 @@ class Trainer:
         if self._world2 is None:
             self._world2 = World(
                 self.track,
-                WorldConfig(n_cars=self.population, episode_time_s=self.stage2_cap_s, car=self.car),
+                WorldConfig(
+                    n_cars=self.population,
+                    episode_time_s=self.stage2_cap_s,
+                    car=self.car,
+                    use_track_limits=False,
+                ),
             )
         return self._world2
 
@@ -494,6 +503,7 @@ class Trainer:
                 episode_time_s=self.stage2_cap_s,
                 car=self.car,
                 progress=self._progress_params,
+                use_track_limits=False,
             ),
         )
         genome = np.asarray(genome, dtype=np.float32).reshape(1, -1)

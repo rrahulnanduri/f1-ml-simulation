@@ -53,7 +53,12 @@ def load_track(track_id: str) -> Track:
 
 
 def build_and_cache(
-    track_id: str, *, year: int | None = 2024, resolution_m: float = 2.0, source: str = "auto"
+    track_id: str,
+    *,
+    year: int | None = 2024,
+    resolution_m: float = 2.0,
+    source: str = "auto",
+    limit_years: tuple[int, ...] | None = None,
 ) -> BuildReport:
     """Build `track_id` from TUM data and write it to the cache.
 
@@ -61,6 +66,8 @@ def build_and_cache(
     start/finish line, racing direction and sector boundaries, and to validate the layout.
     `source` picks where the lap comes from (see `laps.reference_lap`): "auto" uses OpenF1 for
     2023 onwards and FastF1 (cached sessions only) before that.
+    With `limit_years`, track limits are added from every driver's fastest qualifying lap of
+    those years (data/track_limits.py); that needs the alignment, so `year` too.
     Raises AlignmentRejected if the lap doesn't fit (section 4.3).
     """
     entry = catalog.get(track_id)
@@ -133,6 +140,14 @@ def build_and_cache(
                 "edge_tolerance_m": EDGE_TOLERANCE_M,
             },
         )
+
+    if limit_years:
+        if data.fastf1_alignment is None:
+            raise ValueError("track limits need the lap alignment: pass a year")
+        from f1sim.data import track_limits
+
+        samples = track_limits.collect_laps(Track(data), entry.id, limit_years)
+        data = track_limits.with_limits(data, samples, limit_years)
 
     out = track_path(entry.id)
     write_track_json(data, out)
