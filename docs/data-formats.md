@@ -32,8 +32,10 @@ All generated data goes in the user cache folder (`paths.py`), not the repo. The
   },
   "fastf1_alignment": {
     "years_validated": [2024],
-    "rotation_rad": 0.0, "tx_m": 0.0, "ty_m": 0.0, "scale": 1.0,
-    "median_dist_m": 0.0, "inside_ratio": 0.0
+    "reference_driver": "RUS", "reference_lap_s": 85.819,
+    "rotation_rad": 0.0, "tx_m": 0.0, "ty_m": 0.0, "scale": 1.0, "mirrored": false,
+    "median_dist_m": 0.0, "inside_ratio": 0.0,
+    "inside_ratio_tol": 0.0, "edge_tolerance_m": 1.0
   },
   "built_with": {"f1sim": "0.1.0", "builder_version": 1}
 }
@@ -41,6 +43,9 @@ All generated data goes in the user cache folder (`paths.py`), not the repo. The
 
 - Points are stored as columns (a few thousand per track, which is fine as JSON).
 - Walls aren't stored; they're derived from the points when the track loads.
+- `fastf1_alignment` maps FastF1 metres (X/Y ÷ 10) into the track frame: `p' = scale · R(rotation_rad) · diag(1, −1 if mirrored else 1) · p + (tx_m, ty_m)` (`f1sim.data.alignment.apply_alignment`).
+  - `inside_ratio` counts the reference lap's samples strictly inside the edges.
+  - `inside_ratio_tol` counts them within `edge_tolerance_m` of the edges.
 - `builder_version` bumps whenever the build algorithm changes, so stale cached files rebuild automatically.
 
 ## 2. Track catalogue: `data/catalog.py` (in code) plus `catalog.json` in the cache

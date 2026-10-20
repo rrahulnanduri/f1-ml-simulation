@@ -18,6 +18,9 @@ dependencies = [
     "shapely>=2.0",
 ]
 
+[project.scripts]
+f1sim = "f1sim.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8",

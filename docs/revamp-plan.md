@@ -147,7 +147,8 @@ FastF1 X/Y is in 1/10 m, in its own frame. TUM uses local metres in a different 
 1. Convert telemetry to metres (÷10).
 2. Get an initial rotation by trying angles every 5° (and mirrored versions) and keeping the best centroid-aligned fit of the telemetry path to the centre line.
 3. Refine with point-to-line ICP: rotation and translation, scale fixed at 1, with a ±2% scale check logged.
-4. **Acceptance:** median distance from telemetry to the centre line ≤ 4 m (a racing line genuinely sits off-centre), and ≥ 98% of samples inside the track edges. If not, reject the TUM layout for that year and use the fallback.
+4. **Acceptance:** median distance from telemetry to the centre line ≤ 6 m, and ≥ 98% of samples within 1 m of the track edges. If not, reject the TUM layout for that year and use the fallback.
+   - These were relaxed from ≤ 4 m and 98% strictly inside after measuring real data in M1. TUM's own optimal racing line sits a median 5.1 m off Silverstone's centre line. Russell's and Hamilton's 2024 laps are 95.7–95.8% strictly inside, because they use the kerbs at corner exits, and 99.7% within 1 m. A lap from the wrong circuit scores ≤ 23% inside.
 5. Store the transform in the track file ([data-formats.md](data-formats.md), section 1) so ghosts and laps from any driver line up for free.
 
 ## 5. Data formats
@@ -254,7 +255,7 @@ Each milestone ends with every test passing, and is committed on its own.
 | # | Milestone | Scope | Acceptance criteria | Size |
 |---|---|---|---|---|
 | **M0** | Repo cleanup and tooling | `.gitignore`, untrack generated files, `pyproject.toml`, ruff, pytest skeleton, real README, `docs/data-formats.md` | `git status` stays clean after running the app; `pip install -e .[dev]` works; `ruff check` and `pytest` pass | 0.5–1 day |
-| **M1** | Track pipeline | `tum_source`, `track_builder`, `Track`, `alignment`, track JSON, `f1sim tracks`, `f1sim build-track silverstone`, debug plot | Silverstone: length 5891 ± 1%, walls simple (0 crossings, down from 31), widths 10–25 m; Russell's and Hamilton's 2024 laps are ≥ 98% inside the edges and median ≤ 4 m from the centre line; at least 5 TUM tracks build | 2–3 days |
+| **M1** | Track pipeline | `tum_source`, `track_builder`, `Track`, `alignment`, track JSON, `f1sim tracks`, `f1sim build-track silverstone`, debug plot | Silverstone: length 5891 ± 1%, walls simple (0 crossings, down from 31), widths 10–25 m; Russell's and Hamilton's 2024 laps are ≥ 98% within 1 m of the edges and median ≤ 6 m from the centre line; at least 5 TUM tracks build | 2–3 days |
 | **M2** | Simulation core | `car_model`, `progress`, `sensors`, `grid`, `world`, `scripted`, a minimal Drive viewer, benchmark | All sim tests pass; scripted reference lap at Silverstone within ±10% of 1:25.8; ≥ 50× real time with 64 cars headless (today: 6.6× with 30) | 3–4 days |
 | **M3** | Training | `policy`, `ga`, `es`, `trainer`, checkpoints, metrics, `f1sim train` / `replay` | Silverstone: first clean full lap within 30 min of wall time; best lap time improves across the run; no flat best-fitness run longer than 20 generations without σ adapting; same seed reproduces the run | 3–4 days |
 | **M4** | App rebuild | Replay, Watch-training and Drive modes, camera, HUD, ghost driver picker, live delta, background loading; delete old `src/`, `main.py`, `generate_track.py` | Loading any supported track never freezes the UI; ghost stays inside the track; 60 fps with 64 cars; the old code is gone | 3–5 days |
@@ -271,6 +272,7 @@ Order: M0 → M1 → M2 → M3 → M4, with M5 items picked up afterwards. M2's 
 | Vectorised raycasts too slow | Uniform grid + batched maths; if still short of 50×, drop to 7 rays or move to numba (optional dep) |
 | arcade draw cost with many cars | Cached static shapes, a sprite list for cars, sensors only on the followed car |
 | FastF1 rate limits / offline | Cache under `paths.py`; the app works offline for already-built tracks |
+| **F1 live timing needs sign-in (seen 2026-10-20):** `livetiming.formula1.com` returns HTTP 401, so FastF1 3.8 only works for already-cached sessions | Undecided. Options are FastF1 3.9 (alpha) with sign-in, or ghosts limited to the cached sessions. The cached 2024 British GP covers M1 |
 | LGPL data redistribution | Download at build time from a pinned commit; attribution in `THIRD_PARTY.md`; derived files aren't committed |
 
 ## 12. Decisions (settled 2026-10-20)

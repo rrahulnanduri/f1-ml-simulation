@@ -21,8 +21,8 @@ The project is mid-revamp; see [docs/revamp-plan.md](docs/revamp-plan.md).
 | Milestone | Scope | State |
 |---|---|---|
 | M0 | Repo cleanup, packaging, tooling | done |
-| M1 | Real track pipeline (TUM racetrack-database + FastF1 alignment) | next |
-| M2 | Vectorised simulation core in SI units | planned |
+| M1 | Real track pipeline (TUM racetrack-database + FastF1 alignment) | done |
+| M2 | Vectorised simulation core in SI units | next (car model done) |
 | M3 | Headless neuroevolution training | planned |
 | M4 | New app; legacy code removed | planned |
 | M5 | More circuits, multi-track training, polish | planned |
@@ -40,6 +40,25 @@ Activate it (`.venv\Scripts\activate` on Windows, `source .venv/bin/activate` on
 ```bash
 pip install -e ".[dev]"
 ```
+
+## Build tracks (new package)
+
+List circuits, then build one from TUM data, aligned to a FastF1 qualifying lap:
+
+```bash
+f1sim tracks
+```
+
+```bash
+f1sim build-track silverstone
+```
+
+- **Without FastF1:** add `--no-fastf1` to build the geometry only, which skips the start line, sectors and alignment check.
+- **Output:** tracks go to the user cache folder (`%LOCALAPPDATA%\f1sim\Cache` on Windows).
+- **Known gaps:**
+  - FastF1 can currently only load sessions already in its cache, because F1's live-timing server now requires sign-in.
+  - Suzuka's figure-eight isn't supported yet.
+  - Circuits missing from TUM need the M5 fallback.
 
 ## Run the legacy app
 

@@ -1,0 +1,133 @@
+"""`f1sim` command line: list and build tracks (M1). Train/replay/app commands arrive in M3-M4."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+import numpy as np
+
+from f1sim import __version__
+
+
+def _cmd_tracks(args: argparse.Namespace) -> int:
+    from f1sim.data import catalog
+    from f1sim.data.track_pipeline import track_path
+
+    print(f"{'id':<16} {'circuit':<36} {'geometry':<10} built")
+    for entry in sorted(catalog.CATALOG.values(), key=lambda e: e.id):
+        geometry = "TUM" if entry.tum_name else "fallback"
+        built = "yes" if track_path(entry.id).exists() else ""
+        print(f"{entry.id:<16} {entry.name:<36} {geometry:<10} {built}")
+    return 0
+
+
+def _cmd_build_track(args: argparse.Namespace) -> int:
+    from f1sim.data.track_builder import TrackBuildError, wall_self_crossings
+    from f1sim.data.track_pipeline import AlignmentRejected, build_and_cache
+
+    year = None if args.no_fastf1 else args.year
+    try:
+        report = build_and_cache(args.track_id, year=year, resolution_m=args.resolution)
+    except (KeyError, NotImplementedError, AlignmentRejected, TrackBuildError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    t = report.track
+    total_width = t.w_left + t.w_right
+    left_x, right_x = wall_self_crossings(t)
+    print(f"{t.name} ({t.id}) -> {report.path}")
+    print(f"  length       {t.length_m:.0f} m, {len(t.x)} points every {t.resolution_m} m")
+    print(f"  width        {total_width.min():.1f}-{total_width.max():.1f} m wall to wall")
+    print(f"  walls        {left_x} left / {right_x} right self-crossings")
+    print(f"  direction    {t.direction}")
+    if report.alignment is not None:
+        a = report.alignment
+        print(f"  reference    {report.reference_driver} {report.reference_lap_s:.3f} s")
+        print(
+            f"  alignment    median {a.median_dist_m:.2f} m from centre line, "
+            f"{t.fastf1_alignment['inside_ratio_tol']:.1%} within 1 m of edges, "
+            f"{a.inside_ratio:.1%} inside edges, rotation {a.rotation_rad:.4f} rad, "
+            f"mirrored={a.mirrored}"
+        )
+        print(f"  sectors at   {', '.join(f'{s:.0f}' for s in t.sectors_s)} m")
+    return 0
+
+
+def _cmd_plot_track(args: argparse.Namespace) -> int:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from f1sim.data.track_pipeline import load_track
+
+    try:
+        track = load_track(args.track_id)
+    except FileNotFoundError:
+        print(
+            f"error: {args.track_id} isn't built; run `f1sim build-track {args.track_id}`",
+            file=sys.stderr,
+        )
+        return 1
+    t = track.data
+    left, right = track.left_wall(), track.right_wall()
+    fig, ax = plt.subplots(figsize=(10, 8))
+    # Road surface between the walls, then the walls themselves
+    for wall in (left, right):
+        closed = np.vstack([wall, wall[:1]])
+        ax.plot(closed[:, 0], closed[:, 1], color="black", lw=0.8)
+    ax.fill(left[:, 0], left[:, 1], color="0.85", zorder=0)
+    ax.fill(right[:, 0], right[:, 1], color="white", zorder=0)
+    ax.plot(t.x, t.y, color="0.5", lw=0.5, ls="--", label="centre line")
+    for i, s in enumerate(t.sectors_s or (0.0,)):
+        p = track.point_at(s)
+        wl, wr = (float(w) for w in track.widths_at(s))
+        h = float(track.heading_at(s))
+        normal = np.array([-np.sin(h), np.cos(h)])
+        a, b = p + normal * wl, p - normal * wr
+        color = "red" if i == 0 else "tab:blue"
+        label = "start/finish" if i == 0 else ("sector boundary" if i == 1 else None)
+        ax.plot([a[0], b[0]], [a[1], b[1]], color=color, lw=2.5, label=label)
+    ax.set_aspect("equal")
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("y (m)")
+    width = t.w_left + t.w_right
+    ax.set_title(
+        f"{t.name}: {t.length_m:.0f} m, {width.min():.1f}-{width.max():.1f} m wide ({t.direction})"
+    )
+    ax.legend(loc="best")
+    out = Path(args.out or f"{t.id}.png")
+    fig.savefig(out, dpi=args.dpi, bbox_inches="tight")
+    print(out.resolve())
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="f1sim", description=__doc__)
+    parser.add_argument("--version", action="version", version=f"f1sim {__version__}")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("tracks", help="list circuits and whether they're built")
+    p.set_defaults(func=_cmd_tracks)
+
+    p = sub.add_parser("build-track", help="build a circuit from TUM data into the cache")
+    p.add_argument("track_id")
+    p.add_argument("--year", type=int, default=2024, help="FastF1 qualifying used for alignment")
+    p.add_argument("--no-fastf1", action="store_true", help="skip FastF1 alignment and sectors")
+    p.add_argument("--resolution", type=float, default=2.0, help="point spacing in metres")
+    p.set_defaults(func=_cmd_build_track)
+
+    p = sub.add_parser("plot-track", help="draw a built track to a PNG")
+    p.add_argument("track_id")
+    p.add_argument("--out", help="output path (default: <track_id>.png)")
+    p.add_argument("--dpi", type=int, default=150)
+    p.set_defaults(func=_cmd_plot_track)
+
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
