@@ -1,4 +1,4 @@
-"""`f1sim` command line: list and build tracks (M1). Train/replay/app commands arrive in M3-M4."""
+"""`f1sim` command line: list, build, plot and drive tracks. Train/replay arrive in M3-M4."""
 
 from __future__ import annotations
 
@@ -117,6 +117,13 @@ def _cmd_plot_track(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_drive(args: argparse.Namespace) -> int:
+    from f1sim.app.drive import run
+
+    run(args.track_id)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="f1sim", description=__doc__)
     parser.add_argument("--version", action="version", version=f"f1sim {__version__}")
@@ -145,6 +152,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out", help="output path (default: <track_id>.png)")
     p.add_argument("--dpi", type=int, default=150)
     p.set_defaults(func=_cmd_plot_track)
+
+    p = sub.add_parser("drive", help="drive a built track with the keyboard")
+    p.add_argument("track_id")
+    p.set_defaults(func=_cmd_drive)
 
     args = parser.parse_args(argv)
     return args.func(args)
