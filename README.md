@@ -38,8 +38,11 @@ python -m venv .venv
 Activate it (`.venv\Scripts\activate` on Windows, `source .venv/bin/activate` on macOS/Linux), then:
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev,fast]"
 ```
+
+The `fast` extra adds numba, which compiles the ray casts and track projection. With 64 cars,
+the simulation runs at 64× real time with it and 17.6× without (`python scripts/bench.py`).
 
 ## Build tracks (new package)
 

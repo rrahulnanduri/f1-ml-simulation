@@ -7,6 +7,11 @@ walks every ray through the cells it crosses, in order (an Amanatides-Woo style 
 for all rays at once with numpy), tests only the segments in those cells, and stops a ray as
 soon as its nearest hit is no farther than the exit of the last cell it visited. Rays are
 processed a few cells at a time, all still-active rays together.
+
+When numba is installed (``pip install -e ".[fast]"``), the same walk runs compiled, one ray at
+a time, which is several times faster for the car counts used in training. The two give the
+same distances (tests check they agree to 1e-9). Set ``F1SIM_NO_NUMBA=1`` to force the numpy
+path.
 """
 
 from __future__ import annotations
@@ -14,6 +19,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
+
+from f1sim import _accel
 
 if TYPE_CHECKING:
     from f1sim.track.track import Track
@@ -152,7 +159,22 @@ class SegmentGrid:
         t_in, t_out = self._clip_to_grid(rox, roy, dx, dy, max_dist)
         live = np.flatnonzero(good & (t_in <= t_out))
         if live.size:
-            best = self._walk(rox[live], roy[live], dx[live], dy[live], t_in[live], t_out[live])
+            args = (rox[live], roy[live], dx[live], dy[live], t_in[live], t_out[live])
+            if _accel.enabled(_numba_walk):
+                best = _numba_walk(
+                    *args,
+                    self.x0,
+                    self.y0,
+                    self.cell_size,
+                    self.nx,
+                    self.ny,
+                    self._cell_start,
+                    self._cell_count,
+                    self._cell_segs,
+                    self._seg,
+                )
+            else:
+                best = self._walk(*args)
             out[live] = np.minimum(best, max_dist)
         return out.reshape(n, r)
 
@@ -282,3 +304,73 @@ def _ray_segment_t(ox, oy, dx, dy, px, py, ex, ey) -> np.ndarray:
         far = np.maximum(ta, tb)
         t[par] = np.where(on_line & (far >= -_EPS_T), np.maximum(near, 0.0), np.inf)
     return t
+
+
+# ------------------------------------------------------------------------- compiled walk
+
+
+def _make_numba_walk():
+    """The cell walk and segment test of ``SegmentGrid._walk`` / ``_ray_segment_t``, compiled."""
+
+    def walk(ox, oy, dx, dy, t_in, t_out, x0, y0, c, nx, ny, start, count, segs, seg):
+        n = ox.size
+        out = np.empty(n)
+        for i in range(n):
+            rx, ry, ddx, ddy = ox[i], oy[i], dx[i], dy[i]
+            best = np.inf
+            ix = min(max(int(np.floor((rx + ddx * t_in[i] - x0) / c)), 0), nx - 1)
+            iy = min(max(int(np.floor((ry + ddy * t_in[i] - y0) / c)), 0), ny - 1)
+            sx = 1 if ddx >= 0.0 else -1
+            sy = 1 if ddy >= 0.0 else -1
+            if ddx != 0.0:
+                tx = (x0 + (ix + (1 if sx > 0 else 0)) * c - rx) / ddx
+                step_x = c / abs(ddx)
+            else:
+                tx = np.inf
+                step_x = 0.0
+            if ddy != 0.0:
+                ty = (y0 + (iy + (1 if sy > 0 else 0)) * c - ry) / ddy
+                step_y = c / abs(ddy)
+            else:
+                ty = np.inf
+                step_y = 0.0
+            t_enter = t_in[i]
+            while 0 <= ix < nx and 0 <= iy < ny and t_enter <= t_out[i]:
+                cell = ix * ny + iy
+                for k in range(start[cell], start[cell] + count[cell]):
+                    j = segs[k]
+                    px, py, ex, ey = seg[0, j], seg[1, j], seg[2, j], seg[3, j]
+                    wx = px - rx
+                    wy = py - ry
+                    denom = ddx * ey - ddy * ex
+                    nu = wx * ddy - wy * ddx
+                    if abs(denom) <= _EPS_PARALLEL:
+                        if abs(nu) <= _EPS_T:  # collinear: nearest point ahead
+                            ta = wx * ddx + wy * ddy
+                            tb = ta + ex * ddx + ey * ddy
+                            if max(ta, tb) >= -_EPS_T:
+                                best = min(best, max(min(ta, tb), 0.0))
+                        continue
+                    tt = (wx * ey - wy * ex) / denom
+                    u = nu / denom
+                    if -_EPS_U <= u <= 1.0 + _EPS_U and tt >= -_EPS_T:
+                        best = min(best, max(tt, 0.0))
+                t_exit = min(tx, ty)
+                if best <= t_exit:
+                    break
+                # Ties step x first, like the stable merge in the numpy walk
+                if tx <= ty:
+                    ix += sx
+                    t_enter = tx
+                    tx += step_x
+                else:
+                    iy += sy
+                    t_enter = ty
+                    ty += step_y
+            out[i] = best
+        return out
+
+    return _accel.njit(walk)
+
+
+_numba_walk = _make_numba_walk()

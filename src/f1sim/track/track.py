@@ -11,6 +11,8 @@ from dataclasses import dataclass, field, fields
 
 import numpy as np
 
+from f1sim import _accel
+
 _ARRAY_FIELDS = ("x", "y", "s", "w_left", "w_right", "heading", "curvature")
 _DIRECTIONS = ("", "clockwise", "counterclockwise")
 
@@ -241,6 +243,22 @@ class Track:
         x, y = np.broadcast_arrays(x, y)
         shape = x.shape
         px, py = x.ravel(), y.ravel()
+        if hint is not None and _accel.enabled(_numba_project_hinted):
+            h = np.broadcast_to(np.asarray(hint, dtype=np.int64), shape).ravel() % self._m
+            s, n, idx = _numba_project_hinted(
+                np.ascontiguousarray(px),
+                np.ascontiguousarray(py),
+                h,
+                int(window),
+                self._pts,
+                self._d,
+                self._len2,
+                self._nl,
+                self._s,
+                self._ds,
+                self.length,
+            )
+            return s.reshape(shape), n.reshape(shape), idx.astype(np.intp).reshape(shape)
         if hint is None:
             idx = self._nearest_global(px, py)
         else:
@@ -266,3 +284,66 @@ class Track:
         s = self._s[idx] + t * self._ds[idx]
         s = np.where(s >= self.length, s - self.length, s)
         return s.reshape(shape), n.reshape(shape), idx.reshape(shape)
+
+
+# ------------------------------------------------------------------- compiled projection
+
+
+def _project_hinted_kernel(px, py, hint, window, pts, dv, len2, nl, s_arr, ds, length):
+    """``Track.project`` with a hint, one point at a time: the windowed nearest segment, the
+    same fan refinement (at most 4 moves) and the same final ``(s, n)``."""
+    m = pts.shape[0]
+    n_pts = px.size
+    out_s = np.empty(n_pts)
+    out_n = np.empty(n_pts)
+    out_i = np.empty(n_pts, dtype=np.int64)
+    for k in range(n_pts):
+        x, y = px[k], py[k]
+        best_d = np.inf
+        idx = 0
+        for off in range(-window, window + 1):
+            j = (hint[k] + off) % m
+            rx = x - pts[j, 0]
+            ry = y - pts[j, 1]
+            t = (rx * dv[j, 0] + ry * dv[j, 1]) / len2[j]
+            t = min(max(t, 0.0), 1.0)
+            ex = rx - t * dv[j, 0]
+            ey = ry - t * dv[j, 1]
+            d2 = ex * ex + ey * ey
+            if d2 < best_d:  # first minimum wins, like np.argmin
+                best_d = d2
+                idx = j
+        for it in range(5):
+            j1 = (idx + 1) % m
+            dx, dy = dv[idx, 0], dv[idx, 1]
+            n0x, n0y = nl[idx, 0], nl[idx, 1]
+            exn, eyn = nl[j1, 0] - n0x, nl[j1, 1] - n0y
+            rx, ry = x - pts[idx, 0], y - pts[idx, 1]
+            qa = -(dx * eyn - dy * exn)
+            qb = (rx * eyn - ry * exn) - (dx * n0y - dy * n0x)
+            qc = rx * n0y - ry * n0x
+            disc = np.sqrt(max(qb * qb - 4.0 * qa * qc, 0.0))
+            q = -qb - (1.0 if qb >= 0.0 else -1.0) * disc
+            t = 2.0 * qc / q if abs(q) > 1e-300 else 0.0
+            if it == 4:
+                break
+            if t < -1e-9:
+                idx = (idx - 1) % m
+            elif t > 1.0 + 1e-9:
+                idx = (idx + 1) % m
+            else:
+                break
+        t = min(max(t, 0.0), 1.0)
+        j1 = (idx + 1) % m
+        nvx = nl[idx, 0] + t * (nl[j1, 0] - nl[idx, 0])
+        nvy = nl[idx, 1] + t * (nl[j1, 1] - nl[idx, 1])
+        relx = x - pts[idx, 0] - t * dv[idx, 0]
+        rely = y - pts[idx, 1] - t * dv[idx, 1]
+        out_n[k] = (relx * nvx + rely * nvy) / (nvx * nvx + nvy * nvy)
+        s = s_arr[idx] + t * ds[idx]
+        out_s[k] = s - length if s >= length else s
+        out_i[k] = idx
+    return out_s, out_n, out_i
+
+
+_numba_project_hinted = _accel.njit(_project_hinted_kernel)

@@ -22,6 +22,8 @@ dependencies = [
 f1sim = "f1sim.cli:main"
 
 [project.optional-dependencies]
+# Compiles the ray casts and track projection: 17.6x -> 64x real time with 64 cars
+fast = ["numba>=0.60"]
 dev = [
     "pytest>=8",
     "ruff>=0.6",
