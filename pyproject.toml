@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "f1sim"
+version = "0.1.0"
+description = "Neuroevolution racing simulation on real F1 circuits, with FastF1 ghost laps"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # <3.4: the legacy app sets UIDropdown._options, a private field (src/renderer.py)
+    "arcade>=3.3.3,<3.4",
+    "fastf1>=3.7",
+    "numpy>=2.0",
+    "scipy>=1.13",
+    "shapely>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+# Only the new package; the legacy modules directly under src/ are run from main.py
+include = ["f1sim*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+# Legacy app: replaced module by module and deleted in M4 (docs/revamp-plan.md)
+extend-exclude = [
+    "main.py",
+    "generate_track.py",
+    "src/car.py",
+    "src/evolution_manager.py",
+    "src/ghost_car.py",
+    "src/neural_net.py",
+    "src/renderer.py",
+    "src/spatial_hash.py",
+    "src/track_service.py",
+    "src/utils.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "NPY"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

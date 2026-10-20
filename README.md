@@ -1,16 +1,84 @@
-# React + Vite
+# F1 ML Simulation
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+AI cars learn to drive real Formula 1 circuits through neuroevolution. Track layouts and a
+ghost car replaying a real qualifying lap come from F1 timing data via
+[FastF1](https://docs.fastf1.dev/).
 
-Currently, two official plugins are available:
+![F1 ML Simulation](images/screen.png)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Status
 
-## React Compiler
+The project is mid-revamp; see [docs/revamp-plan.md](docs/revamp-plan.md).
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **Legacy app (works today):** `main.py` and the modules directly under `src/`. 30 cars, each
+  driven by a small neural network, evolve on a track built from FastF1 telemetry while
+  Hamilton's lap plays as a ghost. Its known limitations are measured in section 1 of the plan.
+  The main one is that the "track" is one driver's racing line with fixed-width walls, not the
+  real circuit.
+- **New package `f1sim` (being built):** `src/f1sim/`, delivered milestone by milestone. It
+  will have real track geometry in metres, F1-like physics, headless training and a new app.
 
-## Expanding the ESLint configuration
+| Milestone | Scope | State |
+|---|---|---|
+| M0 | Repo cleanup, packaging, tooling | done |
+| M1 | Real track pipeline (TUM racetrack-database + FastF1 alignment) | next |
+| M2 | Vectorised simulation core in SI units | planned |
+| M3 | Headless neuroevolution training | planned |
+| M4 | New app; legacy code removed | planned |
+| M5 | More circuits, multi-track training, polish | planned |
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Setup
+
+Requires Python 3.11+ (tested on 3.13).
+
+```bash
+python -m venv .venv
+```
+
+Activate it (`.venv\Scripts\activate` on Windows, `source .venv/bin/activate` on macOS/Linux), then:
+
+```bash
+pip install -e ".[dev]"
+```
+
+## Run the legacy app
+
+Run it from the repo root, because it reads and writes `cache/` relative to the current folder:
+
+```bash
+python main.py
+```
+
+- **First run:** each new circuit downloads its session data from FastF1, which takes a while
+  and freezes the window until it finishes. Silverstone 2024 is the default.
+- **Sidebar:** pick a year and circuit, then press **Load Track**. The slider sets the sim
+  speed.
+- **Cache:** downloaded data goes to `cache/`, which git ignores.
+
+## Development
+
+```bash
+ruff check
+```
+
+```bash
+pytest
+```
+
+## Layout
+
+```
+main.py, src/*.py      legacy app (deleted in M4)
+src/f1sim/             new package (see docs/revamp-plan.md, section 3)
+tests/                 pytest suite
+docs/revamp-plan.md    problems, target design, milestones
+docs/data-formats.md   file-format spec for tracks, ghosts, checkpoints, runs
+```
+
+## Credits
+
+- Timing and telemetry data: [FastF1](https://github.com/theOehrly/Fast-F1). Formula 1 data is
+  the property of Formula One World Championship Limited; this is an unofficial hobby project.
+- Planned from M1: track centre lines and widths from the
+  [TUM racetrack-database](https://github.com/TUMFTM/racetrack-database) (LGPL-3.0),
+  downloaded at build time and not redistributed.
