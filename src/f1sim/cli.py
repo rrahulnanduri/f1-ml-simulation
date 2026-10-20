@@ -149,6 +149,11 @@ def _cmd_reference_lap(args: argparse.Namespace) -> int:
         raceline = tum_source.parse_tum_raceline(tum_source.fetch_tum_raceline(tum_name))
         line = "TUM raceline"
     lap = drive_reference_lap(track, params, raceline_xy=raceline)
+    if args.save:
+        out = Path(args.save)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(out, t=lap.t, x=lap.x, y=lap.y, s=lap.s, speed=lap.v)
+        print(f"  saved trace  {out.resolve()}")
     print(f"{track.data.name}, {line}, car {args.car or 'defaults'}")
     if not lap.completed or not np.isfinite(lap.lap_time_s):
         print(f"  lap not completed cleanly (worst excess {lap.max_abs_n_excess_m:+.2f} m)")
@@ -161,6 +166,16 @@ def _cmd_reference_lap(args: argparse.Namespace) -> int:
         driver = track.data.fastf1_alignment.get("reference_driver", "")
         delta = lap.lap_time_s / ref - 1
         print(f"  real pole    {driver} {ref:.3f} s -> {delta:+.1%} (M2 target: within 10%)")
+    return 0
+
+
+def _cmd_replay(args: argparse.Namespace) -> int:
+    from f1sim.app.replay import run
+
+    traces = [Path(p) for p in args.traces]
+    # A run folder means its best lap
+    traces = [p / "best_lap.npz" if p.is_dir() else p for p in traces]
+    run(args.track_id, traces, args.labels)
     return 0
 
 
@@ -197,7 +212,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("track_id")
     p.add_argument("--car", help="car parameters TOML (default: built-in CarParams)")
     p.add_argument("--centre-line", action="store_true", help="follow the centre line instead")
+    p.add_argument("--save", help="write the lap trace to this .npz (for f1sim replay)")
     p.set_defaults(func=_cmd_reference_lap)
+
+    p = sub.add_parser("replay", help="replay recorded laps (npz traces or run folders)")
+    p.add_argument("track_id")
+    p.add_argument("traces", nargs="+", help=".npz trace files, or run folders (best_lap.npz)")
+    p.add_argument("--labels", nargs="+", help="one label per trace")
+    p.set_defaults(func=_cmd_replay)
 
     p = sub.add_parser("drive", help="drive a built track with the keyboard")
     p.add_argument("track_id")
