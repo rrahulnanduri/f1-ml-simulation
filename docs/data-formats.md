@@ -43,6 +43,7 @@ All generated data goes in the user cache folder (`paths.py`), not the repo. The
 
 - Points are stored as columns (a few thousand per track, which is fine as JSON).
 - Walls aren't stored; they're derived from the points when the track loads.
+- `fastf1_alignment.lap_source` says which source served the reference lap ("openf1" or "fastf1"). Both use the same raw frame.
 - `fastf1_alignment` maps FastF1 metres (X/Y ÷ 10) into the track frame: `p' = scale · R(rotation_rad) · diag(1, −1 if mirrored else 1) · p + (tx_m, ty_m)` (`f1sim.data.alignment.apply_alignment`).
   - `inside_ratio` counts the reference lap's samples strictly inside the edges.
   - `inside_ratio_tol` counts them within `edge_tolerance_m` of the edges.
@@ -56,7 +57,7 @@ This maps a `track_id` to the TUM file name, the FastF1 `Location` values (more 
 
 | Array | Unit | Notes |
 |---|---|---|
-| `t` | s | from lap start, resampled to 20 Hz |
+| `t` | s | from lap start, 20 Hz |
 | `x`, `y` | m | already in the track frame |
 | `s` | m | projected onto the centre line, monotonic |
 | `speed` | m/s | |
@@ -64,7 +65,13 @@ This maps a `track_id` to the TUM file name, the FastF1 `Location` values (more 
 | `brake` | 0/1 | |
 | `gear` | int | |
 
-The JSON sidecar holds `driver`, `team`, `lap_time_s`, `year`, `session`, `fastf1_version` and `track_build`. The live delta is `t_ai(s) − t_ghost(s)`, interpolated on `s`.
+The JSON sidecar holds `driver`, `team`, `lap_time_s`, `year`, `session`, `lap_source` ("openf1" or "fastf1") and `track_build`. The live delta is `t_ai(s) − t_ghost(s)`, interpolated on `s`.
+
+**Smoothing is required.** Raw positions arrive at about 3.7 Hz. Joining them with straight lines (as the legacy app did) makes speed change in steps: Hamilton's 2024 Silverstone ghost hit 170 g at the 99th percentile and up to 470 km/h. Instead:
+- Fit `x(t)` and `y(t)` with a smoothing spline (`scipy.interpolate.make_smoothing_spline`, which picks the amount of smoothing itself). On that lap this gives at most 4.2 g and follows the car's speed sensor to a median 7 km/h.
+- Evaluate the spline at 20 Hz.
+- Take `speed` from the spline's derivative, cross-checked against the speed sensor (`car_data` / OpenF1 `car_data`).
+- Take the heading from the spline tangent, so the ghost doesn't twitch between samples.
 
 ## 4. Agent checkpoint: `runs/<run_id>/checkpoints/<gen>.npz` + `meta.json`
 

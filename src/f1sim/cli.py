@@ -29,8 +29,18 @@ def _cmd_build_track(args: argparse.Namespace) -> int:
 
     year = None if args.no_fastf1 else args.year
     try:
-        report = build_and_cache(args.track_id, year=year, resolution_m=args.resolution)
-    except (KeyError, NotImplementedError, AlignmentRejected, TrackBuildError) as exc:
+        report = build_and_cache(
+            args.track_id, year=year, resolution_m=args.resolution, source=args.source
+        )
+    except (
+        KeyError,
+        ValueError,
+        NotImplementedError,
+        AlignmentRejected,
+        TrackBuildError,
+        OSError,
+        RuntimeError,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -44,7 +54,10 @@ def _cmd_build_track(args: argparse.Namespace) -> int:
     print(f"  direction    {t.direction}")
     if report.alignment is not None:
         a = report.alignment
-        print(f"  reference    {report.reference_driver} {report.reference_lap_s:.3f} s")
+        print(
+            f"  reference    {report.reference_driver} {report.reference_lap_s:.3f} s "
+            f"({report.lap_source})"
+        )
         print(
             f"  alignment    median {a.median_dist_m:.2f} m from centre line, "
             f"{t.fastf1_alignment['inside_ratio_tol']:.1%} within 1 m of edges, "
@@ -114,8 +127,16 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("build-track", help="build a circuit from TUM data into the cache")
     p.add_argument("track_id")
-    p.add_argument("--year", type=int, default=2024, help="FastF1 qualifying used for alignment")
-    p.add_argument("--no-fastf1", action="store_true", help="skip FastF1 alignment and sectors")
+    p.add_argument("--year", type=int, default=2024, help="qualifying session used for alignment")
+    p.add_argument(
+        "--no-fastf1", action="store_true", help="skip lap alignment and sectors (geometry only)"
+    )
+    p.add_argument(
+        "--source",
+        choices=("auto", "openf1", "fastf1"),
+        default="auto",
+        help="reference-lap source; auto = OpenF1 for 2023+, FastF1 (cached only) before",
+    )
     p.add_argument("--resolution", type=float, default=2.0, help="point spacing in metres")
     p.set_defaults(func=_cmd_build_track)
 

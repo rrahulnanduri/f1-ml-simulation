@@ -19,6 +19,9 @@ import numpy as np
 import pandas as pd
 
 from f1sim import paths
+from f1sim.data.laps import LapXY
+
+__all__ = ["EventInfo", "LapXY", "event_schedule", "fastest_lap_xy", "load_session"]
 
 _cache_enabled = False
 
@@ -40,18 +43,6 @@ class EventInfo:
     name: str
     location: str
     country: str
-
-
-@dataclass(frozen=True)
-class LapXY:
-    """A lap's position trace in metres (FastF1 frame), time from lap start."""
-
-    driver: str
-    lap_time_s: float
-    t: np.ndarray
-    x_m: np.ndarray
-    y_m: np.ndarray
-    sector_end_t: tuple[float, float]
 
 
 # ---------------------------------------------------------------- pure helpers (offline tests)

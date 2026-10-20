@@ -49,3 +49,8 @@ def ghosts_dir() -> Path:
 def fastf1_dir() -> Path:
     """FastF1's own HTTP and parsed-data cache."""
     return _ensure(cache_dir() / "fastf1")
+
+
+def openf1_dir() -> Path:
+    """Cached OpenF1 API responses (JSON, one file per request URL)."""
+    return _ensure(cache_dir() / "openf1")

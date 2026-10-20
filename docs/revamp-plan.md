@@ -272,7 +272,7 @@ Order: M0 → M1 → M2 → M3 → M4, with M5 items picked up afterwards. M2's 
 | Vectorised raycasts too slow | Uniform grid + batched maths; if still short of 50×, drop to 7 rays or move to numba (optional dep) |
 | arcade draw cost with many cars | Cached static shapes, a sprite list for cars, sensors only on the followed car |
 | FastF1 rate limits / offline | Cache under `paths.py`; the app works offline for already-built tracks |
-| **F1 live timing needs sign-in (seen 2026-10-20):** `livetiming.formula1.com` returns HTTP 401, so FastF1 3.8 only works for already-cached sessions | Undecided. Options are FastF1 3.9 (alpha) with sign-in, or ghosts limited to the cached sessions. The cached 2024 British GP covers M1 |
+| **F1 live timing needs sign-in (seen 2026-10-20):** `livetiming.formula1.com` returns HTTP 401 without an F1 TV subscription (FastF1 3.9 alpha adds the sign-in) | **Decided:** reference laps come from OpenF1 (free, same raw positions, 2023 onwards) via `data/laps.py`. FastF1 stays for older seasons and only works for cached sessions. FastF1 3.9 with F1 TV can be added later behind the same `LapXY` |
 | LGPL data redistribution | Download at build time from a pinned commit; attribution in `THIRD_PARTY.md`; derived files aren't committed |
 
 ## 12. Decisions (settled 2026-10-20)

@@ -13,6 +13,15 @@
 - **Exception:** `tests/fixtures/tum/` holds two 20-row excerpts of the Silverstone files, used
   only for offline parser tests (see the README in that folder).
 
+## OpenF1 (CC BY-NC-SA 4.0)
+
+- **Source:** <https://openf1.org>, an unofficial community API that isn't affiliated with
+  Formula 1.
+- **License:** data under CC BY-NC-SA 4.0, intended for non-commercial and educational use.
+- **Used for:** reference-lap positions and sector times from 2023 onwards
+  (`f1sim.data.openf1_source`). Responses are cached in the user cache folder and not
+  redistributed.
+
 ## FastF1 (MIT)
 
 - **Source:** <https://github.com/theOehrly/Fast-F1>, by Philipp Schaefer and contributors.

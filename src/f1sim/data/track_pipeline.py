@@ -40,6 +40,7 @@ class BuildReport:
     alignment: Alignment | None
     reference_driver: str | None
     reference_lap_s: float | None
+    lap_source: str | None = None
 
 
 def track_path(track_id: str) -> Path:
@@ -52,12 +53,14 @@ def load_track(track_id: str) -> Track:
 
 
 def build_and_cache(
-    track_id: str, *, year: int | None = 2024, resolution_m: float = 2.0
+    track_id: str, *, year: int | None = 2024, resolution_m: float = 2.0, source: str = "auto"
 ) -> BuildReport:
     """Build `track_id` from TUM data and write it to the cache.
 
     With `year`, the fastest qualifying lap of that year is aligned to the track to fix the
     start/finish line, racing direction and sector boundaries, and to validate the layout.
+    `source` picks where the lap comes from (see `laps.reference_lap`): "auto" uses OpenF1 for
+    2023 onwards and FastF1 (cached sessions only) before that.
     Raises AlignmentRejected if the lap doesn't fit (section 4.3).
     """
     entry = catalog.get(track_id)
@@ -67,7 +70,7 @@ def build_and_cache(
             "fallback arrives in M5"
         )
     raw = tum_source.parse_tum_csv(tum_source.fetch_tum_csv(entry.tum_name))
-    source = {
+    geometry_source = {
         "geometry": "tum-racetrack-database",
         "commit": tum_source.TUM_COMMIT,
         "license": "LGPL-3.0",
@@ -83,20 +86,18 @@ def build_and_cache(
             track_id=entry.id,
             name=entry.name,
             resolution_m=resolution_m,
-            source=source,
+            source=geometry_source,
         )
 
     data = build(raw.x, raw.y, raw.w_right, raw.w_left)
     alignment = None
-    driver = lap_time = None
+    driver = lap_time = lap_source = None
 
     if year is not None:
-        # FastF1 import is slow; only pay for it (and alignment) when a year is requested
-        from f1sim.data import fastf1_source
+        from f1sim.data import laps
         from f1sim.data.alignment import align_to_centreline, apply_alignment
 
-        session = fastf1_source.load_session(year, entry.fastf1_locations[0], "Q")
-        lap = fastf1_source.fastest_lap_xy(session)
+        lap, lap_source = laps.reference_lap(entry.id, year, source=source)
         driver, lap_time = lap.driver, lap.lap_time_s
 
         alignment = align_to_centreline(lap.x_m, lap.y_m, data.x, data.y, data.w_left, data.w_right)
@@ -124,6 +125,7 @@ def build_and_cache(
             fastf1_location=entry.fastf1_locations[0],
             fastf1_alignment={
                 "years_validated": [year],
+                "lap_source": lap_source,
                 "reference_driver": lap.driver,
                 "reference_lap_s": lap.lap_time_s,
                 **asdict(alignment),
@@ -134,7 +136,7 @@ def build_and_cache(
 
     out = track_path(entry.id)
     write_track_json(data, out)
-    return BuildReport(data, out, alignment, driver, lap_time)
+    return BuildReport(data, out, alignment, driver, lap_time, lap_source)
 
 
 def inside_ratio(track: Track, x: np.ndarray, y: np.ndarray, tolerance_m: float = 0.0) -> float:

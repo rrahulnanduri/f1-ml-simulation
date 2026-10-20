@@ -9,9 +9,9 @@ import pytest
 
 from _geometry_helpers import circle, figure_eight, teardrop
 from f1sim import cli
-from f1sim.data import catalog, fastf1_source, track_pipeline, tum_source
+from f1sim.data import catalog, laps, track_pipeline, tum_source
 from f1sim.data.catalog import CatalogEntry
-from f1sim.data.fastf1_source import LapXY
+from f1sim.data.laps import LapXY
 from f1sim.data.track_builder import wall_self_crossings
 from f1sim.track.track import Track
 
@@ -62,8 +62,7 @@ def fake_sources(monkeypatch, tmp_path):
     monkeypatch.setattr(tum_source, "fetch_tum_csv", lambda name: tmp_path / "unused.csv")
     monkeypatch.setattr(tum_source, "parse_tum_csv", lambda path: raw)
     lap, start = _fake_lap(raw)
-    monkeypatch.setattr(fastf1_source, "load_session", lambda year, location, kind="Q": object())
-    monkeypatch.setattr(fastf1_source, "fastest_lap_xy", lambda session, driver=None: lap)
+    monkeypatch.setattr(laps, "reference_lap", lambda track_id, year, **kw: (lap, "openf1"))
     return raw, lap, start
 
 
@@ -85,6 +84,7 @@ def test_build_orients_track_like_the_lap_and_sets_sectors(fake_sources):
     a = report.alignment
     assert a.inside_ratio >= 0.98 and a.median_dist_m < 3.0
     assert t.fastf1_alignment["reference_driver"] == "TST"
+    assert t.fastf1_alignment["lap_source"] == "openf1"
     assert t.fastf1_location == "Testville"
 
     # The cached file loads back as the same track
@@ -97,7 +97,7 @@ def test_build_orients_track_like_the_lap_and_sets_sectors(fake_sources):
 def test_lap_from_a_different_layout_is_rejected(fake_sources, monkeypatch):
     cx, cy = circle(300.0, n=400)
     wrong = LapXY("TST", 40.0, np.linspace(0, 40, cx.size), cx, cy, (13.0, 26.0))
-    monkeypatch.setattr(fastf1_source, "fastest_lap_xy", lambda session, driver=None: wrong)
+    monkeypatch.setattr(laps, "reference_lap", lambda track_id, year, **kw: (wrong, "openf1"))
     with pytest.raises(track_pipeline.AlignmentRejected, match="layout may have changed"):
         track_pipeline.build_and_cache("testring", year=2024)
     assert not track_pipeline.track_path("testring").exists()

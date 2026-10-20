@@ -56,7 +56,8 @@ f1sim build-track silverstone
 - **Without FastF1:** add `--no-fastf1` to build the geometry only, which skips the start line, sectors and alignment check.
 - **Output:** tracks go to the user cache folder (`%LOCALAPPDATA%\f1sim\Cache` on Windows).
 - **Known gaps:**
-  - FastF1 can currently only load sessions already in its cache, because F1's live-timing server now requires sign-in.
+  - Reference laps come from OpenF1 for 2023 onwards. Older seasons go through FastF1, which only works for sessions already in its cache, because F1's live-timing server now needs an F1 TV subscription.
+  - Pick the source with `--source openf1|fastf1`.
   - Suzuka's figure-eight isn't supported yet.
   - Circuits missing from TUM need the M5 fallback.
 
