@@ -212,8 +212,10 @@ class SimulationWindow(arcade.Window):
         from src.track_service import TrackService
         self.available_tracks = TrackService.get_available_tracks(self.selected_year)
         track_names = [t[0] for t in self.available_tracks]
-        # Note: arcade.gui.UIDropdown doesn't support dynamic option updates easily
-        # We rebuild the options list for next load
+        # arcade.gui.UIDropdown has no public options setter, so we replace _options
+        # and then set value, which rebuilds the option buttons and refreshes the label
+        self.track_dropdown._options = track_names
+        self.track_dropdown.value = track_names[0] if track_names else "No Tracks"
         print(f"[UI] Year changed to {self.selected_year}. Available tracks: {len(track_names)}")
     
     def _load_selected_track(self):
@@ -238,7 +240,7 @@ class SimulationWindow(arcade.Window):
         self.setup()
         
         # Update HUD
-        self.track_label.text = f"TRACK: {selected_track_name.upper()}"
+        self.lbl_track.text = f"TRACK: {selected_track_name.upper()}"
 
     def setup(self):
         """
