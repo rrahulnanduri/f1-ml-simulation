@@ -36,6 +36,10 @@ where = ["src"]
 # Only the new package; the legacy modules directly under src/ are run from main.py
 include = ["f1sim*"]
 
+[tool.setuptools.package-data]
+# Bundled UI fonts (SIL OFL 1.1, see THIRD_PARTY.md) with their licences
+"f1sim.app" = ["assets/fonts/*/*.ttf", "assets/fonts/*/OFL.txt"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

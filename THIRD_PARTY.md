@@ -29,3 +29,23 @@
 - **Used for:** F1 event schedules, timing and position data for ghost laps and track
   alignment. It is a runtime dependency installed from PyPI and is not vendored here. Data it
   downloads is cached in the user cache folder, not in the repository.
+
+## Inter Tight (SIL Open Font License 1.1)
+
+- **Source:** <https://github.com/googlefonts/inter-gf-tight> at commit
+  `c194f94c60b569b47876811321f5ef1f0c2614a2`, the upstream that google/fonts `ofl/intertight`
+  is built from (google/fonts itself only ships the variable font). Copyright 2022 The Inter
+  Project Authors.
+- **License:** SIL Open Font License 1.1, in `src/f1sim/app/assets/fonts/InterTight/OFL.txt`
+  (identical to google/fonts `ofl/intertight/OFL.txt`).
+- **Used for:** HUD text in the drive and replay viewers. The static `InterTight-Light.ttf` and
+  `InterTight-Regular.ttf` (version 3.004) are bundled unmodified as package data.
+
+## JetBrains Mono (SIL Open Font License 1.1)
+
+- **Source:** <https://github.com/JetBrains/JetBrainsMono>, release tag `v2.304`
+  (`fonts/ttf/`). Copyright 2020 The JetBrains Mono Project Authors.
+- **License:** SIL Open Font License 1.1, in `src/f1sim/app/assets/fonts/JetBrainsMono/OFL.txt`.
+- **Used for:** numbers in the HUD (lap times, gaps, speed). The static
+  `JetBrainsMono-Light.ttf` and `JetBrainsMono-Regular.ttf` (version 2.304) are bundled
+  unmodified as package data.

@@ -1,7 +1,10 @@
-"""Static track geometry for drawing: road triangles, start/finish and sector lines.
+"""Static track geometry for drawing: road triangles and wall hairlines, plus the start/finish
+and sector lines as data.
 
 :func:`road_triangles` and :func:`boundary_lines` are pure numpy. :func:`build_track_shapes`
-turns them into one arcade ``ShapeElementList`` **in world metres**.
+turns the road and walls into one arcade ``ShapeElementList`` **in world metres**, in the
+"pit wall noir" look (:mod:`f1sim.app.ui.theme`): a ``#1A1C21`` road band between hairline
+walls (white at 30 %).
 
 How the static shapes are cached and transformed (arcade 3.3.3): a ``ShapeElementList``
 uploads its vertices to one GPU buffer per primitive mode the first time it is drawn, and later
@@ -11,12 +14,10 @@ an ``arcade.camera.Camera2D`` (``position`` = the :class:`~f1sim.app.camera.Came
 ``zoom`` = pixels per metre) before drawing. Zooming and panning only change two uniforms; the
 geometry is never rebuilt.
 
-Lines are drawn in two ways so they read at every zoom: 1-pixel GL lines (walls, and the
-start/sector lines) that stay visible when zoomed out, and, for the start and sector lines, a
-quad of fixed world width that gives them body when zoomed in.
-
-The batches are drawn in the order their primitive mode first appears: road triangles, wall
-line strips, start/sector quads, then the 1-pixel start/sector lines on top.
+The walls are 1-pixel GL line loops, so they stay one screen pixel wide at any zoom. The
+start/finish line is not part of the cached shapes: the viewers draw it in screen space as a
+solid 2-3 px white line (:func:`f1sim.app.ui.glass.draw_start_line`). Sector lines are no
+longer drawn; :func:`boundary_lines` still describes them.
 """
 
 from __future__ import annotations
@@ -25,12 +26,8 @@ import numpy as np
 
 from f1sim.track.track import Track
 
-ROAD_COLOUR = (60, 60, 60, 255)
-WALL_COLOUR = (255, 255, 255, 255)
-START_COLOUR = (220, 30, 30, 255)
-SECTOR_COLOUR = (40, 110, 255, 255)
-LINE_BODY_WIDTH_M = 1.5
-"""World width of the start/finish and sector line quads."""
+ROAD_COLOUR = (26, 28, 33, 255)  # theme.ROAD
+WALL_COLOUR = (255, 255, 255, 77)  # theme.WALL: white at 30 %
 
 
 def road_triangles(track: Track) -> np.ndarray:
@@ -78,17 +75,6 @@ def _points(a: np.ndarray) -> list[tuple[float, float]]:
     return [(float(x), float(y)) for x, y in np.asarray(a).reshape(-1, 2)]
 
 
-def _line_quad(line: np.ndarray, width_m: float) -> np.ndarray:
-    """Four triangle-strip corners of a quad of ``width_m`` centred on ``line`` (2, 2)."""
-    a, b = line
-    d = b - a
-    length = float(np.hypot(*d))
-    if length == 0.0:
-        return np.array([a, a, b, b])
-    off = np.array([-d[1], d[0]]) / length * (0.5 * width_m)  # perpendicular to the line
-    return np.array([a + off, a - off, b + off, b - off])
-
-
 def build_track_shapes(track: Track):
     """One ``arcade.shape_list.ShapeElementList`` with the whole static track, in metres.
 
@@ -108,12 +94,4 @@ def build_track_shapes(track: Track):
     for wall in (track.left_wall(), track.right_wall()):
         shapes.append(shape_list.create_line_loop(_points(wall), WALL_COLOUR))
 
-    lines = boundary_lines(track)
-    coloured = [(lines["start_finish"], START_COLOUR)]
-    coloured += [(line, SECTOR_COLOUR) for line in lines["sectors"]]
-    for line, colour in coloured:
-        quad = _points(_line_quad(line, LINE_BODY_WIDTH_M))
-        shapes.append(shape_list.create_triangles_strip_filled_with_colors(quad, [colour] * 4))
-    for line, colour in coloured:
-        shapes.append(shape_list.create_lines(_points(line), colour))
     return shapes
