@@ -179,6 +179,39 @@ def _cmd_replay(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ghost(args: argparse.Namespace) -> int:
+    from f1sim.data.ghost_builder import build_ghost, ghost_path, save_ghost
+
+    try:
+        g = build_ghost(
+            args.track_id, args.year, driver=args.driver, kind=args.session, source=args.source
+        )
+    except (KeyError, ValueError, FileNotFoundError, OSError, RuntimeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    m = g.meta
+    out = (
+        Path(args.out)
+        if args.out
+        else ghost_path(args.year, args.track_id, args.session, m["driver"])
+    )
+    save_ghost(g, out)
+    team = f" ({m['team']})" if m.get("team") else ""
+    print(
+        f"{m['driver']}{team} {args.year} {args.track_id} {args.session}: {m['lap_time_s']:.3f} s"
+    )
+    print(f"  source       {m['lap_source']}, {g.t.size} samples at {m['rate_hz']:g} Hz")
+    print(f"  top speed    {g.speed.max() * 3.6:.1f} km/h")
+    print(
+        f"  smoothness   max {m['max_accel_g']:.1f} g along track "
+        f"(99th pct {m['p99_accel_g']:.1f} g)"
+    )
+    print(f"  on track     {m['near_edge_ratio']:.1%} within 1 m of the edges")
+    print(f"  speed check  {m['speed_check_kmh']:.1f} km/h median vs the car's speed sensor")
+    print(f"  saved        {out.resolve()}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="f1sim", description=__doc__)
     parser.add_argument("--version", action="version", version=f"f1sim {__version__}")
@@ -214,6 +247,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--centre-line", action="store_true", help="follow the centre line instead")
     p.add_argument("--save", help="write the lap trace to this .npz (for f1sim replay)")
     p.set_defaults(func=_cmd_reference_lap)
+
+    p = sub.add_parser("ghost", help="build a smoothed ghost of a real driver's fastest lap")
+    p.add_argument("track_id")
+    p.add_argument("year", type=int)
+    p.add_argument("--driver", help="abbreviation or number (default: the session's fastest)")
+    p.add_argument("--session", default="Q", help="Q (default), R, S or SQ")
+    p.add_argument(
+        "--source",
+        choices=("auto", "openf1", "fastf1"),
+        default="auto",
+        help="auto = OpenF1 for 2023+, FastF1 (cached only) before",
+    )
+    p.add_argument("--out", help="output .npz (default: the ghosts folder in the user cache)")
+    p.set_defaults(func=_cmd_ghost)
 
     p = sub.add_parser("replay", help="replay recorded laps (npz traces or run folders)")
     p.add_argument("track_id")
