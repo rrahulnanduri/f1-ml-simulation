@@ -178,7 +178,7 @@ Moved to [data-formats.md](data-formats.md), the canonical spec. It covers track
 - Corners above a radius of about 150 m are flat out.
 - Medium-speed corners are too slow (Becketts 153 km/h, Stowe 163 km/h).
 
-Optional retune: `max_brake_g=3.0, grip_base_g=1.9` gives 87.46 s (+1.9%) and 98 m braking.
+**Applied (2026-10-20):** `max_brake_g=3.0, grip_base_g=1.9` → 87.458 s (+1.9%), braking 300→80 km/h in 98 m.
 
 **Calibration.** `scripted.py` follows TUM's racing line using a forward/backward speed-profile pass under these limits, and its lap time is compared with real pole: Silverstone 2024 Q was 1:25.819. Tune the parameters until it lands within ±10%. This number is the M2 acceptance test.
 

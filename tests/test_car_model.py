@@ -151,8 +151,8 @@ def test_standing_start_moves():
 
 
 def test_grip_limit_values():
-    assert grip_limit(0.0, P) == pytest.approx(1.6 * G)
-    assert grip_limit(250.0 * KMH, P) / G == pytest.approx(4.93, abs=0.01)  # "about 5 g"
+    assert grip_limit(0.0, P) == pytest.approx(1.9 * G)
+    assert grip_limit(250.0 * KMH, P) / G == pytest.approx(5.23, abs=0.01)  # "about 5 g"
     v = np.array([0.0, 30.0, 70.0])
     assert grip_limit(v, P).shape == (3,)
 
@@ -217,14 +217,14 @@ def test_circle_r100_max_speed():
     radius = 100.0
     v_max = max_steady_speed(radius)
     assert v_max * v_max / radius == pytest.approx(grip_limit(v_max, P), rel=1e-12)
-    assert v_max == pytest.approx(69.7, abs=0.1)
+    assert v_max == pytest.approx(75.95, abs=0.1)
     assert circle_lap_time(radius) == pytest.approx(2 * math.pi * radius / v_max)
     # Holding speed also needs tyre force against drag inside the friction circle:
     # (v^2/R)^2 + (c v^2)^2 = a_max(v)^2, so the drag-aware steady speed is a bit lower.
     v_hold = math.sqrt(
         G * P.grip_base_g / (math.hypot(1.0 / radius, P.drag_coeff) - G * P.grip_aero_coeff)
     )
-    assert v_hold == pytest.approx(68.9, abs=0.1)
+    assert v_hold == pytest.approx(75.12, abs=0.1)
     below, s_below = cornering_state(1, 0.995 * v_hold, radius)
     for _ in range(int(2.0 / DT)):
         info = step(below, s_below, hold_speed_pedal(below.v, 0.995 * v_hold), P, DT)

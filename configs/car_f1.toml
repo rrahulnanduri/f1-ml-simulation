@@ -11,6 +11,6 @@ power_w = 750e3           # engine + ERS power at the wheels, W
 mass_kg = 800.0           # car + driver mass, kg
 max_drive_g = 1.3         # traction cap on drive acceleration, g
 drag_coeff = 0.0012       # drag deceleration = drag_coeff * v^2, 1/m (top speed ~92 m/s)
-grip_base_g = 1.6         # mechanical grip at zero speed, g
+grip_base_g = 1.9         # mechanical grip at zero speed, g
 grip_aero_coeff = 0.00069 # downforce grip growth: a_max = g * (base + coeff * v^2), s^2/m^2
-max_brake_g = 5.5         # braking deceleration cap (also limited by grip), g
+max_brake_g = 3.0         # braking deceleration cap (also limited by grip), g

@@ -40,9 +40,9 @@ class CarParams:
     mass_kg: float = 800.0
     max_drive_g: float = 1.3
     drag_coeff: float = 0.0012
-    grip_base_g: float = 1.6
+    grip_base_g: float = 1.9
     grip_aero_coeff: float = 0.00069
-    max_brake_g: float = 5.5
+    max_brake_g: float = 3.0
 
     def __post_init__(self) -> None:
         for f in fields(self):
