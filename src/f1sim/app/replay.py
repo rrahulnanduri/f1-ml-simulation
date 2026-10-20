@@ -25,25 +25,35 @@ have reached).
 
 **Window.** The track is the cached ``ShapeElementList`` from :mod:`f1sim.app.render_track`,
 drawn under an ``arcade.Camera2D`` synced from :class:`~f1sim.app.camera.Camera` each frame,
-exactly as in :mod:`f1sim.app.drive`. Cars are 5.6 x 2.0 m rectangles under the same camera;
-labels, legend and HUD are ``arcade.Text`` objects under the default (pixel) camera.
+exactly as in :mod:`f1sim.app.drive`, into the glass renderer's offscreen scene
+(:mod:`f1sim.app.ui.glass`). Cars are 5.6 x 2.0 m capsules drawn in screen pixels (with a
+minimum size); the followed car is "self" (solid orange), the others are outlined in their team
+colour. The HUD (:mod:`f1sim.app.ui.hud`) is a timing tower ranked by lap time, the gap to the
+reference (the fastest other trace), the speed, and a paging card with sectors, speed vs the
+reference and the gap bar. :class:`ReplayTiming` computes all of it without a window.
 
 Controls: Space pause, Left/Right seek -/+2 s, Up/Down playback speed (0.25x to 8x), ``R``
-restart, ``F`` cycle the followed car (then free camera), mouse wheel zoom at the cursor,
-right-drag pan (turns follow off), ``Esc`` quit.
+restart, ``F`` cycle the followed car (then free camera), ``Tab`` next card page, mouse wheel
+zoom at the cursor (pages the card when over it), click the card for the next page, right-drag
+pan (turns follow off), ``Esc`` quit.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+import json
+import math
+import time
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import arcade
 import numpy as np
 
 from f1sim.app.camera import Camera
-from f1sim.app.drive import car_polygon, format_lap_time
-from f1sim.app.render_track import build_track_shapes
+from f1sim.app.drive import format_lap_time
+from f1sim.app.render_track import boundary_lines, build_track_shapes
+from f1sim.app.ui import theme
+from f1sim.app.ui import timing as tm
 from f1sim.track.track import Track
 
 DT = 1.0 / 60.0
@@ -62,27 +72,12 @@ REPROJECT_JUMP_M = 50.0
 """A hinted projection jumping further than this along the track is redone globally."""
 PROJECT_WINDOW = 10
 
-CAR_LENGTH_M = 5.6
-CAR_WIDTH_M = 2.0
+CAR_LENGTH_M = theme.CAR_LENGTH_M
+CAR_WIDTH_M = theme.CAR_WIDTH_M
 FOLLOW_PIXELS_PER_METRE = 4.0
 """Initial zoom of the follow camera."""
 ZOOM_STEP = 1.15
 """Zoom factor per mouse-wheel notch."""
-
-CAR_COLOURS = (
-    (255, 140, 0, 255),  # orange
-    (0, 200, 255, 255),  # cyan
-    (240, 60, 200, 255),  # magenta
-    (250, 230, 40, 255),  # yellow
-    (120, 255, 120, 255),  # light green
-    (255, 255, 255, 255),  # white
-)
-CAR_NOSE_COLOUR = (20, 20, 20, 255)
-BACKGROUND_COLOUR = (24, 70, 32, 255)
-PANEL_COLOUR = (0, 0, 0, 150)
-AHEAD_COLOUR = (80, 230, 80, 255)
-BEHIND_COLOUR = (255, 80, 80, 255)
-
 
 # ---------------------------------------------------------------------------- traces
 
@@ -94,6 +89,9 @@ class Trace:
 
     ``s`` is an **empty array** when the file had none; :func:`with_track_s` (called by
     :func:`run`) fills it by projecting onto the track. ``lap_time_s = t[-1] - t[0]``.
+
+    ``meta`` is the ghost sidecar (``<name>.json`` from :mod:`f1sim.data.ghost_builder`:
+    ``driver``, ``team``, ``year``...) or ``None``; ``gear`` is empty when the file has none.
     """
 
     label: str
@@ -103,6 +101,13 @@ class Trace:
     s: np.ndarray
     speed: np.ndarray
     lap_time_s: float
+    meta: dict | None = None
+    gear: np.ndarray = field(default_factory=lambda: np.empty(0))
+
+    @property
+    def is_ghost(self) -> bool:
+        """A real-driver ghost lap (it has a ghost sidecar)."""
+        return self.meta is not None
 
     @property
     def has_s(self) -> bool:
@@ -124,12 +129,33 @@ def _column(data, name: str, path: Path) -> np.ndarray:
     return arr
 
 
+GHOST_FORMAT = "f1sim.ghost"
+"""``format`` of a ghost sidecar (``f1sim.data.ghost_builder.GHOST_FORMAT``; not imported, as
+that module pulls in scipy and the data sources)."""
+
+
+def load_ghost_meta(path: Path) -> dict | None:
+    """The ghost sidecar ``path.with_suffix(".json")`` as a dict (without ``format`` and
+    ``version``), or ``None`` if there is none or it isn't a ghost sidecar."""
+    side = Path(path).with_suffix(".json")
+    try:
+        doc = json.loads(side.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict) or doc.get("format") != GHOST_FORMAT:
+        return None
+    return {k: v for k, v in doc.items() if k not in ("format", "version")}
+
+
 def load_trace(path: Path, label: str | None = None) -> Trace:
-    """Read a trace NPZ with at least ``t``, ``x``, ``y``; ``s`` and ``speed`` are optional.
+    """Read a trace NPZ with at least ``t``, ``x``, ``y``; ``s``, ``speed`` and ``gear`` are
+    optional, and a ghost sidecar next to it is read into ``meta``.
 
     A missing ``speed`` is computed from finite differences of the positions; a missing ``s``
-    is left empty (see :class:`Trace`). Raises ``ValueError`` for missing columns, mismatched
-    lengths, fewer than two samples or a ``t`` that isn't strictly increasing.
+    is left empty (see :class:`Trace`). Without ``label``, a ghost is named from its sidecar
+    (``"VER ’25"``), anything else from the file name. Raises ``ValueError`` for missing
+    columns, mismatched lengths, fewer than two samples or a ``t`` that isn't strictly
+    increasing.
     """
     path = Path(path)
     with np.load(path, allow_pickle=False) as data:
@@ -139,9 +165,10 @@ def load_trace(path: Path, label: str | None = None) -> Trace:
         t, x, y = (_column(data, c, path) for c in ("t", "x", "y"))
         s = _column(data, "s", path) if "s" in data.files else np.empty(0)
         speed = _column(data, "speed", path) if "speed" in data.files else None
+        gear = _column(data, "gear", path) if "gear" in data.files else np.empty(0)
     n = t.size
-    for name, arr in (("x", x), ("y", y), ("s", s), ("speed", speed)):
-        if arr is None or (name == "s" and arr.size == 0):
+    for name, arr in (("x", x), ("y", y), ("s", s), ("speed", speed), ("gear", gear)):
+        if arr is None or (name in ("s", "gear") and arr.size == 0):
             continue  # optional column absent
         if arr.size != n:
             raise ValueError(f"{path}: column '{name}' has {arr.size} samples, expected {n}")
@@ -151,14 +178,19 @@ def load_trace(path: Path, label: str | None = None) -> Trace:
         raise ValueError(f"{path}: 't' must be strictly increasing")
     if speed is None:
         speed = np.hypot(np.gradient(x, t), np.gradient(y, t))
+    meta = load_ghost_meta(path)
+    if label is None:
+        label = theme.ghost_short_name(meta) or _default_label(path)
     return Trace(
-        label=label if label is not None else _default_label(path),
+        label=label,
         t=t,
         x=x,
         y=y,
         s=s,
         speed=speed,
         lap_time_s=float(t[-1] - t[0]),
+        meta=meta,
+        gear=gear,
     )
 
 
@@ -392,14 +424,14 @@ class ReplaySession:
     """All traces on one :class:`PlaybackClock` (lap-clock time), plus the follow target.
     Pure Python/numpy, no window."""
 
-    def __init__(self, traces: list[Trace], length: float):
+    def __init__(self, traces: list[Trace], length: float, follow: int = 0):
         if not traces:
             raise ValueError("need at least one trace")
         self.prepared = [PreparedTrace(tr, length) for tr in traces]
         start = min(float(p.t[0]) for p in self.prepared)
         end = max(float(p.t[-1]) for p in self.prepared)
         self.clock = PlaybackClock(start, end)
-        self.follow: int | None = 0
+        self.follow: int | None = min(max(int(follow), 0), len(self.prepared) - 1)
 
     @property
     def labels(self) -> list[str]:
@@ -441,13 +473,100 @@ def format_clock(t: float) -> str:
     return "-" + format_lap_time(-t) if t < 0.0 else format_lap_time(t)
 
 
+# ------------------------------------------------------------------ timing for the HUD
+
+
+def default_self_index(traces: list[Trace]) -> int:
+    """The "self" car: the first trace that isn't a real-driver ghost (an AI lap, a run's
+    best lap...), else the first trace."""
+    for i, tr in enumerate(traces):
+        if not tr.is_ghost:
+            return i
+    return 0
+
+
+def lap_time_of(p: PreparedTrace, length: float) -> float:
+    """Line-to-line lap time (lap clock at ``s = length``), or the trace's duration if it
+    doesn't complete the lap."""
+    t_end = float(time_at_s(p.s_mono, p.t_mono, length))
+    return t_end if math.isfinite(t_end) else float(p.trace.lap_time_s)
+
+
+class ReplayTiming:
+    """Everything the replay HUD shows, computed once from the session (pure numpy): lap
+    times, sector times and session bests, speed traces, the reference, the tower rows, and
+    the live gap and sectors at a playback position."""
+
+    def __init__(self, session: ReplaySession, length: float, sectors_s, colours: list):
+        self.session = session
+        self.length = float(length)
+        self.colours = colours
+        prepared = session.prepared
+        self.lap_times = [lap_time_of(p, self.length) for p in prepared]
+        self.sectors = [tm.sector_times(p.t, p.s, sectors_s, self.length) for p in prepared]
+        self.marks = np.concatenate(
+            [[0.0], tm.sector_boundaries(sectors_s, self.length), [self.length]]
+        )
+        self.session_best = []
+        for k in range(self.marks.size - 1):
+            vals = [sec[k] for sec in self.sectors if math.isfinite(sec[k])]
+            self.session_best.append(min(vals) if vals else math.nan)
+        self.speed = [tm.resample_speed(p.s, p.trace.speed * 3.6, self.length) for p in prepared]
+
+    def reference(self, self_idx: int) -> int | None:
+        """The fastest trace other than ``self_idx`` (``None`` with a single trace)."""
+        others = [i for i in range(len(self.lap_times)) if i != self_idx]
+        if not others:
+            return None
+        return min(others, key=lambda i: self.lap_times[i])
+
+    def tower(self, self_idx: int) -> list[tm.TowerRow]:
+        entries = [
+            tm.TowerEntry(p.trace.label, self.lap_times[i], self.colours[i], i == self_idx)
+            for i, p in enumerate(self.session.prepared)
+        ]
+        return tm.tower_rows(entries)
+
+    def gap(self, self_idx: int, ref_idx: int | None, poses: list[CarPose]) -> tuple[float, float]:
+        """``(gap, s)``: self's lap clock minus the reference's at the furthest ``s`` both
+        have reached (positive = self behind); nan without a reference."""
+        if ref_idx is None:
+            return math.nan, math.nan
+        a, b = self.session.prepared[self_idx], self.session.prepared[ref_idx]
+        s_q = min(poses[self_idx].s, poses[ref_idx].s)
+        gap = float(time_at_s(a.s_mono, a.t_mono, s_q) - time_at_s(b.s_mono, b.t_mono, s_q))
+        return gap, s_q
+
+    def sectors_at(self, self_idx: int, s_now: float) -> tuple[list[float], list[str]]:
+        """Self's sector times revealed up to ``s_now`` and their F1 colours (one lap is its
+        own personal best, so each is purple or green)."""
+        times, states = [], []
+        for k, t in enumerate(self.sectors[self_idx]):
+            shown = t if s_now >= self.marks[k + 1] - 1e-6 else math.nan
+            times.append(shown)
+            states.append(tm.sector_colour(shown, None, self.session_best[k]))
+        return times, states
+
+
 # --------------------------------------------------------------------------- window
+
+HELP_TEXT = (
+    "SPACE PAUSE · ←→ SEEK · ↑↓ SPEED · R RESTART · F FOLLOW · TAB PAGES · WHEEL ZOOM · ESC QUIT"
+)
 
 
 class ReplayWindow(arcade.Window):
-    """Resizable window playing a :class:`ReplaySession` on a track."""
+    """Resizable window playing a :class:`ReplaySession` on a track, with the glass HUD."""
 
-    def __init__(self, track: Track, traces: list[Trace], width: int = 1280, height: int = 800):
+    def __init__(
+        self,
+        track: Track,
+        traces: list[Trace],
+        width: int = 1280,
+        height: int = 800,
+        glass: bool = True,
+        visible: bool = True,
+    ):
         super().__init__(
             width,
             height,
@@ -455,40 +574,48 @@ class ReplayWindow(arcade.Window):
             resizable=True,
             update_rate=DT,
             draw_rate=DT,
+            visible=visible,
         )
-        self.background_color = BACKGROUND_COLOUR
-        self.session = ReplaySession([with_track_s(tr, track) for tr in traces], track.length)
-        n = len(self.session.prepared)
-        self.colours = [CAR_COLOURS[i % len(CAR_COLOURS)] for i in range(n)]
+        from f1sim.app.ui.glass import GlassRenderer
+        from f1sim.app.ui.hud import Hud
+
+        self.background_color = theme.BACKGROUND
+        self.track = track
+        self.self_index = default_self_index(traces)
+        self.session = ReplaySession(
+            [with_track_s(tr, track) for tr in traces], track.length, follow=self.self_index
+        )
+        prepared = self.session.prepared
+        self.colours = theme.trace_colours(
+            [(p.trace.meta or {}).get("team") for p in prepared],
+            [p.trace.is_ghost for p in prepared],
+        )
+        self.timing = ReplayTiming(self.session, track.length, track.data.sectors_s, self.colours)
 
         self.camera = Camera(self.width, self.height)
         walls = np.vstack([track.left_wall(), track.right_wall()])
         self.camera.fit(*walls.min(axis=0), *walls.max(axis=0))
-        first = self.session.poses()[0]
-        self.camera.follow(first.x, first.y)
+        start = self.session.poses()[self.self_index]
+        self.camera.follow(start.x, start.y)
         self._zoom_to(FOLLOW_PIXELS_PER_METRE)
         self.camera2d = arcade.camera.Camera2D()
         self.track_shapes = build_track_shapes(track)  # uploaded to the GPU once
+        self.start_line = boundary_lines(track)["start_finish"]
 
-        white = arcade.color.WHITE
-        self.text_rows = [arcade.Text("", 0, 0, c, 14, bold=True) for c in self.colours]
+        theme.load_fonts()
+        self.glass = GlassRenderer(self, enabled=glass)
+        self.hud = Hud(self.glass, len(prepared), track.length, HELP_TEXT)
         self.text_car_labels = [
-            arcade.Text(lab, 0, 0, c, 11, bold=True, anchor_y="bottom")
-            for lab, c in zip(self.session.labels, self.colours, strict=True)
+            theme.make_text(
+                p.trace.label.upper(), theme.LABEL_PX, theme.TEXT_LABEL, tracking_em=0.08
+            )
+            for p in prepared
         ]
-        self.text_delta = arcade.Text("", 0, 0, white, 18, bold=True)
-        self.text_clock = arcade.Text("", 0, 0, white, 18, bold=True, anchor_x="right")
-        self.text_speed = arcade.Text("", 0, 0, white, 14, anchor_x="right")
-        self.text_help = arcade.Text(
-            "Space pause   Left/Right seek 2 s   Up/Down speed   R restart   F follow   "
-            "wheel zoom   right-drag pan   Esc quit",
-            10,
-            10,
-            arcade.color.LIGHT_GRAY,
-            11,
-        )
-        self.text_follow = arcade.Text("", 0, 0, arcade.color.LIGHT_GRAY, 11, anchor_x="right")
-        self._layout_hud()
+        self._static_for: int | None = None
+        self._ref_index: int | None = None
+        self._ref_long: str | None = None
+        self._update_static()
+        self.hud.layout(self.width, self.height)
 
     # ------------------------------------------------------------------------ helpers
 
@@ -496,25 +623,30 @@ class ReplayWindow(arcade.Window):
         factor = pixels_per_metre / self.camera.pixels_per_metre
         self.camera.zoom_at(factor, 0.5 * self.camera.viewport_w, 0.5 * self.camera.viewport_h)
 
-    def _layout_hud(self) -> None:
-        w, h = self.width, self.height
-        for i, text in enumerate(self.text_rows):
-            text.position = (34, h - 30 - 24 * i)
-        self.text_delta.position = (14, h - 40 - 24 * len(self.text_rows))
-        self.text_clock.position = (w - 14, h - 32)
-        self.text_speed.position = (w - 14, h - 56)
-        self.text_follow.position = (w - 14, 10)
-
-    @staticmethod
-    def _set_text(text: arcade.Text, value: str) -> None:
-        if text.text != value:  # only re-layout when the string changes
-            text.text = value
-
     def _follow_camera(self) -> None:
         f = self.session.follow
         if f is not None:
+            self.self_index = f  # the followed car is "self"; the free camera keeps the last
             pose = self.session.prepared[f].pose(self.session.clock.time)
             self.camera.follow(pose.x, pose.y)
+
+    def _update_static(self) -> None:
+        """HUD content that only changes with who is "self" (and so who is the reference)."""
+        me = self.self_index
+        ref = self.timing.reference(me)
+        prepared = self.session.prepared
+        self._ref_index = ref
+        name = None if ref is None else prepared[ref].trace.label
+        self._ref_long = None
+        if ref is not None:
+            self._ref_long = theme.ghost_long_name(prepared[ref].trace.meta) or name
+        self.hud.card.set_reference(name)
+        self.hud.card.set_speed_traces(
+            None if ref is None else self.timing.speed[ref], self.timing.speed[me]
+        )
+        track_name = self.track.data.id.replace("_", " ").upper()
+        self.hud.tower.set(f"{track_name} · REPLAY", self.timing.tower(me))
+        self._static_for = me
 
     # ------------------------------------------------------------------------- events
 
@@ -536,11 +668,19 @@ class ReplayWindow(arcade.Window):
             clock.restart()
         elif symbol == arcade.key.F:
             self.session.cycle_follow()
+        elif symbol == arcade.key.TAB:
+            self.hud.on_tab(time.perf_counter())
         self._follow_camera()
 
     def on_mouse_scroll(self, x: int, y: int, scroll_x: float, scroll_y: float) -> None:
+        if self.hud.on_scroll(x, y, scroll_y, time.perf_counter()):
+            return  # the wheel pages the card
         if scroll_y:
             self.camera.zoom_at(ZOOM_STEP**scroll_y, x, y)  # follow re-centres on the car
+
+    def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> None:
+        if button == arcade.MOUSE_BUTTON_LEFT:
+            self.hud.on_press(x, y, time.perf_counter())
 
     def on_mouse_drag(self, x: int, y: int, dx: int, dy: int, buttons: int, modifiers: int):
         if buttons & arcade.MOUSE_BUTTON_RIGHT:
@@ -550,84 +690,79 @@ class ReplayWindow(arcade.Window):
     def on_resize(self, width: int, height: int) -> None:
         self.camera.resize(width, height)
         self.camera2d.match_window()
-        self._layout_hud()
+        self.hud.layout(width, height)
 
     def on_update(self, delta_time: float) -> None:
         self.session.update(delta_time)
         self._follow_camera()
 
+    # --------------------------------------------------------------------------- draw
+
     def on_draw(self) -> None:
-        self.clear()
+        from f1sim.app.ui.glass import draw_start_line
+
+        if self._static_for != self.self_index:
+            self._update_static()
         poses = self.session.poses()
-        self.camera2d.position = self.camera.centre
-        self.camera2d.zoom = self.camera.pixels_per_metre
-        with self.camera2d.activate():
+        self._update_hud(poses)
+        with self.glass.scene():
+            self.camera2d.position = self.camera.centre
+            self.camera2d.zoom = self.camera.pixels_per_metre
+            self.glass.use_camera(self.camera2d)
             self.track_shapes.draw()
-            # Followed car last, so it's on top.
-            order = [i for i in range(len(poses)) if i != self.session.follow]
-            order += [] if self.session.follow is None else [self.session.follow]
-            for i in order:
-                self._draw_car(poses[i], self.colours[i])
-        self.default_camera.use()
-        self._draw_labels(poses)
-        self._draw_hud(poses)
+            self.glass.use_pixels()
+            draw_start_line(self.start_line, self.camera)
+            self._draw_cars(poses)
+        self.glass.present()
+        self.hud.draw(time.perf_counter())
 
-    def _draw_car(self, pose: CarPose, colour) -> None:
-        body = car_polygon(pose.x, pose.y, pose.heading, CAR_LENGTH_M, CAR_WIDTH_M)
-        arcade.draw_polygon_filled([tuple(p) for p in body], colour)
-        c, s = np.cos(pose.heading), np.sin(pose.heading)
-        nose = car_polygon(
-            pose.x + 0.35 * CAR_LENGTH_M * c,
-            pose.y + 0.35 * CAR_LENGTH_M * s,
-            pose.heading,
-            0.3 * CAR_LENGTH_M,
-            0.6 * CAR_WIDTH_M,
+    def _draw_cars(self, poses: list[CarPose]) -> None:
+        """Capsules in screen pixels (at least ``CAR_MIN_*_PX``): the others outlined in
+        their colour, self solid orange on top; a small label beside each."""
+        from f1sim.app.ui.layout import capsule_size_px
+
+        length, width = capsule_size_px(
+            self.camera.pixels_per_metre,
+            CAR_LENGTH_M,
+            CAR_WIDTH_M,
+            theme.CAR_MIN_LENGTH_PX,
+            theme.CAR_MIN_WIDTH_PX,
         )
-        arcade.draw_polygon_filled([tuple(p) for p in nose], CAR_NOSE_COLOUR)
-
-    def _draw_labels(self, poses: list[CarPose]) -> None:
-        """Small label next to each car, in screen pixels so it doesn't scale with zoom."""
-        lift = 0.5 * CAR_LENGTH_M * self.camera.pixels_per_metre + 6.0
-        for pose, text in zip(poses, self.text_car_labels, strict=True):
+        me = self.self_index
+        lift = 0.5 * length + 6.0
+        for i in [i for i in range(len(poses)) if i != me] + [me]:
+            pose = poses[i]
             sx, sy = self.camera.world_to_screen(pose.x, pose.y)
-            text.position = (float(sx) + 8.0, float(sy) + lift)
+            sx, sy = float(sx), float(sy)
+            if i == me:
+                self.glass.capsule(sx, sy, pose.heading, length, width, theme.SELF)
+            else:
+                self.glass.capsule(
+                    sx, sy, pose.heading, length, width, self.colours[i], theme.CAR_STROKE_PX
+                )
+            text = self.text_car_labels[i]
+            text.position = (round(sx + 8.0), round(sy + lift))
             text.draw()
 
-    def _draw_hud(self, poses: list[CarPose]) -> None:
-        h = self.height
-        n = len(poses)
-        rows_h = 24 * n + (34 if n >= 2 else 0)
-        arcade.draw_lbwh_rectangle_filled(6, h - 18 - rows_h, 470, rows_h + 12, PANEL_COLOUR)
-        for i, (pose, text) in enumerate(zip(poses, self.text_rows, strict=True)):
-            tr = self.session.prepared[i].trace
-            arcade.draw_lbwh_rectangle_filled(14, h - 31 - 24 * i, 12, 12, self.colours[i])
-            self._set_text(
-                text,
-                f"{tr.label[:16]:<16}  {pose.speed * 3.6:5.0f} km/h  "
-                f"{format_clock(pose.lap_clock)}  ({format_lap_time(tr.lap_time_s)})",
-            )
-            text.draw()
-        if n >= 2:
-            d = self.session.delta(poses)
-            self.text_delta.color = AHEAD_COLOUR if d < 0.0 else BEHIND_COLOUR
-            labels = self.session.labels
-            self._set_text(
-                self.text_delta, f"delta {labels[1][:12]} vs {labels[0][:12]}  {format_delta(d)}"
-            )
-            self.text_delta.draw()
+    def _update_hud(self, poses: list[CarPose]) -> None:
+        me = self.self_index
+        gap, s_q = self.timing.gap(me, self._ref_index, poses)
+        self.hud.gap.set(gap, self._ref_long)
+        self.hud.card.set_gap(gap, f"at {s_q:,.0f} m" if math.isfinite(s_q) else "")
+        self.hud.card.set_marker(poses[me].s)
+        self.hud.card.set_sectors(*self.timing.sectors_at(me, poses[me].s))
+        prepared = self.session.prepared[me]
+        if prepared.trace.gear.size == prepared.t.size:
+            gear = float(np.interp(poses[me].lap_clock, prepared.t, prepared.trace.gear))
+            extra = f"G{int(round(gear))}"
+        else:
+            extra = f"P{tm.live_positions([p.s for p in poses])[me]}"
+        self.hud.speed.set(poses[me].speed * 3.6, extra)
         clock = self.session.clock
-        self._set_text(self.text_clock, format_clock(clock.time))
-        state = "paused" if clock.paused else ("end" if clock.at_end else "playing")
-        self._set_text(self.text_speed, f"{clock.speed:g}x  {state}")
-        f = self.session.follow
-        self._set_text(
-            self.text_follow,
-            "follow: off (F)" if f is None else f"follow: {self.session.labels[f]} (F)",
-        )
-        self.text_clock.draw()
-        self.text_speed.draw()
-        self.text_follow.draw()
-        self.text_help.draw()
+        state = "PAUSED" if clock.paused else ("END" if clock.at_end else "PLAYING")
+        status = f"{format_clock(clock.time)} · {clock.speed:g}× · {state}"
+        if self.hud.status.text != status:
+            self.hud.status.text = status
 
 
 def run(track_id: str, traces: list[Path], labels: list[str] | None = None) -> None:

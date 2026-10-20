@@ -62,6 +62,14 @@ Drive it yourself, or run the scripted reference lap that calibrates the physics
 f1sim drive silverstone
 ```
 
+To race a real driver's lap, pass a ghost from `f1sim ghost` (it sets off when you cross the line):
+
+```bash
+f1sim drive silverstone --ghost path/to/ghost.npz
+```
+
+Set `F1SIM_NO_GLASS=1` to draw the HUD panels flat instead of frosted glass (for slow GPUs or debugging).
+
 ```bash
 f1sim reference-lap silverstone
 ```

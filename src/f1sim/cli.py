@@ -138,7 +138,7 @@ def _cmd_plot_track(args: argparse.Namespace) -> int:
 def _cmd_drive(args: argparse.Namespace) -> int:
     from f1sim.app.drive import run
 
-    run(args.track_id)
+    run(args.track_id, ghost=Path(args.ghost) if args.ghost else None)
     return 0
 
 
@@ -371,6 +371,9 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("drive", help="drive a built track with the keyboard")
     p.add_argument("track_id")
+    p.add_argument(
+        "--ghost", help="ghost lap .npz to race against (it starts when you cross the line)"
+    )
     p.set_defaults(func=_cmd_drive)
 
     args = parser.parse_args(argv)
