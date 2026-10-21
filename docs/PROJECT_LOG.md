@@ -19,6 +19,10 @@ exists, but the new package replaces it.
   2024 pole of 85.819 s.
 - **Simulation:** 64 cars at about 64× real time with numba.
 - **Ghosts:** `f1sim ghost <track> <year>` builds a smoothed real-driver ghost.
+- **Main menu:** `f1sim menu` (D19). A dark hero card with the menu on the left (track
+  picker; Drive, Replay, Train, Quit open the existing tools) and, on the right third, an
+  unbranded top-down F1 car drawn in code, lit per pixel by a light at the cursor.
+  `python scripts/dev_menu.py` relaunches it on every source change.
 - **Viewers:** `f1sim replay` and `f1sim drive` use the dark single-red-accent UI, with kerbs and
   pixel-art cars. Every corner has an apex and an exit kerb (D18). Motion is smooth: Hermite poses, interpolated drive physics, and a 120 Hz tick
   with vsync (D15).
@@ -28,7 +32,7 @@ exists, but the new package replaces it.
   before D16/D17 the best was 100.7 s. The policy sees the racing line (observation spec v2).
   `--init random` (`configs/train_scratch.toml`) still trains from scratch. The same seed
   reproduces `metrics.csv` exactly.
-- **Tests:** 526 pass offline. `ruff` is clean.
+- **Tests:** 540 pass offline. `ruff` is clean.
 
 **Open problems, most important first:**
 1. **Training needs a racing line.** Spec v2 observes a TUM raceline, or the centre line where
@@ -49,7 +53,7 @@ exists, but the new package replaces it.
 6. **Drive mode's off-track rule still uses the white line**, not the track limits
    (`app/drive.py`).
 
-**Next step:** M4 (the full app) and M5 (breadth, including a computed racing line for
+**Next step:** iterate on the menu hero with the user (live reload running). Then M4 (the full app) and M5 (breadth, including a computed racing line for
 circuits without TUM data).
 
 **Gotchas:**
@@ -245,6 +249,27 @@ They're at least 1 m wide, and merged with the data kerbs. This is drawing only:
 limits are unchanged. Rejected: lowering the data threshold, which still leaves unused kerbs
 bare. Before/after map: `docs/kerb-audit-silverstone.png`.
 
+**D19 · Main menu with a cursor-lit, code-drawn top-down car** (2026-10-21)
+The user asked for a main menu after a React "interactive 3D" hero card, with the robot
+replaced by an unbranded F1 car.
+- **First version:** a procedural 3D car that turned to face the cursor. The user then
+  changed the brief: a still, top-down car, nose up, filling the right third from the nose to
+  just behind the driver, lit only around the cursor.
+- **Their reference images weren't usable:** 740 × 416 and 500 × 281 px, one with
+  "FORMULA-1" on it, the other apparently F1's own render. So the car is drawn in code
+  (`app/ui/car_top.py`), using the references for proportions only.
+- **How it's drawn:** a height field, one plan shape and height profile per part, so a
+  normal map comes from its gradient. The parts are the 4-element front wing, nose, tyres,
+  wishbones, halo, helmet, sidepods with louvres, engine cover and carbon twill.
+- **How it's lit:** `app/menu.py` lights it in a shader. A point light 1.6 m above the
+  cursor gives diffuse light and a gloss highlight from each material, falling off within
+  1.8 m. Ambient light is 5%, so the unlit car is just visible. The light also casts a faint
+  pool on the floor, and fades in after the spotlight beam.
+- **Rejected:** the user's images (resolution, branding, rights) and a flat image with a
+  radial reveal (no shading).
+- **Live reload:** `scripts/dev_menu.py` polls `src/f1sim` and relaunches the menu on a
+  change. `F1SIM_MENU_STATE` keeps the window's place across restarts.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -265,4 +290,5 @@ bare. Before/after map: `docs/kerb-audit-silverstone.png`.
 | 2026-10-21 | `7294c93` | Smooth viewers: Hermite poses, drive render interpolation, 120 Hz tick (D15) |
 | 2026-10-21 | `1b10432` | Behaviour cloning module, experiment scripts and results (D16) |
 | 2026-10-21 | (this commit) | Observation spec v2 (racing line), clone-then-GA `f1sim train` (D17) |
-| 2026-10-21 | (this commit) | Apex and exit kerbs at every corner (D18) |
+| 2026-10-21 | `c6f1d33` | Apex and exit kerbs at every corner (D18) |
+| 2026-10-21 | (this commit) | Main menu with the cursor-lit top-down car, live-reload script (D19) |

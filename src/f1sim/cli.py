@@ -136,6 +136,13 @@ def _cmd_plot_track(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_menu(args: argparse.Namespace) -> int:
+    from f1sim.app.menu import run
+
+    run()
+    return 0
+
+
 def _cmd_drive(args: argparse.Namespace) -> int:
     from f1sim.app.drive import run
 
@@ -301,6 +308,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="f1sim", description=__doc__)
     parser.add_argument("--version", action="version", version=f"f1sim {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("menu", help="open the main menu (3D car, drive / replay / train)")
+    p.set_defaults(func=_cmd_menu)
 
     p = sub.add_parser("tracks", help="list circuits and whether they're built")
     p.set_defaults(func=_cmd_tracks)
