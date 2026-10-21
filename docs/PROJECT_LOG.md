@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-21 (training speed-up, smooth viewers). This section summarises where things stand right now. Rewrite it,
+*Last updated: 2026-10-21 (behaviour cloning experiment). This section summarises where things stand right now. Rewrite it,
 don't append to it, whenever something important changes.*
 
 **What it is.** AI cars learn to drive real F1 circuits by neuroevolution. The `f1sim` package
@@ -22,16 +22,17 @@ exists, but the new package replaces it.
   pixel-art cars. Motion is smooth: Hermite poses, interpolated drive physics, and a 120 Hz tick
   with vsync (D15).
 - **Training:** `f1sim train` completes its first Silverstone lap within 30–90 s. After 30 min
-  the best laps are 116.0, 100.7 and 108.9 s (seeds 0–2), down from 151–155 s (D14). The same
+  the best laps are 116.0, 100.7 and 108.9 s (seeds 0–2), down from 151–155 s (D14). The
+  reference lap `T_ref` on the track limits is 86.43 s (87.46 s was the white-line figure). The same
   seed reproduces `metrics.csv` exactly (checked on Silverstone, 60 generations).
-- **Tests:** 515 pass offline. `ruff` is clean.
+- **Tests:** 519 pass offline. `ruff` is clean.
 
 **Open problems, most important first:**
-1. **Trained cars are still slow.** Best laps are 101–116 s against the 87 s reference (+16 to
-   +33%), flattening after about 20 min with sigma on its 0.003 floor. Ideas not yet tried: a
-   bigger or recurrent policy, behaviour-cloning the scripted driver as the starting point, and
-   restarts or a diversity bonus. CMA-ES found no laps and population 128 was slower per
-   minute (15 min runs).
+1. **The policy can't see the racing line** (D16). From scratch the GA reaches 101–116 s
+   against the 86.43 s reference. A clone of the scripted driver with the current inputs
+   crashes, even at 64 × 64. With ten raceline inputs added, the same 16 × 16 network clones
+   it (87.25 s), and the GA then improves the clone to **85.64 s** in 20 min, beating its
+   teacher by 1.4 s. Decision pending: make those inputs part of the observation spec (v2).
 2. **The new UI is unchecked at 2× scaling.** It was built on a 1× screen. The user's display is
    2×, and the user said "for now it's good".
 3. **Some circuits fail the 2024 alignment check.**
@@ -47,7 +48,8 @@ exists, but the new package replaces it.
 6. **Drive mode's off-track rule still uses the white line**, not the track limits
    (`app/drive.py`).
 
-**Next step:** close the rest of the gap in open problem 1 (or accept it). Then M4 (the full app) and M5
+**Next step:** decide on observation spec v2 (open problem 1); if yes, wire the raceline
+inputs into `sim/sensors.py` and a clone-then-GA `f1sim train` path. Then M4 (the full app) and M5
 (breadth).
 
 **Gotchas:**
@@ -180,6 +182,36 @@ Measured, not guessed: draw cost was fine (p95 10 ms) and update and draw stay p
   swap (GLFW's approach), which gave 30 fps here. Rejected: a damped follow camera, since
   positions are smooth once interpolated, and lag would let the car drift off the stage centre.
 
+**D16 · Behaviour cloning shows the inputs are the bottleneck** (2026-10-21)
+`agents/imitation.py` holds:
+- `Teacher`, the scripted driver as a vectorised 30 Hz controller with a gentler merge onto the
+  raceline (`MERGE_GAIN`). From the training start it laps in 87.05 s.
+- `collect`: DAgger data collection.
+- `fit`: numpy Adam, with steering weighted 4×.
+
+Experiment scripts are in `scripts/bc/`. Results on Silverstone, 8 DAgger rounds:
+
+| Inputs | Network | Clone result | Student crashes from random starts |
+|---|---|---|---|
+| v1 (19 inputs) | 16 × 16 | crashes within 100–1,100 m | 80–100% |
+| v1 | 64 × 64 | crashes by 2,840 m | 33% |
+| v1 + 10 raceline inputs | 16 × 16 | **87.25 s lap** | 0–6% |
+
+The ten raceline inputs are: offset and heading error to the raceline, the raceline's lateral
+position 10, 30, 60 and 100 m ahead in the car frame, and the target speed 0, 50, 100 and
+200 m ahead.
+
+The v1 inputs (rays, centre-line offset, curvature) don't say where the racing line is, so the
+policy can't drive it, however big. With the raceline inputs, the GA fine-tunes the clone to:
+- **85.64 s** (sigma 0.005) or 85.87 s (sigma 0.002) in 20 min;
+- 86.5 s within 2 min;
+- 1.4 s quicker than the teacher and 0.8 s under `T_ref`.
+
+From scratch, the best was 100.7 s. The cost: the policy depends on a precomputed raceline
+(TUM's, or one computed for circuits without it), and observation spec v2 would invalidate v1
+checkpoints. The fine-tune ran the existing trainer with the inputs patched in; the production
+spec is unchanged until that's decided.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -197,4 +229,5 @@ Measured, not guessed: draw cost was fine (p95 10 ms) and update and draw stay p
 | 2026-10-21 | `674de72` | Glass UI merged |
 | 2026-10-21 | `15adadf` | UI restyle, kerbs, pixel-art cars (D13); pushed to `origin/main` |
 | 2026-10-21 | `c7fa0f7` | GA success-rule step size, `sigma_min`, new training defaults (D14) |
-| 2026-10-21 | (this commit) | Smooth viewers: Hermite poses, drive render interpolation, 120 Hz tick (D15) |
+| 2026-10-21 | `7294c93` | Smooth viewers: Hermite poses, drive render interpolation, 120 Hz tick (D15) |
+| 2026-10-21 | (this commit) | Behaviour cloning module, experiment scripts and results (D16) |
