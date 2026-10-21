@@ -8,9 +8,11 @@ from f1sim.app import replay
 from f1sim.app.replay import (
     SPEED_STEPS,
     PlaybackClock,
+    PreparedTrace,
     ReplaySession,
     Trace,
     delta_at_s,
+    hermite,
     interp_heading,
     interp_position,
     load_trace,
@@ -136,6 +138,37 @@ def test_interpolation_at_and_between_samples():
     np.testing.assert_allclose(py, [5.0, 2.5, -5.0])
     px, py = interp_position(t, x, y, np.array([-1.0, 3.0]))  # clamped to the ends
     np.testing.assert_allclose(px, [0.0, 35.0])
+
+
+def test_hermite_is_exact_at_samples_and_cubic_between():
+    t = np.array([0.0, 0.3, 1.0, 1.5])
+    f = t**3 - 2 * t  # a cubic: Hermite with exact slopes reproduces it everywhere
+    df = 3 * t**2 - 2
+    np.testing.assert_allclose(hermite(t, f, df, t), f, atol=1e-12)
+    tq = np.linspace(-0.5, 2.0, 41)
+    inside = np.clip(tq, t[0], t[-1])
+    np.testing.assert_allclose(hermite(t, f, df, tq), inside**3 - 2 * inside, atol=1e-12)
+
+
+def test_pose_of_a_20hz_trace_moves_smoothly_between_samples():
+    """At 60 fps, linear interpolation of a 20 Hz lap jumps velocity at every sample (the
+    tick seen on ghosts in fast corners); the Hermite pose stays near the true 2.5 g."""
+    radius, speed = 100.0, 50.0
+    tr = _circle_lap(radius, speed, rate_hz=20.0)
+    p = PreparedTrace(tr, 2 * np.pi * radius)
+    tc = np.arange(0.5, tr.t[-1] - 0.5, 1 / 60)
+    poses = [p.pose(t) for t in tc]
+    x = np.array([q.x for q in poses])
+    y = np.array([q.y for q in poses])
+    acc = np.hypot(np.diff(x, 2), np.diff(y, 2)) * 3600.0
+    true_acc = speed**2 / radius
+    assert np.abs(acc - true_acc).max() < 0.05 * true_acc
+    lx, ly = interp_position(p.t, tr.x, tr.y, tc)
+    lin_acc = np.hypot(np.diff(lx, 2), np.diff(ly, 2)) * 3600.0
+    assert lin_acc.max() > 2.0 * true_acc  # what the old linear pose did
+    heading = np.unwrap([q.heading for q in poses])
+    yaw_rate = np.diff(heading) * 60.0
+    assert np.abs(yaw_rate - speed / radius).max() < 0.02
 
 
 def test_interp_heading_goes_the_short_way_across_pi():

@@ -16,6 +16,13 @@ white lines), drawn under an arcade ``Camera2D`` whose position and zoom are cop
 titanium, black and red, kept at the middle of the area the HUD leaves free. The HUD
 (:mod:`f1sim.app.ui.hud`) uses ``arcade.Text`` objects created once.
 
+**Smooth motion.** Physics runs in fixed ``DT`` steps, but frames come at their own rate
+(vsync, or a 120 Hz tick where the driver ignores vsync), never exactly in step with the
+physics. A frame can therefore land after zero or two physics steps, and drawing the raw
+state makes the car and the track stutter. The session keeps the previous step's pose, and
+the window draws (and follows) :meth:`DriveSession.render_pose`, interpolated by the leftover
+accumulator time. The ghost is placed at :meth:`DriveSession.render_lap_time` the same way.
+
 **Ghost.** With ``ghost_path`` (``f1sim drive <track> --ghost lap.npz``) a ghost car (in its
 team livery, with a light outline) drives its lap from the moment the lap clock starts,
 restarting with every lap; the gap readout, the speed page and the sector colours compare the
@@ -42,6 +49,8 @@ from f1sim.track.track import Track
 
 DT = 1.0 / 60.0
 """Fixed physics step, s."""
+FRAME_INTERVAL_S = 1.0 / 120.0
+"""Window tick interval, s (see ``replay.FRAME_INTERVAL_S``)."""
 MAX_FRAME_S = 0.25
 """Longest frame time fed to the accumulator (avoids a spiral of death after a stall)."""
 PEDAL_RAMP_S = 0.15
@@ -129,6 +138,7 @@ class DriveSession:
         p = self.track.point_at(0.0)
         yaw = float(self.track.heading_at(0.0))
         self.state = CarState.at(1, float(p[0]), float(p[1]), yaw)
+        self._prev_pose = (float(p[0]), float(p[1]), yaw)
         self.throttle = 0.0
         self.brake = 0.0
         self.steer = 0.0
@@ -165,6 +175,25 @@ class DriveSession:
     def off_track(self) -> bool:
         return self.off_track_timer > 0.0
 
+    @property
+    def alpha(self) -> float:
+        """Share of the next physics step already elapsed, in ``[0, 1)``."""
+        return min(max(self._accumulator / DT, 0.0), 1.0)
+
+    def render_pose(self) -> tuple[float, float, float]:
+        """``(x, y, yaw)`` to draw: between the last two physics steps by :attr:`alpha`
+        (``yaw`` the shorter way round)."""
+        a = self.alpha
+        x0, y0, yaw0 = self._prev_pose
+        dyaw = _wrap(self.yaw - yaw0, 2.0 * math.pi)
+        return x0 + a * (self.x - x0), y0 + a * (self.y - y0), yaw0 + a * dyaw
+
+    def render_lap_time(self) -> float:
+        """The lap clock at the drawn moment (0 until the clock starts)."""
+        if not self.clock_running:
+            return 0.0
+        return self.lap_time + (0.0 if self.off_track else self.alpha * DT)
+
     # ------------------------------------------------------------------------- update
 
     def update(self, controls: Controls, frame_dt: float) -> int:
@@ -180,10 +209,11 @@ class DriveSession:
 
     def fixed_step(self, controls: Controls) -> None:
         """One physics step of ``DT``."""
+        self._prev_pose = (self.x, self.y, self.yaw)
         if self.off_track:
             self.off_track_timer -= DT
             if self.off_track_timer <= 1e-9:
-                self.reset()
+                self.reset()  # also resets the previous pose: no sweep back to the line
             return
         self.throttle = _ramp(self.throttle, float(controls.throttle), PEDAL_RAMP_S, DT)
         self.brake = _ramp(self.brake, float(controls.brake), PEDAL_RAMP_S, DT)
@@ -322,8 +352,9 @@ class DriveWindow(arcade.Window):
             height,
             f"f1sim drive - {track.data.name}",
             resizable=True,
-            update_rate=DT,
-            draw_rate=DT,
+            update_rate=FRAME_INTERVAL_S,
+            draw_rate=FRAME_INTERVAL_S,
+            vsync=True,
             visible=visible,
         )
         from f1sim.app.render_track import TrackRenderer
@@ -372,12 +403,12 @@ class DriveWindow(arcade.Window):
 
     def _follow_camera(self) -> None:
         if self.follow:
-            self.camera.follow_at(self.session.x, self.session.y, *self.hud.stage_centre())
+            x, y, _ = self.session.render_pose()
+            self.camera.follow_at(x, y, *self.hud.stage_centre())
 
     def ghost_pose(self):
         """The ghost at the live lap clock (waiting on the line until the clock starts)."""
-        s = self.session
-        return self.ghost.prepared.pose(s.lap_time if s.clock_running else 0.0)
+        return self.ghost.prepared.pose(self.session.render_lap_time())
 
     def live_gap(self) -> float:
         s = self.session
@@ -455,8 +486,7 @@ class DriveWindow(arcade.Window):
         self.hud.draw(now)
 
     def _draw_cars(self) -> None:
-        s = self.session
-        poses = [(s.x, s.y, s.yaw)]
+        poses = [self.session.render_pose()]
         if self.ghost is not None:
             g = self.ghost_pose()
             poses.insert(0, (g.x, g.y, g.heading))

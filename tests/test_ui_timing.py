@@ -251,6 +251,30 @@ def test_drive_session_records_telemetry_and_tower(circle_track):
     assert session.telemetry.best == pytest.approx(last)
 
 
+def test_drive_render_pose_interpolates_between_physics_steps(circle_track):
+    from f1sim.app.drive import DT, Controls, DriveSession
+
+    session = DriveSession(circle_track)
+    held = Controls(throttle=True)
+    for _ in range(120):
+        session.update(held, DT)
+    x0, y0, yaw0 = session.x, session.y, session.yaw
+    session.update(held, DT)  # one more step: the previous pose is the one before it
+    x1, y1 = session.x, session.y
+    assert session.render_pose()[:2] == pytest.approx((x0, y0))  # alpha 0: the last step
+    session.update(held, 0.5 * DT)  # half a step left in the accumulator, no new step
+    assert (session.x, session.y) == (x1, y1)
+    rx, ry, ryaw = session.render_pose()
+    assert (rx, ry) == pytest.approx((0.5 * (x0 + x1), 0.5 * (y0 + y1)))
+    assert session.render_lap_time() == pytest.approx(session.lap_time + 0.5 * DT)
+    assert abs(ryaw - session.yaw) < abs(yaw0 - session.yaw) + 1e-12
+
+    session.reset()  # back on the line: drawn there, not swept back across the track
+    p = circle_track.point_at(0.0)
+    assert session.render_pose()[:2] == pytest.approx((p[0], p[1]))
+    assert session.render_lap_time() == 0.0
+
+
 def test_drive_ghost_gap_and_purple_sectors(circle_track, tmp_path):
     from f1sim.app.drive import DriveGhost, DriveSession, drive_sector_display, drive_tower
 

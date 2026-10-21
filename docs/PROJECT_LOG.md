@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-21 (training speed-up). This section summarises where things stand right now. Rewrite it,
+*Last updated: 2026-10-21 (training speed-up, smooth viewers). This section summarises where things stand right now. Rewrite it,
 don't append to it, whenever something important changes.*
 
 **What it is.** AI cars learn to drive real F1 circuits by neuroevolution. The `f1sim` package
@@ -19,11 +19,12 @@ exists, but the new package replaces it.
 - **Simulation:** 64 cars at about 64× real time with numba.
 - **Ghosts:** `f1sim ghost <track> <year>` builds a smoothed real-driver ghost.
 - **Viewers:** `f1sim replay` and `f1sim drive` use the dark single-red-accent UI, with kerbs and
-  pixel-art cars.
+  pixel-art cars. Motion is smooth: Hermite poses, interpolated drive physics, and a 120 Hz tick
+  with vsync (D15).
 - **Training:** `f1sim train` completes its first Silverstone lap within 30–90 s. After 30 min
   the best laps are 116.0, 100.7 and 108.9 s (seeds 0–2), down from 151–155 s (D14). The same
   seed reproduces `metrics.csv` exactly (checked on Silverstone, 60 generations).
-- **Tests:** 512 pass offline. `ruff` is clean.
+- **Tests:** 515 pass offline. `ruff` is clean.
 
 **Open problems, most important first:**
 1. **Trained cars are still slow.** Best laps are 101–116 s against the 87 s reference (+16 to
@@ -40,7 +41,10 @@ exists, but the new package replaces it.
    - Suzuka is rejected because its figure-eight centre line crosses itself.
 4. **Circuits not in TUM need a fallback** (M5): Monaco, Baku, Singapore, Jeddah, Miami, Imola,
    Las Vegas, Lusail, Madrid.
-5. **Drive mode's off-track rule still uses the white line**, not the track limits
+5. **The AI car's heading wiggles a little.** That's real: the policy's steering chatters (yaw
+   acceleration p99 6 rad/s², against 1.3 for a ghost). An action-change penalty in training
+   would fix it; the viewer shows it faithfully.
+6. **Drive mode's off-track rule still uses the white line**, not the track limits
    (`app/drive.py`).
 
 **Next step:** close the rest of the gap in open problem 1 (or accept it). Then M4 (the full app) and M5
@@ -161,6 +165,21 @@ and a new `sigma_min = 0.003`. 12-15 min runs: fixed sigma 0.02/0.04/0.08 gave 1
 success rule 117/109 s (floor 0.01) and 117/104 s (floor 0.003). Rejected: CMA-ES (no laps),
 population 128 (149 s in 15 min). The old behaviour stays available as `step_rule = "stale"`.
 
+**D15 · Smooth viewer motion** (2026-10-21)
+Measured, not guessed: draw cost was fine (p95 10 ms) and update and draw stay paired (arcade's
+`_dispatch_frame`). The jank had three causes.
+- **Ghost poses** were linear between 20 Hz samples, so velocity jumped at each sample: 15–16 g
+  between frames in fast corners. `PreparedTrace.pose` now uses cubic Hermite interpolation
+  (slopes from `np.gradient`) for position and heading: at most 5.6 g, the real cornering load.
+- **Drive physics** ran in fixed 1/60 s steps but was drawn raw, so a frame showed 0 or 2 steps.
+  `DriveSession.render_pose()` and `render_lap_time()` interpolate by the leftover accumulator.
+  The drawn car's speed now changes at most 1.6% between frames.
+- **Frame pacing:** the 1/60 s timer with vsync off missed a refresh on 10–12% of frames. The
+  driver ignores the vsync request here (windowed OpenGL, dual-GPU laptop), so the windows now
+  tick at 1/120 s with `vsync=True`: no frames over 20 ms. Rejected: `DwmFlush()` after each
+  swap (GLFW's approach), which gave 30 fps here. Rejected: a damped follow camera, since
+  positions are smooth once interpolated, and lag would let the car drift off the stage centre.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -177,4 +196,5 @@ population 128 (149 s in 15 min). The old behaviour stays available as `step_rul
 | 2026-10-21 | `5eabd79` | Track limits, track format v2 (D12) |
 | 2026-10-21 | `674de72` | Glass UI merged |
 | 2026-10-21 | `15adadf` | UI restyle, kerbs, pixel-art cars (D13); pushed to `origin/main` |
-| 2026-10-21 | (uncommitted) | GA success-rule step size, `sigma_min`, new training defaults (D14) |
+| 2026-10-21 | `c7fa0f7` | GA success-rule step size, `sigma_min`, new training defaults (D14) |
+| 2026-10-21 | (this commit) | Smooth viewers: Hermite poses, drive render interpolation, 120 Hz tick (D15) |

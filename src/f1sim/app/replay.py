@@ -10,7 +10,11 @@ The testable logic is pure numpy/Python, without arcade objects:
 - :func:`project_s` / :func:`unwrap_s` give a trace a monotonic arc length.
 - :func:`smooth_heading` computes the heading once per trace (central differences, then a
   circular moving average over ~0.2 s), and :func:`interp_position` / :func:`interp_heading`
-  interpolate between samples.
+  interpolate linearly between samples. :class:`PreparedTrace` draws cars with
+  :func:`hermite` instead (cubic, with slopes from :func:`numpy.gradient`): velocity and yaw
+  rate are then continuous across samples, where linear interpolation of a 20 Hz ghost changes
+  velocity in a jump at every sample (a visible tick, about 15 g between frames in fast
+  corners).
 - :func:`delta_at_s` is the time difference at equal ``s``.
 - :class:`PlaybackClock` (pause, seek, speed steps, restart) and :class:`ReplaySession` (all
   traces on one clock) drive the window.
@@ -58,8 +62,13 @@ from f1sim.app.ui import theme
 from f1sim.app.ui import timing as tm
 from f1sim.track.track import Track
 
-DT = 1.0 / 60.0
-"""Window update and draw interval, s."""
+FRAME_INTERVAL_S = 1.0 / 120.0
+"""Window tick interval, s. Where the driver honours vsync, ``flip`` waits for the display and
+frames follow its refresh. Where it doesn't (windowed OpenGL on the dual-GPU dev laptop), a
+1/60 s timer drifts against a 59-60 Hz display: 10-12% of frames took over 20 ms, a visible
+hitch. A 1/120 s tick gave none (measured). Playback advances by the measured frame time, so the
+rate doesn't change its speed.
+Playback advances by the measured frame time, so the rate doesn't change its speed."""
 MAX_FRAME_S = 0.25
 """Longest frame time fed to the playback clock (a stall doesn't jump the replay)."""
 SPEED_STEPS = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0)
@@ -289,6 +298,24 @@ def interp_position(trace_t, trace_x, trace_y, t) -> tuple[np.ndarray, np.ndarra
     return np.interp(t, trace_t, trace_x), np.interp(t, trace_t, trace_y)
 
 
+def hermite(trace_t, values, slopes, t) -> np.ndarray:
+    """Cubic Hermite interpolation of ``values`` (with derivatives ``slopes``) sampled at
+    ``trace_t``, at time(s) ``t``, clamped to the ends. Exact at the samples, and its first
+    derivative is continuous across them."""
+    trace_t = np.asarray(trace_t, dtype=np.float64)
+    tq = np.clip(np.asarray(t, dtype=np.float64), trace_t[0], trace_t[-1])
+    i = np.clip(np.searchsorted(trace_t, tq, side="right") - 1, 0, trace_t.size - 2)
+    h = trace_t[i + 1] - trace_t[i]
+    u = (tq - trace_t[i]) / h
+    u2, u3 = u * u, u * u * u
+    return (
+        (2 * u3 - 3 * u2 + 1) * values[i]
+        + (u3 - 2 * u2 + u) * h * slopes[i]
+        + (-2 * u3 + 3 * u2) * values[i + 1]
+        + (u3 - u2) * h * slopes[i + 1]
+    )
+
+
 def interp_heading(trace_t, heading_unwrapped, t) -> np.ndarray:
     """Heading at time(s) ``t`` in ``[-pi, pi)`` from the unwrapped per-sample heading
     (``np.unwrap(smooth_heading(...))``): linear between samples, so the shorter way round."""
@@ -393,7 +420,8 @@ class CarPose:
 
 class PreparedTrace:
     """A trace with ``s`` unwrapped into the lap frame, its lap clock and smoothed heading,
-    all computed once."""
+    all computed once. :meth:`pose` places the car with :func:`hermite` (position and
+    heading), so it moves smoothly between samples."""
 
     def __init__(self, trace: Trace, length: float):
         if not trace.has_s:
@@ -408,14 +436,17 @@ class PreparedTrace:
         self.t = trace.t - t_origin  # lap clock at each sample
         self.t_mono = t_mono - t_origin
         self.heading = np.unwrap(smooth_heading(trace.t, trace.x, trace.y))
+        self._dx = np.gradient(trace.x, self.t)
+        self._dy = np.gradient(trace.y, self.t)
+        self._dh = np.gradient(self.heading, self.t)
 
     def pose(self, lap_clock: float) -> CarPose:
         tc = min(max(lap_clock, float(self.t[0])), float(self.t[-1]))
-        x, y = interp_position(self.t, self.trace.x, self.trace.y, tc)
+        heading = float(hermite(self.t, self.heading, self._dh, tc))
         return CarPose(
-            x=float(x),
-            y=float(y),
-            heading=float(interp_heading(self.t, self.heading, tc)),
+            x=float(hermite(self.t, self.trace.x, self._dx, tc)),
+            y=float(hermite(self.t, self.trace.y, self._dy, tc)),
+            heading=(heading + math.pi) % (2.0 * math.pi) - math.pi,
             speed=float(np.interp(tc, self.t, self.trace.speed)),
             s=float(np.interp(tc, self.t, self.s)),
             lap_clock=tc,
@@ -595,8 +626,9 @@ class ReplayWindow(arcade.Window):
             height,
             f"f1sim replay - {track.data.name}",
             resizable=True,
-            update_rate=DT,
-            draw_rate=DT,
+            update_rate=FRAME_INTERVAL_S,
+            draw_rate=FRAME_INTERVAL_S,
+            vsync=True,
             visible=visible,
         )
         from f1sim.app.render_track import TrackRenderer
