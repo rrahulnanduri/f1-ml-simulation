@@ -87,6 +87,12 @@ class Camera:
         self.centre_x = float(x)
         self.centre_y = float(y)
 
+    def follow_at(self, x: float, y: float, screen_x: float, screen_y: float) -> None:
+        """Move the view so the world point ``(x, y)`` appears at ``(screen_x, screen_y)``
+        (e.g. the middle of the area the HUD leaves free)."""
+        self.centre_x = float(x) - (screen_x - 0.5 * self.viewport_w) / self._ppm
+        self.centre_y = float(y) - (screen_y - 0.5 * self.viewport_h) / self._ppm
+
     def resize(self, viewport_w: int, viewport_h: int) -> None:
         """New viewport size; the world centre and the scale stay the same."""
         self.viewport_w = max(1, int(viewport_w))

@@ -1,24 +1,25 @@
-"""Frosted-glass rendering: the scene goes to an offscreen texture, is blurred once per frame,
-and each HUD panel samples the blur inside a rounded-rect mask (arcade 3.3 / OpenGL 3.3).
+"""Card rendering over a dark, faintly blurred scene (arcade 3.3 / OpenGL 3.3).
+
+The scene goes to an offscreen texture (4x multisampled, then resolved), is blurred once per
+frame, and each HUD card is a solid near-black rounded rectangle with a white hairline whose
+fill lets only ``1 - CARD_FILL`` of the blurred scene through, so the track faintly shows.
 
 Per frame::
 
-    with glass.scene():        # offscreen framebuffer, cleared to the ambient washes
+    with glass.scene():        # offscreen framebuffer, cleared to the background + vignette
         ...draw track and cars...
-    glass.present()            # one separable Gaussian blur at half resolution, then the
-                               # sharp scene is copied to the screen
-    glass.panel(rect, radius)  # shadow + blurred backdrop + tint + edge, one draw each
+    glass.present()            # resolve, one separable Gaussian blur at half resolution, then
+                               # the sharp scene is copied to the screen
+    glass.panel(rect)          # one card: blurred backdrop x (1 - fill) + 1 px hairline
 
-The panel shader does everything in one pass from a rounded-rect SDF: the soft drop shadow
-(an SDF falloff, offset ``SHADOW_DY_PX`` down), the backdrop (blurred scene x
-``BLUR_BRIGHTEN``), the vertical white tint and the 1 px diagonal-gradient edge. Output is
-premultiplied alpha.
+The panel shader works from a rounded-rect SDF in window pixels: the fill is exactly inside the
+rectangle, the hairline exactly its outermost logical pixel (two physical pixels on a 2x
+display), anti-aliased only round the corners. Output is premultiplied alpha.
 
-**Fallback.** If the framebuffers or programs can't be created (or ``F1SIM_NO_GLASS=1``),
-one warning is logged and :class:`GlassRenderer` draws the scene straight to the screen and
-each panel as a flat ``PANEL_FALLBACK`` rounded rectangle with the same gradient edge, using
-arcade's own shape drawing. The ambient washes and car capsules have their own small shaders
-with polygon fallbacks.
+**Fallback.** If the framebuffers or programs can't be created (or ``F1SIM_NO_GLASS=1``), one
+warning is logged and :class:`GlassRenderer` draws the scene straight to the screen and each
+card as a flat ``CARD_FALLBACK`` rounded rectangle with the same hairline (triangles). Discs
+and strokes (buttons, page dots) use a small SDF shader with polygon fallbacks.
 
 Nothing here touches OpenGL until a :class:`GlassRenderer` is constructed.
 """
@@ -30,12 +31,12 @@ import logging
 import math
 from collections.abc import Iterator
 
-import numpy as np
-
 from f1sim.app.ui import theme
 from f1sim.app.ui.layout import Rect, capsule_points, rounded_rect_points
 
 log = logging.getLogger(__name__)
+
+MSAA_SAMPLES = 4
 
 _QUAD_VS = """
 #version 330
@@ -75,24 +76,14 @@ _AMBIENT_FS = """
 #version 330
 uniform vec2 u_screen;
 uniform vec3 u_bg;
-uniform vec4 u_cool;    // rgb, opacity
-uniform vec4 u_warm;
-uniform vec2 u_cool_c;  // centre, fraction of the window
-uniform vec2 u_warm_c;
-uniform float u_radius; // fraction of the diagonal
+uniform float u_vignette;  // darkening at the corners
 in vec2 v_uv;
 out vec4 f_color;
-float wash(vec2 px, vec2 c) {
-    float r = u_radius * length(u_screen);
-    float t = clamp(distance(px, c * u_screen) / r, 0.0, 1.0);
-    return (1.0 - t) * (1.0 - t);
-}
 void main() {
     vec2 px = v_uv * u_screen;
-    vec3 col = u_bg;
-    col = mix(col, u_cool.rgb, u_cool.a * wash(px, u_cool_c));
-    col = mix(col, u_warm.rgb, u_warm.a * wash(px, u_warm_c));
-    // Dither by +-0.5/255 so the faint gradients don't band.
+    float r = length(px - 0.5 * u_screen) / (0.5 * length(u_screen));  // 0 centre, 1 corner
+    vec3 col = u_bg * (1.0 - u_vignette * smoothstep(0.35, 1.0, r));
+    // Dither by +-0.5/255 so the faint gradient doesn't band.
     float n = fract(sin(dot(px, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
     f_color = vec4(col + n / 255.0, 1.0);
 }
@@ -106,7 +97,7 @@ uniform float u_sigma;  // in destination texels
 uniform float u_lod;    // source mip level matching the destination resolution
 in vec2 v_uv;
 out vec4 f_color;
-const int RADIUS = 14;
+const int RADIUS = 10;
 void main() {
     vec3 acc = vec3(0.0);
     float wsum = 0.0;
@@ -125,10 +116,8 @@ uniform sampler2D u_blur;
 uniform vec2 u_screen;
 uniform vec4 u_panel;     // x, y, w, h
 uniform float u_radius;
-uniform float u_brighten;
-uniform vec2 u_tint;      // top, bottom white opacity
-uniform vec3 u_edge;      // top-left, middle, bottom-right white opacity
-uniform vec3 u_shadow;    // dy (down), blur, opacity
+uniform float u_fill;     // opacity of the black fill over the blurred scene
+uniform vec4 u_border;    // hairline colour, straight alpha
 in vec2 v_px;
 out vec4 f_color;
 float sd_round_box(vec2 p, vec2 b, float r) {
@@ -137,25 +126,12 @@ float sd_round_box(vec2 p, vec2 b, float r) {
 }
 void main() {
     vec2 hb = 0.5 * u_panel.zw;
-    vec2 c = u_panel.xy + hb;
-    float d = sd_round_box(v_px - c, hb, u_radius);
+    float d = sd_round_box(v_px - (u_panel.xy + hb), hb, u_radius);
     float inside = clamp(0.5 - d, 0.0, 1.0);
-
-    float ds = sd_round_box(v_px - (c - vec2(0.0, u_shadow.x)), hb, u_radius);
-    float shadow = u_shadow.z * (1.0 - smoothstep(-u_shadow.y, u_shadow.y, ds));
-
-    vec3 col = texture(u_blur, v_px / u_screen).rgb * u_brighten;
-    float ty = clamp((v_px.y - u_panel.y) / u_panel.w, 0.0, 1.0);
-    col = mix(col, vec3(1.0), mix(u_tint.y, u_tint.x, ty));
-
-    vec2 rel = clamp((v_px - u_panel.xy) / u_panel.zw, 0.0, 1.0);
-    float g = 0.5 * (rel.x + 1.0 - rel.y);   // 0 top-left .. 1 bottom-right
-    float ea = g < 0.5 ? mix(u_edge.x, u_edge.y, g * 2.0) : mix(u_edge.y, u_edge.z, g * 2.0 - 1.0);
-    float edge = clamp(1.0 - abs(d + 0.5), 0.0, 1.0);
-    col = mix(col, vec3(1.0), edge * ea);
-
-    float a = inside + shadow * (1.0 - inside);
-    f_color = vec4(min(col, vec3(1.0)) * inside, a);
+    vec3 col = texture(u_blur, v_px / u_screen).rgb * (1.0 - u_fill);
+    float edge = clamp(1.0 - abs(d + 0.5), 0.0, 1.0);  // the outermost pixel
+    col = mix(col, u_border.rgb, edge * u_border.a);
+    f_color = vec4(col * inside, inside);
 }
 """
 
@@ -165,7 +141,6 @@ uniform vec2 u_centre;
 uniform float u_heading;
 uniform vec2 u_size;      // length, width in pixels
 uniform vec4 u_colour;    // straight alpha
-uniform float u_stroke;   // 0 = filled, else the outline width in pixels
 in vec2 v_px;
 out vec4 f_color;
 void main() {
@@ -175,10 +150,7 @@ void main() {
     float r = 0.5 * min(u_size.x, u_size.y);
     float a = max(0.5 * u_size.x - r, 0.0);
     float d = length(vec2(p.x - clamp(p.x, -a, a), p.y)) - r;
-    float cov = u_stroke > 0.0
-        ? clamp(0.5 * u_stroke + 0.5 - abs(d + 0.5 * u_stroke), 0.0, 1.0)
-        : clamp(0.5 - d, 0.0, 1.0);
-    float alpha = u_colour.a * cov;
+    float alpha = u_colour.a * clamp(0.5 - d, 0.0, 1.0);
     f_color = vec4(u_colour.rgb * alpha, alpha);
 }
 """
@@ -193,19 +165,19 @@ def _rgba(c) -> tuple[float, float, float, float]:
 
 
 class GlassRenderer:
-    """Offscreen scene, blur and glass panels for one window. See the module docstring."""
+    """Offscreen scene, blur and cards for one window. See the module docstring."""
 
     def __init__(self, window, enabled: bool = True):
         self.window = window
         self.ctx = window.ctx
         self._warned = False
-        self._fallback_edges: dict[tuple, object] = {}
-        self._fallback_fills: dict[tuple, object] = {}
+        self._fallback_shapes: dict[tuple, object] = {}
         self._shaders_ok = self._init_shaders()
         self.enabled = bool(enabled) and self._shaders_ok and not theme.glass_disabled_by_env()
         if enabled and not self.enabled and self._shaders_ok:
             self._warn(f"glass disabled by {theme.NO_GLASS_ENV}; using flat panels")
         self._size: tuple | None = None
+        self._msaa_fbo = None
         if self.enabled:
             try:
                 self._ensure_targets()
@@ -237,22 +209,17 @@ class GlassRenderer:
             return False
         a = self._p_ambient
         a["u_bg"] = _rgb(theme.BACKGROUND)
-        a["u_cool"] = _rgba(theme.AMBIENT_COOL)
-        a["u_warm"] = _rgba(theme.AMBIENT_WARM)
-        a["u_cool_c"] = theme.AMBIENT_COOL_CENTRE
-        a["u_warm_c"] = theme.AMBIENT_WARM_CENTRE
-        a["u_radius"] = theme.AMBIENT_RADIUS
+        a["u_vignette"] = theme.VIGNETTE
         p = self._p_panel
-        p["u_brighten"] = theme.BLUR_BRIGHTEN
-        p["u_tint"] = (theme.TINT_TOP, theme.TINT_BOTTOM)
-        p["u_edge"] = (theme.EDGE_TOP_LEFT, theme.EDGE_MIDDLE, theme.EDGE_BOTTOM_RIGHT)
-        p["u_shadow"] = (theme.SHADOW_DY_PX, theme.SHADOW_BLUR_PX, theme.SHADOW_ALPHA)
+        p["u_fill"] = theme.CARD_FILL
+        p["u_border"] = _rgba(theme.CARD_BORDER)
         return True
 
     def _ensure_targets(self) -> None:
-        """Scene target at the physical framebuffer size (2x the window on a 200 % display);
-        blur targets at half the *logical* size, so the blur's sigma and cost are the same
-        in window pixels at any pixel ratio."""
+        """Scene targets at the physical framebuffer size (2x the window on a 200 % display):
+        a multisampled one to draw into and a plain one it resolves to; blur targets at half
+        the *logical* size, so the blur's sigma and cost are the same in window pixels at any
+        pixel ratio."""
         size = tuple(int(v) for v in self.window.get_framebuffer_size())
         size = (max(size[0], 1), max(size[1], 1))
         logical = (max(int(self.window.width), 1), max(int(self.window.height), 1))
@@ -270,6 +237,15 @@ class GlassRenderer:
             wrap_y=clamp,
         )
         self._scene_fbo = ctx.framebuffer(color_attachments=[self._scene_tex])
+        self._msaa_fbo = None
+        samples = min(MSAA_SAMPLES, int(getattr(ctx.info, "MAX_SAMPLES", 0) or 0))
+        if samples > 1:
+            try:
+                self._msaa_tex = ctx.texture(size, components=4, samples=samples)
+                self._msaa_fbo = ctx.framebuffer(color_attachments=[self._msaa_tex])
+            except Exception as exc:  # noqa: BLE001 - no MSAA: draw into the plain target
+                log.info("No multisampled scene target (%s)", exc)
+                self._msaa_fbo = None
         # Mip level whose resolution matches the blur target: box-filtered downsample.
         self._lod = max(0.0, math.log2(size[0] / half[0]))
         self._blur_tex = [
@@ -286,6 +262,10 @@ class GlassRenderer:
 
     # ------------------------------------------------------------------------ frame
 
+    @property
+    def pixel_ratio(self) -> float:
+        return float(self.window.get_pixel_ratio())
+
     def _screen_size(self) -> tuple[float, float]:
         return float(self.window.width), float(self.window.height)
 
@@ -297,10 +277,13 @@ class GlassRenderer:
         self._fs_quad.render(self._p_ambient)
         self.ctx.enable(self.ctx.BLEND)
 
+    def _target(self):
+        return self._msaa_fbo if self._msaa_fbo is not None else self._scene_fbo
+
     @contextlib.contextmanager
     def scene(self) -> Iterator[None]:
         """Draw the scene inside this block: into the offscreen texture (glass on) or the
-        screen (fallback), over the background and ambient washes."""
+        screen (fallback), over the background and its vignette."""
         win = self.window
         if self.enabled:
             try:
@@ -313,11 +296,15 @@ class GlassRenderer:
             self._draw_ambient()
             yield
             return
-        with self._scene_fbo.activate():
-            self._scene_fbo.clear(color=theme.BACKGROUND)
+        target = self._target()
+        with target.activate():
+            target.clear(color=theme.BACKGROUND)
             self.use_pixels()
             self._draw_ambient()
             yield
+        if target is not self._scene_fbo:
+            self.ctx.copy_framebuffer(target, self._scene_fbo)  # resolve the samples
+            self.ctx.active_framebuffer.use(force=True)  # the blit rebinds behind arcade
         win.default_camera.use()  # back on the screen: arcade applies the pixel ratio
 
     def use_camera(self, camera) -> None:
@@ -329,14 +316,16 @@ class GlassRenderer:
         camera is applied; the camera's projection still spans the logical window, so
         everything lands where it would on screen and the texture composites 1:1."""
         camera.use()
-        if self.enabled and self.ctx.active_framebuffer is getattr(self, "_scene_fbo", None):
-            self._scene_fbo.viewport = (0, 0, *self._phys)
-            self._scene_fbo.scissor = None
+        if self.enabled:
+            fbo = self.ctx.active_framebuffer
+            if fbo is self._scene_fbo or (fbo is not None and fbo is self._msaa_fbo):
+                fbo.viewport = (0, 0, *self._phys)
+                fbo.scissor = None
 
     def use_pixels(self) -> None:
-        """Screen-space (window pixel) projection for scene drawing: start line, cars,
-        labels. arcade's default camera isn't used offscreen because it re-derives its
-        projection from the active viewport, which is physical-sized there."""
+        """Screen-space (window pixel) projection for scene drawing: cars, labels, ticks.
+        arcade's default camera isn't used offscreen because it re-derives its projection
+        from the active viewport, which is physical-sized there."""
         if self.enabled:
             self.use_camera(self._pixel_camera)
         else:
@@ -349,10 +338,9 @@ class GlassRenderer:
             return
         ctx = self.ctx
         ctx.disable(ctx.BLEND)
-        sigma = theme.BLUR_SIGMA_PX * 0.5  # texels of the half-logical-size targets
         hw, hh = self._half
         blur = self._p_blur
-        blur["u_sigma"] = sigma
+        blur["u_sigma"] = theme.BLUR_SIGMA_PX * 0.5  # texels of the half-size targets
         lod = self._lod
         self._scene_tex.build_mipmaps(max_level=int(math.ceil(lod)) + 1)
         # Horizontal: scene (at the mip level matching the target) -> A; vertical: A -> B.
@@ -373,26 +361,20 @@ class GlassRenderer:
         self._fs_quad.render(self._p_copy)
         ctx.enable(ctx.BLEND)
 
-    # ------------------------------------------------------------------------ panels
+    # ------------------------------------------------------------------------ cards
 
-    def panel(self, rect: Rect, radius: float = theme.PANEL_RADIUS) -> None:
-        """One glass panel (or its flat fallback) in window pixels."""
+    def panel(self, rect: Rect, radius: float = theme.CARD_RADIUS) -> None:
+        """One card (or its flat fallback) in window pixels."""
         if self.enabled:
             ctx = self.ctx
-            margin = theme.SHADOW_DY_PX + 2.0 * theme.SHADOW_BLUR_PX
             p = self._p_panel
             p["u_screen"] = self._screen_size()
             p["u_panel"] = (rect.x, rect.y, rect.w, rect.h)
             p["u_radius"] = float(radius)
-            p["u_rect"] = (
-                rect.x - margin,
-                rect.y - margin,
-                rect.w + 2 * margin,
-                rect.h + 2 * margin,
-            )
+            p["u_rect"] = (rect.x - 1.0, rect.y - 1.0, rect.w + 2.0, rect.h + 2.0)
             self._blur_tex[1].use(0)
             ctx.enable(ctx.BLEND)
-            ctx.blend_func = ctx.BLEND_PREMULTIPLIED_ALPHA
+            ctx.blend_func = (ctx.ONE, ctx.ONE_MINUS_SRC_ALPHA)  # premultiplied "over"
             self._quad.render(p)
             ctx.blend_func = ctx.BLEND_DEFAULT
             return
@@ -402,52 +384,40 @@ class GlassRenderer:
         from arcade import shape_list
 
         key = (rect.x, rect.y, rect.w, rect.h, radius)
-        shapes = self._fallback_fills.get(key)
+        shapes = self._fallback_shapes.get(key)
         if shapes is None:
-            if len(self._fallback_fills) > 32:
-                self._fallback_fills.clear()
-            pts = rounded_rect_points(rect, radius)
+            if len(self._fallback_shapes) > 32:
+                self._fallback_shapes.clear()
+            outer = rounded_rect_points(rect, radius)
+            inner = rounded_rect_points(rect.inset(1.0), max(radius - 1.0, 0.0))
             cx, cy = rect.centre
+            fill = []
+            for i in range(len(inner)):
+                j = (i + 1) % len(inner)
+                fill += [(cx, cy), tuple(inner[i]), tuple(inner[j])]
+            ring = []
+            for i in range(len(outer)):
+                j = (i + 1) % len(outer)
+                a, b, c, d = tuple(outer[i]), tuple(outer[j]), tuple(inner[i]), tuple(inner[j])
+                ring += [a, b, c, b, d, c]
+            # The hairline over the fill, blended as the shader does.
+            edge = _over(theme.CARD_BORDER, theme.CARD_FALLBACK)
             shapes = shape_list.ShapeElementList()
-            fan = [(cx, cy)] + [tuple(p) for p in pts] + [tuple(pts[0])]
-            tris = []
-            for i in range(1, len(fan) - 1):
-                tris += [fan[0], fan[i], fan[i + 1]]
             shapes.append(
                 shape_list.create_triangles_filled_with_colors(
-                    tris, [theme.PANEL_FALLBACK] * len(tris)
+                    fill, [theme.CARD_FALLBACK] * len(fill)
                 )
             )
-            # The edge: per-vertex white with the same diagonal gradient as the shader.
-            inner = rounded_rect_points(rect.inset(0.5), max(radius - 0.5, 0.0))
-            rel_x = (inner[:, 0] - rect.x) / rect.w
-            rel_y = (inner[:, 1] - rect.y) / rect.h
-            cols = [
-                theme.white(theme.edge_alpha(0.5 * (u + 1.0 - v)))
-                for u, v in zip(rel_x, rel_y, strict=True)
-            ]
-            loop = [tuple(p) for p in inner] + [tuple(inner[0])]
-            seg_pts, seg_cols = [], []
-            for i in range(len(loop) - 1):
-                seg_pts += [loop[i], loop[i + 1]]
-                seg_cols += [cols[i], cols[(i + 1) % len(cols)]]
-            shapes.append(shape_list.create_lines_with_colors(seg_pts, seg_cols))
-            self._fallback_fills[key] = shapes
+            shapes.append(shape_list.create_triangles_filled_with_colors(ring, [edge] * len(ring)))
+            self._fallback_shapes[key] = shapes
         shapes.draw()
 
-    # ------------------------------------------------------------------------- cars
+    # ------------------------------------------------------------------- discs, strokes
 
     def capsule(
-        self,
-        cx: float,
-        cy: float,
-        heading: float,
-        length_px: float,
-        width_px: float,
-        colour,
-        stroke_px: float = 0.0,
+        self, cx: float, cy: float, heading: float, length_px: float, width_px: float, colour
     ) -> None:
-        """An anti-aliased capsule in window pixels: filled (``stroke_px = 0``) or outlined."""
+        """An anti-aliased filled capsule in window pixels."""
         if self._shaders_ok:
             ctx = self.ctx
             half = 0.5 * max(length_px, width_px) + 2.0
@@ -458,28 +428,33 @@ class GlassRenderer:
             p["u_heading"] = float(heading)
             p["u_size"] = (float(length_px), float(width_px))
             p["u_colour"] = _rgba(colour)
-            p["u_stroke"] = float(stroke_px)
             ctx.enable(ctx.BLEND)
-            ctx.blend_func = ctx.BLEND_PREMULTIPLIED_ALPHA
+            ctx.blend_func = (ctx.ONE, ctx.ONE_MINUS_SRC_ALPHA)  # premultiplied "over"
             self._quad.render(p)
             ctx.blend_func = ctx.BLEND_DEFAULT
             return
         import arcade
 
-        pts = [tuple(p) for p in capsule_points(cx, cy, heading, length_px, width_px)]
-        if stroke_px > 0.0:
-            arcade.draw_polygon_outline(pts, colour, max(1.0, stroke_px))
-        else:
-            arcade.draw_polygon_filled(pts, colour)
+        arcade.draw_polygon_filled(
+            [tuple(p) for p in capsule_points(cx, cy, heading, length_px, width_px)], colour
+        )
+
+    def disc(self, cx: float, cy: float, r: float, colour) -> None:
+        self.capsule(cx, cy, 0.0, 2 * r, 2 * r, colour)
+
+    def stroke(self, x0: float, y0: float, x1: float, y1: float, width: float, colour) -> None:
+        """A line with round caps, ``width`` px wide."""
+        length = math.hypot(x1 - x0, y1 - y0) + width
+        heading = math.atan2(y1 - y0, x1 - x0)
+        self.capsule(0.5 * (x0 + x1), 0.5 * (y0 + y1), heading, length, width, colour)
 
 
-def draw_start_line(
-    line_world: np.ndarray, camera, colour=theme.START_LINE, width_px: float = theme.START_LINE_PX
-) -> None:
-    """The start/finish line (``(2, 2)`` world endpoints, from
-    :func:`f1sim.app.render_track.boundary_lines`) as a solid screen-space line of
-    ``width_px``, under the window's default camera."""
-    import arcade
-
-    sx, sy = camera.world_to_screen(line_world[:, 0], line_world[:, 1])
-    arcade.draw_line(float(sx[0]), float(sy[0]), float(sx[1]), float(sy[1]), colour, width_px)
+def _over(top, bottom) -> tuple[int, int, int, int]:
+    """``top`` composited over ``bottom`` (straight alpha), keeping ``bottom``'s opacity."""
+    a = top[3] / 255.0
+    return (
+        int(round(top[0] * a + bottom[0] * (1 - a))),
+        int(round(top[1] * a + bottom[1] * (1 - a))),
+        int(round(top[2] * a + bottom[2] * (1 - a))),
+        max(bottom[3], top[3]),
+    )

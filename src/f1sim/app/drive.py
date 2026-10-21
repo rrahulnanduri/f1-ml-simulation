@@ -8,16 +8,18 @@ Controls: Up = throttle, Down = brake (both ramped over ``PEDAL_RAMP_S``), Left/
 ``Tab`` next card page, mouse wheel = zoom at the cursor (pages the card when over it), click
 the card = next page, right-drag = pan (turns follow off), ``Esc`` = quit.
 
-Rendering: the track is one cached ``ShapeElementList`` in world metres
-(:mod:`f1sim.app.render_track`), drawn under an arcade ``Camera2D`` whose position and zoom are
-copied from :class:`~f1sim.app.camera.Camera` every frame, into the glass renderer's offscreen
-scene (:mod:`f1sim.app.ui.glass`). The car is a 5.6 x 2.0 m solid orange capsule drawn in screen
-pixels (with a minimum size). The HUD (:mod:`f1sim.app.ui.hud`) uses ``arcade.Text`` objects
-created once.
+Rendering: the track is cached once in world metres
+(:class:`~f1sim.app.render_track.TrackRenderer`: asphalt, kerbs, run-off, chequered strip,
+white lines), drawn under an arcade ``Camera2D`` whose position and zoom are copied from
+:class:`~f1sim.app.camera.Camera` every frame, into the offscreen scene of
+:mod:`f1sim.app.ui.glass`. The car is a pixel-art sprite (:mod:`f1sim.app.ui.pixelcar`) in
+titanium, black and red, kept at the middle of the area the HUD leaves free. The HUD
+(:mod:`f1sim.app.ui.hud`) uses ``arcade.Text`` objects created once.
 
-**Ghost.** With ``ghost_path`` (``f1sim drive <track> --ghost lap.npz``) a ghost car (outlined
-in its team colour) drives its lap from the moment the lap clock starts, restarting with every
-lap; the gap readout, the speed page and the sector colours compare the live lap against it.
+**Ghost.** With ``ghost_path`` (``f1sim drive <track> --ghost lap.npz``) a ghost car (in its
+team livery, with a light outline) drives its lap from the moment the lap clock starts,
+restarting with every lap; the gap readout, the speed page and the sector colours compare the
+live lap against it.
 :class:`DriveSession` records the live lap in a :class:`~f1sim.app.ui.timing.LapTelemetry`
 (sector splits, speed along the lap).
 """
@@ -33,7 +35,6 @@ import arcade
 import numpy as np
 
 from f1sim.app.camera import Camera
-from f1sim.app.render_track import boundary_lines, build_track_shapes
 from f1sim.app.ui import theme
 from f1sim.app.ui import timing as tm
 from f1sim.sim.car_model import CarParams, CarState, StepInfo, step
@@ -62,9 +63,15 @@ FOLLOW_PIXELS_PER_METRE = 4.0
 ZOOM_STEP = 1.15
 """Zoom factor per mouse-wheel notch."""
 
-HELP_TEXT = (
-    "↑ THROTTLE · ↓ BRAKE · ←→ STEER · R RESET · F FOLLOW · TAB PAGES · WHEEL ZOOM · ESC QUIT"
-)
+CONTROLS = [
+    "↑ throttle",
+    "↓ brake",
+    "←→ steer",
+    "Tab pages",
+    "F follow",
+    "R reset",
+    "Esc quit",
+]
 
 
 @dataclass
@@ -240,6 +247,7 @@ class DriveGhost:
     lap_time: float
     sectors: list[float]
     speed: tuple[np.ndarray, np.ndarray]
+    team: str | None = None
 
     @classmethod
     def load(cls, path, track: Track) -> DriveGhost:
@@ -258,6 +266,7 @@ class DriveGhost:
             lap_time=replay.lap_time_of(prepared, track.length),
             sectors=tm.sector_times(prepared.t, prepared.s, track.data.sectors_s, track.length),
             speed=tm.resample_speed(prepared.s, trace.speed * 3.6, track.length),
+            team=(meta or {}).get("team"),
         )
 
     def gap(self, lap_time: float, progress: float) -> float:
@@ -295,7 +304,7 @@ def drive_tower(session: DriveSession, ghost: DriveGhost | None) -> list[tm.Towe
 
 
 class DriveWindow(arcade.Window):
-    """Resizable window driving one :class:`DriveSession`, with the glass HUD."""
+    """Resizable window driving one :class:`DriveSession`, with the HUD."""
 
     def __init__(
         self,
@@ -317,8 +326,10 @@ class DriveWindow(arcade.Window):
             draw_rate=DT,
             visible=visible,
         )
+        from f1sim.app.render_track import TrackRenderer
         from f1sim.app.ui.glass import GlassRenderer
         from f1sim.app.ui.hud import Hud
+        from f1sim.app.ui.pixelcar import CarLayer
 
         self.background_color = theme.BACKGROUND
         self.track = track
@@ -334,29 +345,34 @@ class DriveWindow(arcade.Window):
         self.camera.follow(self.session.x, self.session.y)
         self._zoom_to(FOLLOW_PIXELS_PER_METRE)
         self.camera2d = arcade.camera.Camera2D()
-
-        self.track_shapes = build_track_shapes(track)  # uploaded to the GPU once
-        self.start_line = boundary_lines(track)["start_finish"]
-        self._car_length = self.session.params.length_m
-        self._car_width = self.session.params.width_m
+        self.track_view = TrackRenderer(track, self.ctx)  # uploaded to the GPU once
 
         theme.load_fonts()
         self.glass = GlassRenderer(self, enabled=glass)
-        self.hud = Hud(self.glass, 4, track.length, HELP_TEXT)
-        self.hud.banner.text = "OFF TRACK"
+        self.hud = Hud(self.glass, 4, track.length, CONTROLS)
+        self.track_title = self.track.data.id.replace("_", " ").upper()
+        self.hud.headline.set([self.track_title, "Drive"])
         ghost_name = None if self.ghost is None else self.ghost.label
         self.hud.card.set_reference(ghost_name)
-        self.text_ghost = theme.make_text(
-            (ghost_name or "").upper(), theme.LABEL_PX, theme.TEXT_LABEL, tracking_em=0.08
-        )
+        labels, liveries, outlined = ["You"], [theme.SELF_LIVERY], [False]
+        if self.ghost is not None:
+            labels.insert(0, self.ghost.label)
+            liveries.insert(0, theme.livery(self.ghost.team))
+            outlined.insert(0, True)
+        self.cars = CarLayer(labels, liveries, outlined)
         self._speed_version = -1
         self.hud.layout(self.width, self.height)
+        self._follow_camera()
 
     # ------------------------------------------------------------------------ helpers
 
     def _zoom_to(self, pixels_per_metre: float) -> None:
         factor = pixels_per_metre / self.camera.pixels_per_metre
         self.camera.zoom_at(factor, 0.5 * self.camera.viewport_w, 0.5 * self.camera.viewport_h)
+
+    def _follow_camera(self) -> None:
+        if self.follow:
+            self.camera.follow_at(self.session.x, self.session.y, *self.hud.stage_centre())
 
     def ghost_pose(self):
         """The ghost at the live lap clock (waiting on the line until the clock starts)."""
@@ -405,7 +421,7 @@ class DriveWindow(arcade.Window):
 
     def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> None:
         if button == arcade.MOUSE_BUTTON_LEFT:
-            self.hud.on_press(x, y, time.perf_counter())
+            self.hud.on_press(x, y, time.perf_counter())  # one ghost: nothing to cycle
 
     def on_mouse_drag(self, x: int, y: int, dx: int, dy: int, buttons: int, modifiers: int):
         if buttons & arcade.MOUSE_BUTTON_RIGHT:
@@ -416,56 +432,41 @@ class DriveWindow(arcade.Window):
         self.camera.resize(width, height)
         self.camera2d.match_window()
         self.hud.layout(width, height)
+        self._follow_camera()
 
     def on_update(self, delta_time: float) -> None:
         self.session.update(self.controls, delta_time)
-        if self.follow:
-            self.camera.follow(self.session.x, self.session.y)
+        self._follow_camera()
 
     # --------------------------------------------------------------------------- draw
 
     def on_draw(self) -> None:
-        from f1sim.app.ui.glass import draw_start_line
-
-        self._update_hud()
+        now = time.perf_counter()
+        self._update_hud(now)
         with self.glass.scene():
             self.camera2d.position = self.camera.centre
             self.camera2d.zoom = self.camera.pixels_per_metre
             self.glass.use_camera(self.camera2d)
-            self.track_shapes.draw()
+            self.track_view.draw(self.camera.pixels_per_metre)
             self.glass.use_pixels()
-            draw_start_line(self.start_line, self.camera)
+            self.track_view.draw_ticks(self.camera, self.glass)
             self._draw_cars()
         self.glass.present()
-        self.hud.draw(time.perf_counter())
+        self.hud.draw(now)
 
     def _draw_cars(self) -> None:
-        from f1sim.app.ui.layout import capsule_size_px
-
-        length, width = capsule_size_px(
-            self.camera.pixels_per_metre,
-            self._car_length,
-            self._car_width,
-            theme.CAR_MIN_LENGTH_PX,
-            theme.CAR_MIN_WIDTH_PX,
-        )
+        s = self.session
+        poses = [(s.x, s.y, s.yaw)]
         if self.ghost is not None:
             g = self.ghost_pose()
-            gx, gy = self.camera.world_to_screen(g.x, g.y)
-            gx, gy = float(gx), float(gy)
-            self.glass.capsule(
-                gx, gy, g.heading, length, width, self.ghost.colour, theme.CAR_STROKE_PX
-            )
-            self.text_ghost.position = (round(gx + 8.0), round(gy + 0.5 * length + 6.0))
-            self.text_ghost.draw()
-        s = self.session
-        sx, sy = self.camera.world_to_screen(s.x, s.y)
-        self.glass.capsule(float(sx), float(sy), s.yaw, length, width, theme.SELF)
+            poses.insert(0, (g.x, g.y, g.heading))
+        self.cars.draw(self.camera, poses, len(poses) - 1, self.get_pixel_ratio())
 
-    def _update_hud(self) -> None:
+    def _update_hud(self, now: float) -> None:
+        from f1sim.app.ui.hud import ticker_date_time
+
         s, hud, ghost = self.session, self.hud, self.ghost
-        track_name = self.track.data.id.replace("_", " ").upper()
-        hud.tower.set(f"{track_name} · LAP {s.laps + 1}", drive_tower(s, ghost))
+        hud.tower.set("Timing", f"Lap {s.laps + 1}", drive_tower(s, ghost))
         gap = self.live_gap()
         hud.gap.set(gap, None if ghost is None else ghost.long_label)
         at = f"at {s.lap_progress:,.0f} m" if math.isfinite(gap) else ""
@@ -480,22 +481,22 @@ class DriveWindow(arcade.Window):
             )
         hud.card.set_marker(s.lap_progress if s.clock_running else 0.0)
         if ghost is None:
-            extra = f"LAP {s.laps + 1}"
+            extra = f"Lap {s.laps + 1}"
         elif math.isfinite(gap):
             extra = "P1" if gap <= 0.0 else "P2"
         else:
             extra = "P–"
-        hud.speed.set(s.speed_kmh, extra)
+        hud.speed.set(s.speed_kmh, extra, format_lap_time(s.lap_time if s.clock_running else 0.0))
+        hud.ticker.set([*ticker_date_time(), self.track_title, f"Lap {s.laps + 1}"], now)
         hud.show_banner = s.off_track
         if s.sliding:
-            status, colour = "SLIDING", theme.SECTOR_YELLOW
+            hud.footer.set_status("Sliding", theme.ACCENT)
         elif not self.follow:
-            status, colour = "FOLLOW OFF · F", theme.TEXT_MUTED
+            hud.footer.set_status("Free camera · F to follow", theme.TEXT_SECONDARY)
+        elif ghost is not None:
+            hud.footer.set_status(f"Ghost {ghost.label}", theme.TEXT_SECONDARY)
         else:
-            status, colour = "", theme.TEXT_SECONDARY
-        if hud.status.text != status:
-            hud.status.text = status
-            hud.status.color = colour
+            hud.footer.set_status("")
 
 
 def run(track_id: str, ghost: Path | None = None) -> None:

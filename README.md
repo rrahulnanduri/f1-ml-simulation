@@ -68,7 +68,7 @@ To race a real driver's lap, pass a ghost from `f1sim ghost` (it sets off when y
 f1sim drive silverstone --ghost path/to/ghost.npz
 ```
 
-Set `F1SIM_NO_GLASS=1` to draw the HUD panels flat instead of frosted glass (for slow GPUs or debugging).
+Set `F1SIM_NO_GLASS=1` to draw the HUD cards flat, without the offscreen scene and its blurred backdrop (for slow GPUs or debugging).
 
 ```bash
 f1sim reference-lap silverstone

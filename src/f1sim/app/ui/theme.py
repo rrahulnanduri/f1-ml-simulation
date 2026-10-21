@@ -1,4 +1,9 @@
-"""The "pit wall noir" theme: colours, type, sizes, team colours and font loading.
+"""The viewers' design language: colours, type, sizes, team colours and liveries, fonts.
+
+A dark, single-accent look: a deep charcoal scene, solid near-black cards with a white
+hairline, one red accent (``ACCENT``) for highlights, white text at 100 % / 60 %, wide bold
+UPPERCASE headlines (Archivo Expanded Bold), 10 px UPPERCASE "micro" labels with 1 px tracking,
+and JetBrains Mono for tabular numbers.
 
 Everything here is constants and pure functions except :func:`load_fonts` and
 :func:`make_text`, which touch arcade/pyglet only when called (never on import).
@@ -11,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -31,48 +37,101 @@ def white(alpha: float) -> Colour:
     return hex_colour("#FFFFFF", alpha)
 
 
+def with_alpha(colour: Colour, alpha: float) -> Colour:
+    """``colour`` with its opacity replaced by ``alpha`` (0-1)."""
+    return (colour[0], colour[1], colour[2], int(255 * min(max(alpha, 0.0), 1.0) + 0.5))
+
+
+# ----------------------------------------------------------------------------- accents
+
+ACCENT = hex_colour("#EB0D3F")
+"""The single accent: self/AI highlight, "behind" gaps, active page dot, categories, buttons."""
+GREY = hex_colour("#3E3E3E")
+"""Inactive elements (page dots, unset sectors)."""
+
 # ------------------------------------------------------------------------------ scene
 
-BACKGROUND = hex_colour("#0B0C0F")
-ROAD = hex_colour("#1A1C21")
-WALL = white(0.30)
-"""Hairline walls: 1 GL pixel at any zoom."""
-START_LINE = white(1.0)
-START_LINE_PX = 2.5
-
-AMBIENT_COOL = hex_colour("#3D6BD8", 0.16)
-AMBIENT_WARM = hex_colour("#FF7A2F", 0.16)
-AMBIENT_COOL_CENTRE = (0.10, 0.90)
-"""Centre of the cool wash as a fraction of the window (x from the left, y from the bottom)."""
-AMBIENT_WARM_CENTRE = (0.90, 0.10)
-AMBIENT_RADIUS = 0.45
-"""Radius of each wash as a fraction of the window diagonal."""
+BACKGROUND = hex_colour("#131313")
+VIGNETTE = 0.22
+"""Darkening of the window corners by the neutral vignette (0 = none)."""
+ROAD = hex_colour("#1E1F22")
+WHITE_LINE = white(0.70)
+WHITE_LINE_PX = 1.5
+"""The white line (the track edge) is this wide on screen at every zoom."""
+KERB_RED = ACCENT
+KERB_WHITE = hex_colour("#F2F2F2")
+RUNOFF = hex_colour("#2A2B2F")
+KERB_MIN_EXTRA_M = 0.3
+"""Kerbs only where the track limit is more than this beyond the white line."""
+KERB_MAX_WIDTH_M = 1.5
+KERB_BLOCK_M = 3.0
+"""Length of one red or white kerb block along the white line (adjusted per kerb)."""
+KERB_MIN_PPM = 1.2
+"""Below this zoom (pixels per metre) the kerbs are drawn as run-off: 3 m blocks would be
+smaller than ~4 px and only flicker."""
+CHEQUER_M = 1.0
+"""Size of a start/finish chequer square."""
+SECTOR_TICK = ACCENT
+SECTOR_TICK_PX = (2.0, 10.0)
+"""Width and length of a sector tick across the white line, screen pixels."""
 
 # ------------------------------------------------------------------------------- cars
 
 CAR_LENGTH_M = 5.6
 CAR_WIDTH_M = 2.0
-CAR_MIN_LENGTH_PX = 9.0
-CAR_MIN_WIDTH_PX = 4.0
-CAR_STROKE_PX = 1.1
-SELF = hex_colour("#FF7A2F")
+CAR_MIN_LENGTH_PX = 24.0
+"""Zoomed out, a car sprite is at least this long (in whole multiples of its pixels)."""
+SELF = ACCENT
+"""Colour of the self/AI car in the tower, the charts and its label."""
+CAR_LABEL = white(0.70)
+CAR_OUTLINE = hex_colour("#E8EAED", 0.55)
+"""The 1 px outline around ghost cars."""
+
+
+@dataclass(frozen=True)
+class Livery:
+    """A car's paint: ``primary`` (body), ``secondary`` (wings, sidepod sides) and
+    ``accent`` (endplates, stripes)."""
+
+    primary: Colour
+    secondary: Colour
+    accent: Colour
+
+
+SELF_LIVERY = Livery(hex_colour("#A9ADB2"), hex_colour("#0E0E10"), ACCENT)
+"""The self/AI car: titanium and black with red accents."""
+
+LIVERIES: dict[str, Livery] = {
+    "red bull": Livery(hex_colour("#1E2A5E"), hex_colour("#D8192B"), hex_colour("#FFC906")),
+    "mercedes": Livery(hex_colour("#C3C8CD"), hex_colour("#111214"), hex_colour("#27F4D2")),
+    "ferrari": Livery(hex_colour("#D40000"), hex_colour("#1A1A1A"), hex_colour("#FFE600")),
+    "mclaren": Livery(hex_colour("#FF8000"), hex_colour("#151515"), hex_colour("#47C7FC")),
+    "aston martin": Livery(hex_colour("#0B5E4B"), hex_colour("#CEDC00"), hex_colour("#CEDC00")),
+    "alpine": Livery(hex_colour("#0A72C2"), hex_colour("#121418"), hex_colour("#FD4BC7")),
+    "williams": Livery(hex_colour("#0A2A5E"), hex_colour("#00A3E0"), hex_colour("#FFFFFF")),
+    "rb": Livery(hex_colour("#E9ECF2"), hex_colour("#1634CB"), hex_colour("#D8192B")),
+    "sauber": Livery(hex_colour("#1A1C1E"), hex_colour("#52E252"), hex_colour("#52E252")),
+    "haas": Livery(hex_colour("#ECEDEE"), hex_colour("#1A1A1A"), hex_colour("#E6002B")),
+}
+NEUTRAL_LIVERY = Livery(hex_colour("#8E929A"), hex_colour("#1A1B1E"), hex_colour("#D9DBDE"))
+"""A ghost without a known team."""
 
 # ------------------------------------------------------------------------------- text
 
-TEXT_PRIMARY = hex_colour("#EEEFF1")
-TEXT_SECONDARY = hex_colour("#A7AAB1")
-TEXT_MUTED = hex_colour("#8C8F96")
-TEXT_LABEL = hex_colour("#9A9DA4")
-TEXT_SPEED = hex_colour("#F4F4F5")
-SELF_GAP = hex_colour("#FF9A5C")
-BEHIND = SELF
-AHEAD = hex_colour("#3DD68C")
-OFF_TRACK = hex_colour("#FF5A5A")
+TEXT_PRIMARY = white(1.0)
+TEXT_SECONDARY = white(0.60)
+TEXT_TERTIARY = white(0.36)
+TEXT_LABEL = TEXT_PRIMARY
+"""Metadata micro labels are white; category micro labels are ``ACCENT``."""
+BEHIND = ACCENT
+AHEAD = hex_colour("#2FD27A")
+SELF_GAP = ACCENT
+OFF_TRACK = ACCENT
 
 SECTOR_PURPLE = hex_colour("#A97CFF")
 SECTOR_GREEN = AHEAD
 SECTOR_YELLOW = hex_colour("#E8C547")
-SECTOR_UNSET = white(0.12)
+SECTOR_UNSET = GREY
 SECTOR_COLOURS = {
     "purple": SECTOR_PURPLE,
     "green": SECTOR_GREEN,
@@ -81,38 +140,41 @@ SECTOR_COLOURS = {
 }
 
 SEPARATOR = white(0.08)
-CHART_REF = white(0.32)
-CHART_SELF = hex_colour("#FF7A2F", 0.80)
-CHART_MARKER = white(0.40)
+SELF_ROW = white(0.05)
+"""Faint fill behind the self row of the timing tower."""
+CHART_REF = white(0.40)
+CHART_SELF = ACCENT
+CHART_MARKER = white(0.45)
+CHART_GRID = white(0.06)
 GAP_TRACK = white(0.10)
-DOT_ACTIVE = white(0.90)
-DOT_INACTIVE = white(0.28)
+DOT_ACTIVE = ACCENT
+DOT_INACTIVE = GREY
+LINK_UNDERLINE = white(0.28)
 
-LABEL_PX = 10
-LABEL_TRACKING_EM = 0.14
+MICRO_PX = 10
+MICRO_TRACKING_PX = 1.0
+HEADLINE_PX = 28
+HEADLINE_FADE = (1.0, 0.42, 0.22)
+"""Opacity of the headline's first, second and third line."""
+WORDMARK_PX = 14
 NAME_PX = 12
-TIME_PX = 11
-GAP_PX = 26
-SPEED_PX = 44
-UNIT_PX = 12
-SECTOR_TIME_PX = 10
+TIME_PX = 12
+GAP_PX = 30
+SPEED_PX = 40
+SECTOR_TIME_PX = 13
 GAP_PAGE_PX = 15
+CLOCK_PX = 13
 
-# ------------------------------------------------------------------------------ glass
+# ------------------------------------------------------------------------------ cards
 
-PANEL_RADIUS = 18.0
-CARD_RADIUS = 20.0
-BLUR_SIGMA_PX = 9.0
-BLUR_BRIGHTEN = 1.15
-TINT_TOP = 0.10
-TINT_BOTTOM = 0.035
-EDGE_TOP_LEFT = 0.38
-EDGE_MIDDLE = 0.08
-EDGE_BOTTOM_RIGHT = 0.16
-SHADOW_DY_PX = 10.0
-SHADOW_BLUR_PX = 12.0
-SHADOW_ALPHA = 0.45
-PANEL_FALLBACK = hex_colour("#16181C", 0.85)
+CARD_RADIUS = 8.0
+CARD_FILL = 0.88
+"""Opacity of the black card fill over the (blurred) scene."""
+CARD_BORDER = white(0.20)
+BLUR_SIGMA_PX = 6.0
+CARD_FALLBACK = (0, 0, 0, int(255 * CARD_FILL + 0.5))
+BUTTON_RADIUS = 10.0
+"""The red ↗ buttons in card corners."""
 
 NO_GLASS_ENV = "F1SIM_NO_GLASS"
 
@@ -120,15 +182,6 @@ NO_GLASS_ENV = "F1SIM_NO_GLASS"
 def glass_disabled_by_env() -> bool:
     """``F1SIM_NO_GLASS`` set to anything but ``""``/``0`` forces the flat fallback panels."""
     return os.environ.get(NO_GLASS_ENV, "").strip() not in ("", "0")
-
-
-def edge_alpha(g: float) -> float:
-    """Opacity of the panel edge at diagonal position ``g`` (0 = top-left, 1 = bottom-right):
-    ``EDGE_TOP_LEFT`` -> ``EDGE_MIDDLE`` at 0.5 -> ``EDGE_BOTTOM_RIGHT``, linear."""
-    g = min(max(float(g), 0.0), 1.0)
-    if g < 0.5:
-        return EDGE_TOP_LEFT + (EDGE_MIDDLE - EDGE_TOP_LEFT) * (g / 0.5)
-    return EDGE_MIDDLE + (EDGE_BOTTOM_RIGHT - EDGE_MIDDLE) * ((g - 0.5) / 0.5)
 
 
 # ------------------------------------------------------------------------------ teams
@@ -176,25 +229,40 @@ MUTED_PALETTE: tuple[Colour, ...] = (
     hex_colour("#B4B7BE"),
     hex_colour("#5C6068"),
 )
-"""Greys for traces without a team, other than the orange "self"."""
+"""Greys for traces without a team, other than the red "self"."""
 
 
-def team_colour(team: str | None) -> Colour | None:
-    """The team's colour, or ``None`` for an empty or unknown team name."""
+def team_key(team: str | None) -> str | None:
+    """The key of :data:`TEAM_COLOURS` / :data:`LIVERIES` for a team name, or ``None``."""
     name = (team or "").strip().lower()
     if not name:
         return None
     if name == "rb":
-        return TEAM_COLOURS["rb"]
+        return "rb"
     for alias, key in _TEAM_ALIASES:
         if alias in name:
-            return TEAM_COLOURS[key]
+            return key
     return None
 
 
+def team_colour(team: str | None) -> Colour | None:
+    """The team's colour, or ``None`` for an empty or unknown team name."""
+    key = team_key(team)
+    return None if key is None else TEAM_COLOURS[key]
+
+
+def livery(team: str | None, is_self: bool = False) -> Livery:
+    """The car paint: :data:`SELF_LIVERY` for the self/AI car, else the team's livery
+    (:data:`NEUTRAL_LIVERY` for an unknown team)."""
+    if is_self:
+        return SELF_LIVERY
+    key = team_key(team)
+    return NEUTRAL_LIVERY if key is None else LIVERIES[key]
+
+
 def trace_colours(teams: list[str | None], is_ghost: list[bool]) -> list[Colour]:
-    """One colour per trace: its team colour; else orange for the first trace that isn't a
-    ghost (the "self" car) and greys from :data:`MUTED_PALETTE` for the rest."""
+    """One colour per trace: its team colour; else the accent red for the first trace that
+    isn't a ghost (the "self" car) and greys from :data:`MUTED_PALETTE` for the rest."""
     out: list[Colour] = []
     self_taken = False
     grey = 0
@@ -277,18 +345,34 @@ def ghost_long_name(meta: dict | None) -> str | None:
 
 FONT_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
 FONT_FILES = (
-    "InterTight/InterTight-Light.ttf",
-    "InterTight/InterTight-Regular.ttf",
-    "JetBrainsMono/JetBrainsMono-Light.ttf",
+    "Archivo/ArchivoExpanded-Bold.ttf",
+    "Archivo/ArchivoSemiExpanded-Bold.ttf",
+    "Archivo/Archivo-Medium.ttf",
     "JetBrainsMono/JetBrainsMono-Regular.ttf",
 )
-# Family names as pyglet resolves them: DirectWrite groups the static files by their
-# typographic family ("Inter Tight" + weight), FreeType/GDI may list "Inter Tight Light".
-# The system fonts after them are the fallback when the bundled files can't be loaded.
-TEXT_FONTS = ("Inter Tight", "Segoe UI", "Helvetica Neue", "Arial", "DejaVu Sans")
-TEXT_FONTS_LIGHT = ("Inter Tight", "Inter Tight Light", *TEXT_FONTS[1:])
-MONO_FONTS = ("JetBrains Mono", "Consolas", "Menlo", "DejaVu Sans Mono", "Courier New")
-MONO_FONTS_LIGHT = ("JetBrains Mono", "JetBrains Mono Light", *MONO_FONTS[1:])
+_SANS = ("Segoe UI", "Helvetica Neue", "Arial", "DejaVu Sans")
+
+
+@dataclass(frozen=True)
+class Face:
+    """A type style: font family names to try in order, weight and width ("stretch").
+
+    The static Archivo files share the typographic family "Archivo": DirectWrite (Windows)
+    picks the width from ``stretch``, while FreeType/fontconfig lists the wide cuts as
+    their own families ("Archivo Expanded"), which are tried first.
+    """
+
+    names: tuple[str, ...]
+    weight: str = "normal"
+    stretch: str | None = None
+
+
+FACES: dict[str, Face] = {
+    "headline": Face(("Archivo Expanded", "Archivo", *_SANS), "bold", "expanded"),
+    "micro": Face(("Archivo SemiExpanded", "Archivo", *_SANS), "bold", "semiexpanded"),
+    "medium": Face(("Archivo", "Archivo Medium", *_SANS), "medium"),
+    "mono": Face(("JetBrains Mono", "Consolas", "Menlo", "DejaVu Sans Mono", "Courier New")),
+}
 
 _fonts_loaded: bool | None = None
 
@@ -323,32 +407,43 @@ def make_text(
     px: float,
     colour: Colour,
     *,
-    mono: bool = False,
-    light: bool = False,
+    face: str = "medium",
     anchor_x: str = "left",
     anchor_y: str = "baseline",
-    tracking_em: float = 0.0,
+    tracking_px: float = 0.0,
 ):
-    """An ``arcade.Text`` in the theme's fonts. Create once, then only change ``.text`` /
-    ``.color`` / ``.position``."""
+    """An ``arcade.Text`` in one of the :data:`FACES`. Create once, then only change
+    ``.text`` / ``.color`` / ``.position``."""
     import arcade
 
-    if mono:
-        names = MONO_FONTS_LIGHT if light else MONO_FONTS
-    else:
-        names = TEXT_FONTS_LIGHT if light else TEXT_FONTS
+    style = FACES[face]
     t = arcade.Text(
         text,
         0,
         0,
         colour,
         px_to_pt(px),
-        font_name=names,
+        font_name=style.names,
         anchor_x=anchor_x,
         anchor_y=anchor_y,
     )
-    if light:
-        t.label.weight = "light"
-    if tracking_em:
-        t.tracking = tracking_em * px
+    if style.weight != "normal":
+        t.label.weight = style.weight
+    if style.stretch:
+        t.label.set_style("stretch", style.stretch)
+    if tracking_px:
+        t.tracking = tracking_px
     return t
+
+
+def micro(text: str, colour: Colour = TEXT_LABEL, anchor_x: str = "left"):
+    """A 10 px bold UPPERCASE label with 1 px tracking (red for categories, white for
+    metadata)."""
+    return make_text(
+        text.upper(),
+        MICRO_PX,
+        colour,
+        face="micro",
+        anchor_x=anchor_x,
+        tracking_px=MICRO_TRACKING_PX,
+    )

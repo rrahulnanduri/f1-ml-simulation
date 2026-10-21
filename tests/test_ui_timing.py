@@ -171,6 +171,9 @@ def test_replay_timing_reference_tower_gap_and_sectors(circle_track):
     assert timing.lap_times[0] == pytest.approx(length / 50.0, abs=1e-6)
     assert timing.reference(me) == 0  # fastest other
     assert timing.reference(0) == 1
+    # The gap card's button cycles through the others, fastest first, wrapping.
+    assert timing.references(me) == [0, 1]
+    assert [timing.reference(me, k) for k in range(3)] == [0, 1, 0]
     rows = timing.tower(me)
     assert [r.name for r in rows] == ["VER '25", "RUS '24", "AI"]
     assert rows[2].is_self and rows[2].value.startswith("+")

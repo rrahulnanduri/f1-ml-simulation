@@ -30,22 +30,23 @@
   alignment. It is a runtime dependency installed from PyPI and is not vendored here. Data it
   downloads is cached in the user cache folder, not in the repository.
 
-## Inter Tight (SIL Open Font License 1.1)
+## Archivo (SIL Open Font License 1.1)
 
-- **Source:** <https://github.com/googlefonts/inter-gf-tight> at commit
-  `c194f94c60b569b47876811321f5ef1f0c2614a2`, the upstream that google/fonts `ofl/intertight`
-  is built from (google/fonts itself only ships the variable font). Copyright 2022 The Inter
-  Project Authors.
-- **License:** SIL Open Font License 1.1, in `src/f1sim/app/assets/fonts/InterTight/OFL.txt`
-  (identical to google/fonts `ofl/intertight/OFL.txt`).
-- **Used for:** HUD text in the drive and replay viewers. The static `InterTight-Light.ttf` and
-  `InterTight-Regular.ttf` (version 3.004) are bundled unmodified as package data.
+- **Source:** <https://github.com/Omnibus-Type/Archivo> at commit
+  `211127690e8ff106c36c935f7e5e697114cff103` (`fonts/ttf/`), the official repository by
+  Omnibus-Type (Héctor Gatti). The repository publishes no GitHub releases, so the static TTFs
+  are taken from that pinned commit. Copyright 2020 The Archivo Project Authors.
+- **License:** SIL Open Font License 1.1, in `src/f1sim/app/assets/fonts/Archivo/OFL.txt`
+  (the repository's `OFL.txt`, unmodified).
+- **Used for:** the viewers' type: `ArchivoExpanded-Bold.ttf` for headlines, the speed and gap
+  numbers and the wordmark, `ArchivoSemiExpanded-Bold.ttf` for the 10 px UPPERCASE labels and
+  `Archivo-Medium.ttf` for names. Static files are bundled (unmodified) because pyglet can't
+  select the width axis of the variable font.
 
 ## JetBrains Mono (SIL Open Font License 1.1)
 
 - **Source:** <https://github.com/JetBrains/JetBrainsMono>, release tag `v2.304`
   (`fonts/ttf/`). Copyright 2020 The JetBrains Mono Project Authors.
 - **License:** SIL Open Font License 1.1, in `src/f1sim/app/assets/fonts/JetBrainsMono/OFL.txt`.
-- **Used for:** numbers in the HUD (lap times, gaps, speed). The static
-  `JetBrainsMono-Light.ttf` and `JetBrainsMono-Regular.ttf` (version 2.304) are bundled
-  unmodified as package data.
+- **Used for:** tabular numbers in the HUD (lap times, gaps, sector times). The static
+  `JetBrainsMono-Regular.ttf` (version 2.304) is bundled unmodified as package data.

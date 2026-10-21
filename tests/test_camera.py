@@ -100,3 +100,11 @@ def test_resize_keeps_centre_and_scale(cam):
     cam.resize(1920, 1080)
     assert cam.pixels_per_metre == ppm
     np.testing.assert_allclose(cam.screen_to_world(960.0, 540.0), centre, atol=1e-9)
+
+
+def test_follow_at_puts_the_point_where_asked(cam):
+    cam.follow_at(123.0, -45.0, 640.0, 428.0)  # e.g. the HUD's stage centre
+    sx, sy = cam.world_to_screen(123.0, -45.0)
+    assert (float(sx), float(sy)) == pytest.approx((640.0, 428.0))
+    cam.follow_at(10.0, 20.0, 0.5 * cam.viewport_w, 0.5 * cam.viewport_h)
+    assert cam.centre == pytest.approx((10.0, 20.0))  # the window centre: same as follow
