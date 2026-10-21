@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import math
 import sys
 from pathlib import Path
@@ -249,6 +250,7 @@ def _cmd_train(args: argparse.Namespace) -> int:
         "track_id": args.track,
         "seed": args.seed,
         "optimiser": args.optimiser,
+        "init": args.init,
         "max_generations": args.generations,
         "max_wall_s": None if args.minutes is None else args.minutes * 60.0,
     }
@@ -263,6 +265,13 @@ def _cmd_train(args: argparse.Namespace) -> int:
         return 1
     run_dir = Path(args.run_dir or f"runs/{cfg.track_id}-{time.strftime('%Y%m%d-%H%M%S')}")
     print(f"training on {track.data.name} -> {run_dir.resolve()}")
+    if cfg.init == "clone":
+        print(f"cloning the scripted driver ({cfg.clone_rounds} DAgger rounds) ...", flush=True)
+        clone_log = logging.getLogger("f1sim.train.trainer")
+        clone_log.setLevel(logging.INFO)
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("  %(message)s"))
+        clone_log.addHandler(handler)
 
     def report(row: dict) -> None:
         lap = row.get("best_lap_s")
@@ -346,6 +355,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--generations", type=int, help="generation limit")
     p.add_argument("--seed", type=int)
     p.add_argument("--optimiser", choices=("ga", "cmaes"))
+    p.add_argument(
+        "--init",
+        choices=("clone", "random"),
+        help="clone: copy the scripted driver, then evolve (default); random: from scratch",
+    )
     p.add_argument("--run-dir", help="output folder (default: runs/<track>-<timestamp>)")
     p.set_defaults(func=_cmd_train)
 

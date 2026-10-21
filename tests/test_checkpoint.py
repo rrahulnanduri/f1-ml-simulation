@@ -150,7 +150,10 @@ def test_save_validation_errors(tmp_path):
 def test_obs_spec_version_mismatch(tmp_path):
     path = tmp_path / "00005.npz"
     save_checkpoint(path, _params(), _meta(obs_spec_version=OBS_SPEC_VERSION + 1, git_commit="abc"))
-    with pytest.raises(CheckpointMismatch, match=r"observation spec v2.*uses v1") as exc:
+    with pytest.raises(
+        CheckpointMismatch,
+        match=rf"observation spec v{OBS_SPEC_VERSION + 1}.*uses v{OBS_SPEC_VERSION}",
+    ) as exc:
         load_checkpoint(path)
     assert "abc" in str(exc.value)
     assert isinstance(exc.value, ValueError)

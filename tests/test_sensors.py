@@ -3,7 +3,7 @@ import pytest
 
 from _geometry_helpers import circle, stadium
 from f1sim.data.track_builder import build_track
-from f1sim.sim import sensors
+from f1sim.sim import raceline, sensors
 from f1sim.sim.sensors import (
     CURVATURE_SCALE,
     LOOKAHEAD_M,
@@ -52,9 +52,9 @@ def observe(sens: Sensors, x, y, yaw, v=None, action=None):
 
 
 def test_spec_constants():
-    assert sensors.OBS_SPEC_VERSION == 1
+    assert sensors.OBS_SPEC_VERSION == 2
     assert len(RAY_ANGLES_DEG) == 9 and len(LOOKAHEAD_M) == 5
-    assert OBS_SIZE == len(RAY_ANGLES_DEG) + 3 + len(LOOKAHEAD_M) + 2 == 19
+    assert OBS_SIZE == len(RAY_ANGLES_DEG) + 3 + len(LOOKAHEAD_M) + 2 + 10 == 29
     assert (RAY_RANGE_M, V_NORM, CURVATURE_SCALE) == (200.0, 92.0, 50.0)
 
 
@@ -168,3 +168,49 @@ def test_bad_shapes_rejected(ccw_circle):
         sens.observe(z, z, z, z, z, z, np.zeros(6))
     with pytest.raises(ValueError):
         sens.observe(np.zeros((3, 1)), z, z, z, z, z, np.zeros((3, 2)))
+
+
+# ------------------------------------------------------------------- racing line (v2)
+
+
+def test_racing_line_features_on_a_circle(ccw_circle):
+    """The circle isn't in the catalogue, so its racing line is the centre line."""
+    sens = Sensors(ccw_circle)
+    line = sens.racing_line
+    assert line.source == "centre-line"
+    radius = 150.0
+    x, y, yaw = at(ccw_circle, [100.0, 400.0, 700.0], [0.0, 2.0, -1.0], [0.0, 0.0, 0.1])
+    obs = observe(sens, x, y, yaw, v=np.full(3, 30.0))
+    f = obs[:, 19:29]
+    np.testing.assert_allclose(f[:, 0], [0.0, 2.0 / 5.0, -1.0 / 5.0], atol=0.02)
+    np.testing.assert_allclose(f[:, 1], [0.0, 0.0, 0.1 / 0.5], atol=0.01)
+    # On the line, heading along it: a CCW circle lies to the left, R (1 - cos(d / R)) away.
+    want = [radius * (1 - np.cos(d / radius)) / 20.0 for d in raceline.AHEAD_M]
+    np.testing.assert_allclose(f[0, 2:6], want, rtol=0.05, atol=0.02)
+    # A constant-radius bend has one profile speed everywhere (top speed: R = 150 m needs no
+    # grip limit, see sim/scripted.py).
+    assert np.ptp(f[:, 6:10]) < 1e-3 and 0.3 < f[0, 6] < 1.1
+
+
+def test_racing_line_projection_is_hinted_and_forgets_on_request(ccw_circle):
+    sens = Sensors(ccw_circle)
+    x, y, yaw = at(ccw_circle, [100.0, 500.0], 0.0)
+    first = observe(sens, x, y, yaw)
+    assert sens._hint is not None and sens._hint.size == 2
+    # Jump car 0 half a lap: far from its hint, so it's searched globally anyway.
+    x2, y2, yaw2 = at(ccw_circle, [100.0 + np.pi * 150.0, 500.0], 0.0)
+    jumped = observe(sens, x2, y2, yaw2)
+    np.testing.assert_allclose(jumped[:, 19:21], first[:, 19:21], atol=0.02)
+    sens.forget(np.array([True, False]))
+    assert sens._fresh.tolist() == [True, False]
+    observe(sens, x, y, yaw)
+    assert not sens._fresh.any()
+
+
+def test_racing_line_is_cached_per_track_and_car(ccw_circle):
+    from f1sim.sim.car_model import CarParams
+
+    a = raceline.racing_line_for(ccw_circle)
+    assert raceline.racing_line_for(ccw_circle) is a
+    assert raceline.racing_line_for(ccw_circle, CarParams(power_w=500e3)) is not a
+    assert raceline.tum_raceline("not-a-circuit") is None

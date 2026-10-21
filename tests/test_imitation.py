@@ -31,7 +31,9 @@ def _world(track, n, episode_s=60.0):
 
 def test_teacher_laps_the_oval_and_merges_from_off_the_line(track):
     world = _world(track, 2)
-    teacher = imitation.Teacher(track, CAR, None, world.config.dt * world.config.action_repeat)
+    teacher = imitation.Teacher(
+        world.sensors.racing_line, world.config.dt * world.config.action_repeat
+    )
     world.reset(start_s=[10.0, 150.0], start_v=[20.0, 30.0])
     world.car.y[1] += 3.0  # 3 m off the centre line, on a straight
     st, car = world.progress.state, world.car
@@ -47,7 +49,9 @@ def test_teacher_laps_the_oval_and_merges_from_off_the_line(track):
 
 def test_collect_labels_every_live_state_with_the_teacher(track):
     world = _world(track, 4)
-    teacher = imitation.Teacher(track, CAR, None, world.config.dt * world.config.action_repeat)
+    teacher = imitation.Teacher(
+        world.sensors.racing_line, world.config.dt * world.config.action_repeat
+    )
     s0 = np.array([0.0, 100.0, 300.0, 500.0])
     r = imitation.collect(world, teacher, s0, np.full(4, 25.0), 2.0)
     decisions = math.ceil(2.0 / (world.config.dt * world.config.action_repeat))

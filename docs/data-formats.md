@@ -94,7 +94,7 @@ When loading, the code checks that `obs_spec_version` and `policy` match the cur
 | `best_lap.npz` | Trace of the best lap (same columns as the ghost) for replay and overlays |
 | `checkpoints/` | Agent checkpoints (section 4) |
 
-## 6. Observation spec v1 (`sim/sensors.py`)
+## 6. Observation spec v2 (`sim/sensors.py`)
 
 | # | Feature | Normalisation |
 |---|---|---|
@@ -104,5 +104,14 @@ When loading, the code checks that `obs_spec_version` and `policy` match the cur
 | 11 | lateral offset n | ÷ half-width on that side |
 | 12–16 | curvature at s + 20, 50, 100, 150, 250 m | × 50, clipped ±1 |
 | 17–18 | previous action (steer, pedal) | already in −1..1 |
+| 19 | offset from the racing line (+ = car left of it) | ÷ 5 m, clipped ±2 |
+| 20 | heading error to the racing line | ÷ 0.5 rad |
+| 21–24 | racing line's lateral position 10, 30, 60, 100 m ahead along it, car frame (+ = left) | ÷ 20 m, clipped ±2 |
+| 25–28 | racing line's profile speed 0, 50, 100, 200 m ahead | ÷ 92 m/s |
+
+The racing line (`sim/raceline.py`) is the scripted driver's path. It's the TUM raceline, pulled
+0.3 m inside the off-track limit, or the centre line for circuits without one. Its speed
+profile is computed for the car's parameters. v2 added 19–28; 0–18 are v1 unchanged, and v1
+checkpoints don't load.
 
 **Actions:** `steer ∈ [−1, 1]` sets the steering target (rate-limited). `pedal ∈ [−1, 1]`: values above 0 are throttle and below 0 are brake. Changing any of this bumps `obs_spec_version`.

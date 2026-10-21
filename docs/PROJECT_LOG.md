@@ -2,8 +2,9 @@
 
 ## Current state
 
-*Last updated: 2026-10-21 (behaviour cloning experiment). This section summarises where things stand right now. Rewrite it,
-don't append to it, whenever something important changes.*
+*Last updated: 2026-10-21 (observation spec v2, clone-then-GA training). This section
+summarises where things stand right now. Rewrite it, don't append to it, whenever something
+important changes.*
 
 **What it is.** AI cars learn to drive real F1 circuits by neuroevolution. The `f1sim` package
 (`src/f1sim/`) has real track geometry, F1-like physics, headless training, real-driver ghost
@@ -21,18 +22,18 @@ exists, but the new package replaces it.
 - **Viewers:** `f1sim replay` and `f1sim drive` use the dark single-red-accent UI, with kerbs and
   pixel-art cars. Motion is smooth: Hermite poses, interpolated drive physics, and a 120 Hz tick
   with vsync (D15).
-- **Training:** `f1sim train` completes its first Silverstone lap within 30–90 s. After 30 min
-  the best laps are 116.0, 100.7 and 108.9 s (seeds 0–2), down from 151–155 s (D14). The
-  reference lap `T_ref` on the track limits is 86.43 s (87.46 s was the white-line figure). The same
-  seed reproduces `metrics.csv` exactly (checked on Silverstone, 60 generations).
-- **Tests:** 519 pass offline. `ruff` is clean.
+- **Training:** `f1sim train` first copies the scripted driver into the policy (about 65 s),
+  then evolves it with the GA (D17). After 20 min the best Silverstone laps are 85.10, 85.45
+  and 85.53 s (seeds 0–2). That beats the 86.43 s reference lap and Russell's 85.82 s pole;
+  before D16/D17 the best was 100.7 s. The policy sees the racing line (observation spec v2).
+  `--init random` (`configs/train_scratch.toml`) still trains from scratch. The same seed
+  reproduces `metrics.csv` exactly.
+- **Tests:** 523 pass offline. `ruff` is clean.
 
 **Open problems, most important first:**
-1. **The policy can't see the racing line** (D16). From scratch the GA reaches 101–116 s
-   against the 86.43 s reference. A clone of the scripted driver with the current inputs
-   crashes, even at 64 × 64. With ten raceline inputs added, the same 16 × 16 network clones
-   it (87.25 s), and the GA then improves the clone to **85.64 s** in 20 min, beating its
-   teacher by 1.4 s. Decision pending: make those inputs part of the observation spec (v2).
+1. **Training needs a racing line.** Spec v2 observes a TUM raceline, or the centre line where
+   a circuit has none. The 9 circuits without TUM data (open problem 4) would train against
+   their centre line, a poor line. Computing a minimum-curvature line for them is the fix.
 2. **The new UI is unchecked at 2× scaling.** It was built on a 1× screen. The user's display is
    2×, and the user said "for now it's good".
 3. **Some circuits fail the 2024 alignment check.**
@@ -48,9 +49,8 @@ exists, but the new package replaces it.
 6. **Drive mode's off-track rule still uses the white line**, not the track limits
    (`app/drive.py`).
 
-**Next step:** decide on observation spec v2 (open problem 1); if yes, wire the raceline
-inputs into `sim/sensors.py` and a clone-then-GA `f1sim train` path. Then M4 (the full app) and M5
-(breadth).
+**Next step:** M4 (the full app) and M5 (breadth, including a computed racing line for
+circuits without TUM data).
 
 **Gotchas:**
 - **Cache redirection.** On this Windows machine, Claude Desktop's tool processes run inside an
@@ -212,6 +212,26 @@ From scratch, the best was 100.7 s. The cost: the policy depends on a precompute
 checkpoints. The fine-tune ran the existing trainer with the inputs patched in; the production
 spec is unchanged until that's decided.
 
+**D17 · Observation spec v2 and clone-then-GA training by default** (2026-10-21)
+Follows D16.
+- **Spec v2:** `sim/sensors.py` appends the ten racing-line inputs (indices 19–28, see
+  data-formats section 6) from `sim/raceline.py`. That module holds the scripted driver's path
+  and speed profile, cached per track and car. The projection onto the line is hinted per car;
+  `World.reset` calls `Sensors.forget`. v1 checkpoints no longer load.
+- **Training:** `TrainConfig.init` is `"clone"` by default. `Trainer.run` first runs
+  `imitation.clone` (8 DAgger rounds), in a World of `population` cars. The stage-1 World's
+  192 cars took over 6 min for no better clone. Then it seeds the GA with the clone plus
+  `N(0, sigma0)` copies and starts in stage 2. The clone's time counts towards `max_wall_s`.
+  The defaults become the fine-tuning steps: `sigma0` 0.005, `sigma_max` 0.05, `sigma_min`
+  0.0005. `configs/train_scratch.toml` and `--init random` keep the old path.
+- **Results**, 20 min on Silverstone, seeds 0–2:
+  - cloning takes 65–68 s;
+  - first lap after 71–74 s;
+  - after 5 min 85.41 / 85.87 / 85.72 s;
+  - after 20 min **85.10 / 85.45 / 85.53 s**.
+- `scripts/bc/` (the D16 experiment, which patched the inputs in) was removed: the trainer does
+  the same now (it's in commit `1b10432`).
+
 ## Change log
 
 | Date | Commit | Change |
@@ -230,4 +250,5 @@ spec is unchanged until that's decided.
 | 2026-10-21 | `15adadf` | UI restyle, kerbs, pixel-art cars (D13); pushed to `origin/main` |
 | 2026-10-21 | `c7fa0f7` | GA success-rule step size, `sigma_min`, new training defaults (D14) |
 | 2026-10-21 | `7294c93` | Smooth viewers: Hermite poses, drive render interpolation, 120 Hz tick (D15) |
-| 2026-10-21 | (this commit) | Behaviour cloning module, experiment scripts and results (D16) |
+| 2026-10-21 | `1b10432` | Behaviour cloning module, experiment scripts and results (D16) |
+| 2026-10-21 | (this commit) | Observation spec v2 (racing line), clone-then-GA `f1sim train` (D17) |

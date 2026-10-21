@@ -1,13 +1,14 @@
-"""Behaviour cloning of the scripted reference driver into a policy (D16 in the project log).
+"""Behaviour cloning of the scripted reference driver into a policy (D16, D17 in the log).
 
-The GA plateaus at 101-116 s on Silverstone against the scripted driver's 87 s. Cloning
-answers whether the small policy can drive like the scripted driver at all; if it can, the
-clone is a much better starting point for the GA than random weights.
+From random weights the GA plateaus at 101-116 s on Silverstone; a clone of the scripted
+driver laps in about 87 s, and the GA improves it from there (``init = "clone"`` in
+:mod:`f1sim.train.trainer`).
 
 - :class:`Teacher` is the scripted driver of :func:`f1sim.sim.scripted.drive_reference_lap`
-  (pure-pursuit steering on the TUM raceline and the model-inverting speed controller), made
-  vectorised and callable at any state. It decides at the policy's rate (every
-  ``action_repeat`` physics steps), so its laps are what a perfect clone could drive.
+  (pure-pursuit steering along the :class:`~f1sim.sim.raceline.RacingLine` and the
+  model-inverting speed controller), made vectorised and callable at any state. It decides at
+  the policy's rate (every ``action_repeat`` physics steps), so its laps are what a perfect
+  clone could drive.
 - :func:`collect` drives a :class:`~f1sim.sim.world.World` and records ``(obs, teacher
   action)`` pairs. The executed action is the teacher's or, for DAgger, the student policy's:
   labelling the states the *student* reaches teaches it to recover from its own mistakes,
@@ -27,9 +28,9 @@ import numpy as np
 
 from f1sim.agents import policy as pol
 from f1sim.sim import scripted
-from f1sim.sim.car_model import V_FLOOR, CarParams, G
+from f1sim.sim.car_model import V_FLOOR, G
+from f1sim.sim.raceline import RacingLine
 from f1sim.sim.world import World
-from f1sim.track.track import Track
 
 STEER_WEIGHT = 4.0
 """Loss weight of the steering error relative to the pedal's. Steering errors put the car off
@@ -46,19 +47,15 @@ line."""
 class Teacher:
     """The scripted reference driver as a vectorised controller: ``act(x, y, yaw, v)``.
 
-    ``track`` is the track the cars drive on (the World's, i.e. with track limits if it uses
-    them): the raceline is pulled ``scripted.INSIDE_MARGIN_M`` inside its off-track limit.
-    ``decision_dt`` is how long each action is held (``dt * action_repeat``).
+    It follows ``line`` (the World's ``sensors.racing_line``, so the clone is taught the line
+    it observes) with ``line.car``. ``decision_dt`` is how long each action is held
+    (``dt * action_repeat``).
     """
 
-    def __init__(self, track: Track, car: CarParams, raceline_xy, decision_dt: float):
-        self.car = car
+    def __init__(self, line: RacingLine, decision_dt: float):
+        self.line = line
+        self.car = line.car
         self.dt = float(decision_dt)
-        self.path = scripted._reference_path(track, raceline_xy, scripted.INSIDE_MARGIN_M)
-        self.v_prof = scripted._profile_on_path(
-            self.path, car, curvature_margin=scripted.DRIVE_CURVATURE_MARGIN
-        )
-        self.ptrack = scripted._path_as_track(self.path)
         self.merge_gain = MERGE_GAIN
         self._hint: np.ndarray | None = None
 
@@ -66,14 +63,11 @@ class Teacher:
         """Forget the projection hints (after cars were reset somewhere else)."""
         self._hint = None
 
-    def profile_speed(self, s_path) -> np.ndarray:
-        return scripted._interp_periodic(s_path, self.path.s, self.v_prof, self.path.length)
-
     def act(self, x, y, yaw, v) -> np.ndarray:
         """Actions ``(N, 2)`` = (steer, pedal) in ``[-1, 1]`` for cars at these states."""
         p = self.car
         x, y, yaw, v = (np.asarray(a, dtype=np.float64) for a in (x, y, yaw, v))
-        sp, e_path, idx = self.ptrack.project(x, y, hint=self._hint)
+        sp, e_path, idx = self.line.project(x, y, hint=self._hint)
         self._hint = idx
         ld = np.clip(
             scripted.LOOKAHEAD_BASE_M + scripted.LOOKAHEAD_TIME_S * v,
@@ -81,13 +75,13 @@ class Teacher:
             scripted.LOOKAHEAD_MAX_M,
         )
         ld = ld + self.merge_gain * np.abs(e_path)
-        tgt = np.atleast_2d(self.ptrack.point_at(sp + ld))
+        tgt = np.atleast_2d(self.line.ptrack.point_at(sp + ld))
         dx, dy = tgt[:, 0] - x, tgt[:, 1] - y
         y_loc = -np.sin(yaw) * dx + np.cos(yaw) * dy
         k_cmd = 2.0 * y_loc / np.maximum(dx * dx + dy * dy, 1e-6)
         steer = np.clip(np.arctan(p.wheelbase_m * k_cmd) / p.max_steer_rad, -1.0, 1.0)
 
-        v_tgt = self.profile_speed(
+        v_tgt = self.line.speed_at(
             sp + scripted.SPEED_LEAD_STEPS * np.maximum(v, V_FLOOR) * self.dt
         )
         tyre = (v_tgt - v) / self.dt + p.drag_coeff * v * v
@@ -116,19 +110,16 @@ def collect(
     params: np.ndarray | None = None,
     beta: float = 1.0,
     rng: np.random.Generator | None = None,
-    obs_fn: Callable[[World, np.ndarray], np.ndarray] | None = None,
 ) -> Rollout:
     """Drive every car of ``world`` from ``start_s``/``start_v`` for ``duration_s`` and label
     each visited state with the teacher's action.
 
     Each car executes the teacher's action with probability ``beta`` per episode and the
     student's (``spec``/``params``) otherwise; with ``beta = 1`` (or no student) it's plain
-    behaviour cloning. ``obs_fn(world, obs)`` replaces the World's observations (to test
-    extra inputs).
+    behaviour cloning.
     """
     n = world.n_cars
-    obs_fn = obs_fn or (lambda _w, o: o)
-    obs = obs_fn(world, world.reset(start_s=start_s, start_v=start_v))
+    obs = world.reset(start_s=start_s, start_v=start_v)
     teacher.reset_hints()
     rng = rng if rng is not None else np.random.default_rng(0)
     use_teacher = np.ones(n, dtype=bool)
@@ -147,7 +138,7 @@ def collect(
         a = a_teacher
         if not use_teacher.all():
             a = np.where(use_teacher[:, None], a_teacher, pol.act(spec, params, obs))
-        obs = obs_fn(world, world.step(a).obs)
+        obs = world.step(a).obs
     crashed = np.isin(st.done_reason, [1, 2, 3])
     return Rollout(
         obs=np.concatenate(obs_out).astype(np.float32),
@@ -229,3 +220,51 @@ def loss(spec: pol.PolicySpec, params: np.ndarray, obs: np.ndarray, actions: np.
     w = np.array([STEER_WEIGHT, 1.0]) / (STEER_WEIGHT + 1.0)
     err = pol.act(spec, np.asarray(params, dtype=np.float64), obs) - actions
     return float(np.mean(np.sum(w * err * err, axis=1)))
+
+
+# ------------------------------------------------------------------------------- DAgger
+
+
+def clone(
+    world: World,
+    teacher: Teacher,
+    spec: pol.PolicySpec,
+    starts: Callable[[int], tuple[np.ndarray, np.ndarray]],
+    rng: np.random.Generator,
+    *,
+    rounds: int = 8,
+    teacher_batches: int = 4,
+    episode_s: float = 20.0,
+    log: Callable[[str], object] | None = None,
+) -> np.ndarray:
+    """Clone ``teacher`` into a ``spec`` policy by DAgger; returns ``(n_params,)`` float32.
+
+    ``starts(n)`` gives ``(start_s, start_v)`` for the ``world``'s cars. First
+    ``teacher_batches`` episodes of ``episode_s`` are driven by the teacher; then each of the
+    ``rounds`` fits the policy on everything so far (40 epochs from random weights in round 0,
+    20 warm-started after) and drives a batch with it (half the cars still on the teacher in
+    round 0), whose states the teacher labels. On Silverstone with the v2 inputs and 16 x 16,
+    8 rounds give an 87.25 s lap (D16).
+    """
+    obs, act = [], []
+
+    def batch(params=None, beta=1.0) -> Rollout:
+        s0, v0 = starts(world.n_cars)
+        r = collect(world, teacher, s0, v0, episode_s, spec=spec, params=params, beta=beta, rng=rng)
+        obs.append(r.obs)
+        act.append(r.actions)
+        return r
+
+    for _ in range(teacher_batches):
+        batch()
+    params = pol.init_params(spec, 1, rng)[0]
+    for k in range(rounds):
+        x, y = np.concatenate(obs), np.concatenate(act)
+        params = fit(spec, x, y, params, epochs=40 if k == 0 else 20, rng=rng)
+        r = batch(params, beta=0.5 if k == 0 else 0.0)
+        if log is not None:
+            log(
+                f"clone round {k + 1}/{rounds}: {len(x)} samples, loss "
+                f"{loss(spec, params, x, y):.4f}, student crashes {r.crash_rate:.0%}"
+            )
+    return np.asarray(params, dtype=np.float32)

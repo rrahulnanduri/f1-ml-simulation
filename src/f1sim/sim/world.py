@@ -58,7 +58,7 @@ class World:
         if n < 1:
             raise ValueError(f"n_cars must be >= 1, got {n}")
         self.grid = SegmentGrid.from_track(self.track)
-        self.sensors = Sensors(self.track, self.grid)
+        self.sensors = Sensors(self.track, self.grid, car=self.config.car)
         self.progress = ProgressTracker(self.track, n, self.config.progress)
         self.car = CarState.at(n, 0.0, 0.0, 0.0)
         self.prev_action = np.zeros((n, 2), dtype=np.float64)
@@ -86,6 +86,7 @@ class World:
         self.car.delta[m] = 0.0
         self.prev_action[m] = 0.0
         self.progress.reset(self.car.x, self.car.y, mask=m)
+        self.sensors.forget(None if mask is None else m)
         return self._observe()
 
     def step(self, actions) -> StepResult:

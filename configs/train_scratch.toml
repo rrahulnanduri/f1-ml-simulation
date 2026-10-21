@@ -1,0 +1,8 @@
+# Training from random weights (init = "random"), the pre-D17 default.
+# f1sim train --config configs/train_scratch.toml
+# Missing keys keep the defaults of configs/train_default.toml.
+
+init = "random"              # fan-in scaled random weights, curriculum from stage 1
+sigma0 = 0.05                # initial mutation / search step size
+sigma_max = 0.15             # GA only: cap on the adaptive mutation step (0.5 scrambled the policy)
+sigma_min = 0.003            # GA only: floor of the adaptive mutation step

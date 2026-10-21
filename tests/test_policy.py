@@ -27,10 +27,13 @@ def _naive_act(spec: PolicySpec, row: np.ndarray, x: np.ndarray) -> np.ndarray:
 @pytest.mark.parametrize(
     ("spec", "expected"),
     [
-        (PolicySpec(), 19 * 64 + 64 + 64 * 64 + 64 + 64 * 2 + 2),
-        (PolicySpec(hidden=()), 19 * 2 + 2),
+        (PolicySpec(), OBS_SIZE * 64 + 64 + 64 * 64 + 64 + 64 * 2 + 2),
+        (PolicySpec(hidden=()), OBS_SIZE * 2 + 2),
         (PolicySpec(obs_size=3, hidden=(5,), action_size=2), 3 * 5 + 5 + 5 * 2 + 2),
-        (PolicySpec(hidden=(32, 16, 8)), 19 * 32 + 32 + 32 * 16 + 16 + 16 * 8 + 8 + 8 * 2 + 2),
+        (
+            PolicySpec(hidden=(32, 16, 8)),
+            OBS_SIZE * 32 + 32 + 32 * 16 + 16 + 16 * 8 + 8 + 8 * 2 + 2,
+        ),
     ],
 )
 def test_n_params(spec, expected):

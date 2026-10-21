@@ -266,6 +266,10 @@ def small_config(**kw) -> TrainConfig:
         "stage1_episode_s": 3.0,
         "stage1_promote_progress_m": 1e6,  # stay in stage 1 unless a test lowers it
         "stage2_lead_in_m": 100.0,  # on the bottom straight, so the car can brake to 30 m/s
+        "init": "random",  # the curriculum tests; test_clone_init covers "clone"
+        "sigma0": 0.05,  # the train_scratch.toml steps
+        "sigma_max": 0.15,
+        "sigma_min": 0.003,
     }
     base.update(kw)
     return TrainConfig(**base)
@@ -371,6 +375,31 @@ def test_promotion_and_best_lap(track, agents, tmp_path):
     assert np.all((trace["speed"] > 20.0) & (trace["speed"] < 70.0))
     _, nn, _ = track.project(trace["x"], trace["y"])
     assert np.all(np.abs(nn) < HALF_WIDTH)
+
+
+def test_clone_init_starts_in_stage_2_with_laps(track, agents, tmp_path):
+    """init = "clone": the scripted driver is copied before generation 0, which already
+    laps the oval; the same seed gives the same metrics."""
+
+    def run(name):
+        cfg = small_config(
+            init="clone", clone_rounds=3, sigma0=0.005, sigma_max=0.05, sigma_min=0.0005
+        )
+        trainer = Trainer(track, cfg, tmp_path / name, reference_lap_s=T_REF)
+        result = trainer.run()
+        _, rows = read_metrics(tmp_path / name)
+        return trainer, result, rows
+
+    trainer, result, rows = run("a")
+    assert [int(r["stage"]) for r in rows] == [2] * len(rows) and result.stage == 2
+    assert float(rows[0]["completion_rate"]) > 0.5
+    assert result.best_lap_s is not None and result.first_lap_wall_s is not None
+    assert trainer.clone_wall_s is not None and trainer.clone_wall_s > 0.0
+    conf = tomllib.loads((tmp_path / "a" / "config.toml").read_text(encoding="utf-8"))
+    assert conf["init"] == "clone" and conf["resolved"]["clone_wall_s"] > 0.0
+    strip = [{k: v for k, v in r.items() if k != "wall_s"} for r in rows]
+    _, _, rows_b = run("b")
+    assert strip == [{k: v for k, v in r.items() if k != "wall_s"} for r in rows_b]
 
 
 def test_promotion_run_is_reproducible(track, agents, tmp_path):

@@ -4,6 +4,19 @@ One generation: the optimiser asks for ``population`` genomes, :meth:`Trainer.ev
 them in a vectorised :class:`~f1sim.sim.world.World`, the optimiser is told the fitnesses and
 the run folder (:mod:`f1sim.train.metrics`) gets a metrics row, checkpoints and the best lap.
 
+**Starting point** (``init``).
+
+- ``"clone"`` (default): before the first generation, :func:`f1sim.agents.imitation.clone`
+  copies the scripted reference driver into the policy by DAgger (in a World of
+  ``population`` cars, from random starts plus the stage-2 start). The first population is
+  that clone (row 0, exactly) and copies with ``N(0, sigma0)`` noise, and training starts in
+  stage 2. The clone's time
+  counts towards ``max_wall_s``. On Silverstone it reaches 85.6-85.9 s in 20 min, against
+  100.7-116 s from random weights in 30 (D16, D17). The small default steps (``sigma0``
+  0.005, ``sigma_min`` 0.0005, ``sigma_max`` 0.05) suit fine-tuning a driver that already laps.
+- ``"random"``: fan-in scaled random weights and the curriculum below, from stage 1. Use
+  ``configs/train_scratch.toml`` (``sigma0`` 0.05, ``sigma_min`` 0.003, ``sigma_max`` 0.15).
+
 **Curriculum.**
 
 - *Stage 1* (random starts). One World of ``N = population * episodes_per_genome`` cars; car
@@ -79,6 +92,8 @@ AUTO_PROMOTE_FRACTION = 0.8
 """Auto promotion threshold: ``0.8 * stage1_episode_s * 40 m/s``."""
 STAGE2_MAX_START_V = 60.0
 CRASH_PENALTY = 0.1
+CLONE_EPISODE_S = 20.0
+"""Length of each DAgger episode when cloning, s."""
 LAP_BONUS = 1000.0
 LAP_TIME_WEIGHT = 50.0
 _CRASH_REASONS = np.array(
@@ -99,9 +114,11 @@ class TrainConfig:
     population: int = 64
     episodes_per_genome: int = 3
     hidden: tuple[int, ...] = (16, 16)
-    sigma0: float = 0.05
-    sigma_max: float = 0.15  # GA only: cap on the adaptive mutation step
-    sigma_min: float = 0.003  # GA only: floor of the adaptive mutation step
+    init: str = "clone"  # "clone" (copy the scripted driver, then the GA) or "random"
+    clone_rounds: int = 8  # DAgger rounds when init = "clone"
+    sigma0: float = 0.005
+    sigma_max: float = 0.05  # GA only: cap on the adaptive mutation step
+    sigma_min: float = 0.0005  # GA only: floor of the adaptive mutation step
     step_rule: str = "success"  # GA only: "success" (1/5th rule) or "stale" (widen when stuck)
     use_track_limits: bool = True  # drive on the track limits when the track has them
     max_generations: int = 1000
@@ -129,6 +146,10 @@ class TrainConfig:
             raise ValueError("sigma_max must be > 0")
         if not 0 < self.sigma_min <= self.sigma_max:
             raise ValueError("sigma_min must be in (0, sigma_max]")
+        if self.init not in ("clone", "random"):
+            raise ValueError(f"init must be 'clone' or 'random', got {self.init!r}")
+        if self.clone_rounds < 1:
+            raise ValueError("clone_rounds must be >= 1")
         if self.step_rule not in ("stale", "success"):
             raise ValueError(f"step_rule must be 'stale' or 'success', got {self.step_rule!r}")
         if not self.max_wall_s >= 0:
@@ -247,17 +268,10 @@ def reference_lap_time(track: Track, car: CarParams) -> tuple[float, str]:
     ``source`` is ``"tum-raceline"`` or ``"centre-line"``. Raises ``ValueError`` if neither
     lap completes cleanly.
     """
-    from f1sim.data import catalog, tum_source
+    from f1sim.sim.raceline import tum_raceline
     from f1sim.sim.scripted import drive_reference_lap
 
-    raceline = None
-    try:
-        tum_name = catalog.get(track.data.id).tum_name
-        if tum_name is not None:
-            raceline = tum_source.parse_tum_raceline(tum_source.fetch_tum_raceline(tum_name))
-    except (KeyError, ValueError, OSError) as exc:
-        log.info("no TUM raceline for %s (%s); using the centre line", track.data.id, exc)
-        raceline = None
+    raceline = tum_raceline(track.data.id)
     if raceline is not None:
         lap = drive_reference_lap(track, car, raceline_xy=raceline)
         if lap.completed and math.isfinite(lap.lap_time_s):
@@ -339,6 +353,9 @@ class Trainer:
 
         self._rng = np.random.default_rng(config.seed)
         self.optimiser_seed = int(self._rng.integers(0, 2**31 - 1))
+        self._optimisers = optimisers
+        self._user_init = init is not None
+        self.clone_wall_s: float | None = None
         kwargs = {
             "population": self.population,
             "sigma0": float(config.sigma0),
@@ -354,6 +371,7 @@ class Trainer:
             init = self._policy.init_params(self.spec, self.population, self._rng)
         if init is not None:
             kwargs["init"] = np.asarray(init, dtype=np.float32)
+        self._optimiser_kwargs = kwargs
         self.optimiser = optimisers.make_optimiser(config.optimiser, self.spec.n_params, **kwargs)
 
         base = WorldConfig()
@@ -372,6 +390,7 @@ class Trainer:
         self._world2: World | None = None  # built on promotion
 
         self.stage = 1
+        self._needs_clone = config.init == "clone" and not self._user_init
         self.writer = RunWriter(self.run_dir)
         self.git_commit = _git_commit()
         self.best_lap_s: float | None = None
@@ -588,6 +607,7 @@ class Trainer:
             "stage2_start_s": self.stage2_start_s,
             "stage2_start_v": self.stage2_start_v,
             "stage2_episode_s": self.stage2_cap_s,
+            "clone_wall_s": self.clone_wall_s if self.clone_wall_s is not None else -1.0,
             "optimiser_seed": self.optimiser_seed,
             "n_params": int(self.spec.n_params),
             "dt": self._dt,
@@ -628,6 +648,62 @@ class Trainer:
             self.optimiser.state_dict(),
         )
 
+    def clone_teacher(self) -> np.ndarray:
+        """Copy the scripted driver into the policy (``init = "clone"``); returns the params.
+
+        Starts are uniform over the lap at 60-100% of the centre line's profile speed (a car
+        off the racing line, so it learns to rejoin it), and four cars from the stage-2 start.
+        """
+        from f1sim.agents import imitation
+        from f1sim.sim.scripted import speed_profile
+
+        # population cars (64 by default): 192 (the stage-1 World) tripled the data and the fit
+        # time for no better clone
+        world = World(
+            self.track,
+            WorldConfig(
+                n_cars=self.population,
+                episode_time_s=CLONE_EPISODE_S,
+                car=self.car,
+                use_track_limits=False,
+            ),
+        )
+        teacher = imitation.Teacher(world.sensors.racing_line, self._dt * self._action_repeat)
+        d = self.track.data
+        v_centre = speed_profile(d.x, d.y, self.car, closed=True)
+        rng = self._rng
+
+        def starts(n: int) -> tuple[np.ndarray, np.ndarray]:
+            s = rng.uniform(0.0, self.track.length, n)
+            v = np.interp(s, d.s, v_centre) * rng.uniform(0.6, 1.0, n)
+            s[:4], v[:4] = self.stage2_start_s, self.stage2_start_v
+            return s, v
+
+        return imitation.clone(
+            world,
+            teacher,
+            self.spec,
+            starts,
+            rng,
+            rounds=self.config.clone_rounds,
+            episode_s=CLONE_EPISODE_S,
+            log=log.info,
+        )
+
+    def _start_from_clone(self) -> None:
+        """Clone the teacher, seed the optimiser around it and go straight to stage 2."""
+        params = self.clone_teacher()
+        rows = params[None, :] + self._rng.normal(
+            0.0, self.config.sigma0, (self.population, params.size)
+        ).astype(np.float32)
+        rows[0] = params
+        kwargs = dict(self._optimiser_kwargs, init=rows)
+        self.optimiser = self._optimisers.make_optimiser(
+            self.config.optimiser, self.spec.n_params, **kwargs
+        )
+        self.stage = 2
+        self._needs_clone = False
+
     def run(self, on_generation: Callable[[dict], object] | None = None) -> TrainResult:
         """Train until ``max_generations`` or ``max_wall_s``; see the module docstring.
 
@@ -638,6 +714,10 @@ class Trainer:
         """
         cfg = self.config
         t0 = time.perf_counter()
+        if self._needs_clone:
+            self._start_from_clone()
+            self.clone_wall_s = time.perf_counter() - t0
+            log.info("cloned the scripted driver in %.0f s", self.clone_wall_s)
         self.writer.write_config(self.resolved_config())
         gen = 0
         saved_gen = -1
