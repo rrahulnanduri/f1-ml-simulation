@@ -20,7 +20,7 @@ exists, but the new package replaces it.
 - **Simulation:** 64 cars at about 64× real time with numba.
 - **Ghosts:** `f1sim ghost <track> <year>` builds a smoothed real-driver ghost.
 - **Viewers:** `f1sim replay` and `f1sim drive` use the dark single-red-accent UI, with kerbs and
-  pixel-art cars. Motion is smooth: Hermite poses, interpolated drive physics, and a 120 Hz tick
+  pixel-art cars. Every corner has an apex and an exit kerb (D18). Motion is smooth: Hermite poses, interpolated drive physics, and a 120 Hz tick
   with vsync (D15).
 - **Training:** `f1sim train` first copies the scripted driver into the policy (about 65 s),
   then evolves it with the GA (D17). After 20 min the best Silverstone laps are 85.10, 85.45
@@ -28,7 +28,7 @@ exists, but the new package replaces it.
   before D16/D17 the best was 100.7 s. The policy sees the racing line (observation spec v2).
   `--init random` (`configs/train_scratch.toml`) still trains from scratch. The same seed
   reproduces `metrics.csv` exactly.
-- **Tests:** 523 pass offline. `ruff` is clean.
+- **Tests:** 526 pass offline. `ruff` is clean.
 
 **Open problems, most important first:**
 1. **Training needs a racing line.** Spec v2 observes a TUM raceline, or the centre line where
@@ -232,6 +232,19 @@ Follows D16.
 - `scripts/bc/` (the D16 experiment, which patched the inputs in) was removed: the trainer does
   the same now (it's in commit `1b10432`).
 
+**D18 · Kerbs from corner geometry as well as from drivers' laps** (2026-10-21)
+Kerbs were drawn only where real drivers' laps ran more than 0.3 m past the white line. 10 of
+Silverstone's 19 corners lacked an apex or exit kerb, including Farm, the Copse and Vale apexes
+and The Loop. Likely reason: TUM's satellite edge often includes the kerb, so riding it stays
+inside the white line. `render_track.corners` now finds corners in the smoothed centre-line
+curvature: radius under 300 m, turning at least 15°, 17 at Silverstone. Each gets:
+- an apex kerb on the inside, over the part tighter than 60% of its peak (at least 20 m);
+- an exit kerb on the outside, from 40% of the way between apex and end to 15 m past the end.
+
+They're at least 1 m wide, and merged with the data kerbs. This is drawing only: the track
+limits are unchanged. Rejected: lowering the data threshold, which still leaves unused kerbs
+bare. Before/after map: `docs/kerb-audit-silverstone.png`.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -252,3 +265,4 @@ Follows D16.
 | 2026-10-21 | `7294c93` | Smooth viewers: Hermite poses, drive render interpolation, 120 Hz tick (D15) |
 | 2026-10-21 | `1b10432` | Behaviour cloning module, experiment scripts and results (D16) |
 | 2026-10-21 | (this commit) | Observation spec v2 (racing line), clone-then-GA `f1sim train` (D17) |
+| 2026-10-21 | (this commit) | Apex and exit kerbs at every corner (D18) |

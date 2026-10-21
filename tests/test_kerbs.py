@@ -197,3 +197,57 @@ def test_constant_width_line_vertices():
     line = np.array([[0.0, 0.0], [5.0, 0.0], [9.0, 0.0]])
     assert rt.miter_offsets(line, closed=False) == pytest.approx(np.tile([0.0, 1.0], (3, 1)))
     assert rt.line_vertices(line, closed=False).shape == (2 * 6, 5)
+
+
+# ------------------------------------------------------------------- corner kerbs
+
+
+@pytest.fixture(scope="module")
+def oval() -> Track:
+    """Counter-clockwise stadium: two 180-degree left-handers of radius 60 m."""
+    from _geometry_helpers import stadium
+
+    x, y = stadium(300.0, 60.0, 2.0)
+    n = x.size
+    return Track(build_track(x, y, np.full(n, 6.0), np.full(n, 6.0), track_id="oval", name="O"))
+
+
+def test_corners_of_an_oval_and_none_on_a_circle(oval, plain_track):
+    cs = rt.corners(oval)
+    assert len(cs) == 2 and all(sg == 1 for *_, sg in cs)  # two left-handers
+    for s0, apex, s1, _ in cs:
+        assert s0 < apex < s1
+        assert s1 - s0 == pytest.approx(np.pi * 60.0, rel=0.15)  # the semicircle's length
+    assert rt.corners(plain_track) == []  # one bend all the way round: no corners
+
+
+def test_corner_kerbs_apex_inside_exit_outside(oval):
+    length = oval.length
+
+    def covers(runs, s):  # the run containing arc length s (wrapped), or None
+        for a0, a1 in runs:
+            if np.mod(s - a0, length) <= a1 - a0:
+                return a0, a1
+        return None
+
+    left = rt.corner_kerb_runs(oval, "left")  # the inside of a left-hander
+    right = rt.corner_kerb_runs(oval, "right")
+    assert len(left) == 2 and len(right) == 2
+    for _s0, apex, s1, _ in rt.corners(oval):
+        a0, a1 = covers(left, apex)  # an apex kerb around the apex...
+        assert a1 - a0 >= theme.CORNER_KERB_MIN_M
+        assert covers(right, apex) is None  # ...and no exit kerb at the apex
+        e0, e1 = covers(right, s1)  # the exit kerb covers the corner's end
+        assert np.mod(e0 - apex, length) < s1 - apex  # starting after the apex
+        assert np.mod(e1 - s1, length) == pytest.approx(theme.EXIT_EXTRA_M, abs=1.0)
+
+
+def test_corner_kerbs_are_drawn_without_limits_and_can_be_turned_off(oval):
+    g = rt.kerb_geometry(oval, "left")
+    assert len(g.runs) == 2 and g.kerb.shape[0] > 0
+    ring = shapely.LinearRing(oval.left_wall())
+    d = shapely.distance(ring, shapely.points(g.kerb.reshape(-1, 2)))
+    assert d.max() == pytest.approx(theme.CORNER_KERB_WIDTH_M, abs=0.02)  # 1 m out
+    assert g.runoff.shape[0] == 0  # no limits beyond the kerb
+    off = rt.kerb_geometry(oval, "left", corner_kerbs=False)
+    assert off.runs == [] and off.kerb.shape == (0, 3, 2)

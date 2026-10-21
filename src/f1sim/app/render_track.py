@@ -4,11 +4,18 @@ the white lines and the sector ticks.
 The pure-numpy part (no window) builds everything in world metres:
 
 - :func:`road_triangles`: the asphalt between the white lines (``Track.widths_at``).
-- :func:`kerb_runs` and :func:`kerb_geometry`: where the track limits (``Track.limits_at``,
-  from real drivers' laps) are more than ``KERB_MIN_EXTRA_M`` beyond the white line, a kerb
-  band ``min(limit - white, KERB_MAX_WIDTH_M)`` wide just outside the white line, in
-  alternating red and white blocks of about ``KERB_BLOCK_M`` along the white line, and a
-  run-off band from the kerb out to the limit. Tracks without limits have no kerbs.
+- :func:`kerb_runs`, :func:`corner_kerb_runs` and :func:`kerb_geometry`: kerbs just outside
+  the white line, in alternating red and white blocks of about ``KERB_BLOCK_M`` along it, and
+  a run-off band from the kerb out to the limit. Two sources of kerbs are merged:
+
+  - **Data:** where the track limits (``Track.limits_at``, from real drivers' laps) are more
+    than ``KERB_MIN_EXTRA_M`` beyond the white line; ``min(limit - white,
+    KERB_MAX_WIDTH_M)`` wide.
+  - **Corners** (:func:`corners`): an apex kerb on the inside and an exit kerb on the
+    outside of every corner of the centre line, at least ``CORNER_KERB_WIDTH_M`` wide.
+    Drivers don't run over every real kerb, so the data alone left 10 of Silverstone's 19
+    corners without an apex or exit kerb. This is drawing only: the limits the cars drive
+    on don't change.
 - :func:`chequer_triangles`: a strip of ~1 m black and white squares across the road at
   ``s = 0``.
 - :func:`sector_ticks` and :func:`boundary_lines`: where the sector and start lines cross the
@@ -27,6 +34,7 @@ extrudes each vertex along its miter by ``WHITE_LINE_PX / zoom``, so they stay
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -120,6 +128,109 @@ def kerb_runs(
     return sorted(out)
 
 
+def corners(track: Track) -> list[tuple[float, float, float, int]]:
+    """The corners of a closed track: ``(s_start, s_apex, s_end, sign)`` with ``sign`` +1 for
+    a left-hander, -1 for a right-hander, from the smoothed centre-line curvature.
+
+    A corner is a stretch of one sign tighter than ``CORNER_MAX_RADIUS_M`` that turns at
+    least ``CORNER_MIN_TURN_DEG`` in total; its apex is where it's tightest. A track that is
+    one bend all the way round (a circle) has no corners. ``s_apex`` and ``s_end`` may exceed
+    the length for a corner over the line.
+    """
+    kappa, spacing = _smoothed_curvature(track)
+    d = track.data
+    length = track.length
+    k_min = 1.0 / theme.CORNER_MAX_RADIUS_M
+    sign = np.where(kappa > k_min, 1, np.where(kappa < -k_min, -1, 0))
+    if not np.any(sign == 0):
+        return []
+    m = sign.size
+    start = int(np.argmax(sign == 0))  # walk from a straight, so no corner is split
+    order = (start + np.arange(m)) % m
+    s_walk = d.s[order] + np.where(order < start, length, 0.0)
+    out = []
+    k = 0
+    while k < m:
+        sg = sign[order[k]]
+        if sg == 0:
+            k += 1
+            continue
+        j = k
+        while j < m and sign[order[j]] == sg:
+            j += 1
+        idx = order[k:j]
+        turn = float(np.sum(np.abs(kappa[idx])) * spacing)
+        if math.degrees(turn) >= theme.CORNER_MIN_TURN_DEG:
+            su = s_walk[k:j]
+            apex = int(np.argmax(np.abs(kappa[idx])))
+            out.append((float(su[0]), float(su[apex]), float(su[-1] + spacing), int(sg)))
+        k = j
+    return out
+
+
+def _smoothed_curvature(track: Track) -> tuple[np.ndarray, float]:
+    from scipy.ndimage import gaussian_filter1d
+
+    d = track.data
+    spacing = track.length / d.s.size
+    return gaussian_filter1d(d.curvature, theme.CORNER_SMOOTH_M / spacing, mode="wrap"), spacing
+
+
+def corner_kerb_runs(track: Track, side: str) -> list[tuple[float, float]]:
+    """Apex kerbs (inside) and exit kerbs (outside) of every corner on ``side``, as
+    ``(s0, s1)`` runs like :func:`kerb_runs` (overlaps merged).
+
+    The apex kerb covers the part of the corner tighter than ``APEX_FRACTION`` of its peak,
+    padded by ``APEX_PAD_M``; the exit kerb runs from ``EXIT_START`` of the way from apex to
+    corner end until ``EXIT_EXTRA_M`` past the end. Both are at least ``CORNER_KERB_MIN_M``.
+    """
+    kappa, spacing = _smoothed_curvature(track)
+    kappa = np.abs(kappa)
+    d = track.data
+    length = track.length
+    want = 1 if side == "left" else -1
+    runs = []
+    for s0, apex, s1, sg in corners(track):
+        if sg == want:  # inside: the tightest part around the apex
+            ss = np.arange(s0, s1, spacing)
+            k = np.interp(np.mod(ss, length), d.s, kappa)
+            tight = ss[k >= theme.APEX_FRACTION * k.max()]
+            a0, a1 = tight.min() - theme.APEX_PAD_M, tight.max() + theme.APEX_PAD_M
+            mid = 0.5 * (a0 + a1)
+            half = max(0.5 * (a1 - a0), 0.5 * theme.CORNER_KERB_MIN_M)
+            runs.append((mid - half, mid + half))
+        else:  # outside: from past the apex to just after the exit
+            e0 = apex + theme.EXIT_START * (s1 - apex)
+            e1 = max(s1 + theme.EXIT_EXTRA_M, e0 + theme.CORNER_KERB_MIN_M)
+            runs.append((e0, e1))
+    out = []
+    for a, b in _union_runs(runs, [], length):
+        shift = math.floor(a / length) * length
+        out.append((a - shift, b - shift))
+    return sorted(out)
+
+
+def _union_runs(a, b, length: float) -> list[tuple[float, float]]:
+    """Union of two lists of ``(s0, s1)`` runs on a loop of ``length``."""
+    merged: list[list[float]] = []
+    for s0, s1 in sorted([*a, *b]):
+        if merged and s0 <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], s1)
+        else:
+            merged.append([s0, s1])
+    if len(merged) > 1 and merged[-1][1] >= merged[0][0] + length:  # wraps onto the first
+        merged[-1][1] = max(merged[-1][1], merged[0][1] + length)
+        merged.pop(0)
+    return [(float(s0), float(s1)) for s0, s1 in merged]
+
+
+def _in_runs(ss: np.ndarray, runs, length: float) -> np.ndarray:
+    m = np.zeros(ss.size, dtype=bool)
+    for s0, s1 in runs:
+        m |= np.mod(ss - s0, length) <= (s1 - s0)
+    return m
+
+
 def block_edges(run_length: float, block_m: float = theme.KERB_BLOCK_M) -> np.ndarray:
     """Edges of the kerb blocks along a kerb ``run_length`` long: a whole number of equal
     blocks as close to ``block_m`` as possible (at least one)."""
@@ -176,27 +287,34 @@ def kerb_geometry(
     block_m: float = theme.KERB_BLOCK_M,
     max_width: float = theme.KERB_MAX_WIDTH_M,
     threshold: float = theme.KERB_MIN_EXTRA_M,
+    corner_kerbs: bool = True,
 ) -> KerbGeometry:
-    """The kerbs on ``side`` (``"left"`` or ``"right"``) of ``track``; empty without limits.
+    """The kerbs on ``side`` (``"left"`` or ``"right"``) of ``track``.
 
-    Each kerb starts on the white line and is ``min(limit - white, max_width)`` wide; its
-    blocks are measured along the white line, so they look the same length on both sides of
-    a bend. The kerb's inner edge lies exactly on the white line's polyline.
+    Each kerb starts on the white line and is ``min(limit - white, max_width)`` wide, and at
+    least ``CORNER_KERB_WIDTH_M`` where there's a corner kerb (:func:`corner_kerb_runs`; off
+    with ``corner_kerbs=False``). Its blocks are measured along the white line, so they look
+    the same length on both sides of a bend. The kerb's inner edge lies exactly on the white
+    line's polyline. A track without limits gets only its corner kerbs.
     """
     if side not in ("left", "right"):
         raise ValueError(f"side must be 'left' or 'right', got {side!r}")
     empty = np.zeros((0, 3, 2))
-    if not track.has_limits:
-        return KerbGeometry(empty, np.zeros(0, dtype=bool), empty, empty, [], [])
     d = track.data
+    zeros = np.zeros(d.s.size)
     if side == "left":
-        white, limit = track.left_wall(), track.limit_left_wall()
-        extra = d.limit_left - d.w_left
+        white = track.left_wall()
+        extra = d.limit_left - d.w_left if track.has_limits else zeros
+        normal = track._nl  # outwards on the left (the walls are built along it)
     else:
-        white, limit = track.right_wall(), track.limit_right_wall()
-        extra = d.limit_right - d.w_right
+        white = track.right_wall()
+        extra = d.limit_right - d.w_right if track.has_limits else zeros
+        normal = -track._nl
     length = track.length
-    runs = kerb_runs(extra, d.s, length, threshold)
+    geo_runs = corner_kerb_runs(track, side) if corner_kerbs else []
+    runs = _union_runs(kerb_runs(extra, d.s, length, threshold), geo_runs, length)
+    if not runs:
+        return KerbGeometry(empty, np.zeros(0, dtype=bool), empty, empty, [], [])
     kerb, red, runoff, plain, blocks = [], [], [], [], []
     for s0, s1 in runs:
         inner_s = d.s[(d.s > s0) & (d.s < s1)]
@@ -208,10 +326,16 @@ def kerb_geometry(
         edges_s = np.interp(edges_a, arc, base)
         ss = np.unique(np.concatenate([base, edges_s]))
         w = _lerp_loop(white, d.s, length, ss)
-        lim = _lerp_loop(limit, d.s, length, ss)
-        e = np.maximum(_lerp_loop(extra, d.s, length, ss), 1e-9)
+        nrm = _lerp_loop(normal, d.s, length, ss)
+        nrm /= np.linalg.norm(nrm, axis=1, keepdims=True)
+        e = np.maximum(_lerp_loop(extra, d.s, length, ss), 0.0)
         k = np.minimum(e, max_width)
-        outer = w + (lim - w) * (k / e)[:, None]
+        if geo_runs:
+            on_corner = _in_runs(ss, geo_runs, length)
+            k = np.where(on_corner, np.maximum(k, theme.CORNER_KERB_WIDTH_M), k)
+        k = np.maximum(k, 1e-3)
+        outer = w + nrm * k[:, None]
+        lim = w + nrm * np.maximum(e, k)[:, None]  # the limit, or the kerb's edge if beyond
         tris = _quads(w, outer)
         mid = 0.5 * (ss[:-1] + ss[1:])
         block = np.clip(np.searchsorted(edges_s, mid, side="right") - 1, 0, edges_s.size - 2)

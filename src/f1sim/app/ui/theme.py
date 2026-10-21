@@ -66,6 +66,23 @@ KERB_MIN_EXTRA_M = 0.3
 KERB_MAX_WIDTH_M = 1.5
 KERB_BLOCK_M = 3.0
 """Length of one red or white kerb block along the white line (adjusted per kerb)."""
+CORNER_KERB_WIDTH_M = 1.0
+"""Width of the kerbs placed from corner geometry where drivers don't run past the line."""
+CORNER_MAX_RADIUS_M = 300.0
+"""A corner is a stretch tighter than this (smoothed centre-line curvature)..."""
+CORNER_MIN_TURN_DEG = 15.0
+"""... that turns at least this much in total."""
+CORNER_SMOOTH_M = 15.0
+"""Gaussian smoothing of the curvature before finding corners, m."""
+APEX_FRACTION = 0.6
+"""The apex kerb covers the part of a corner tighter than this share of its peak curvature."""
+APEX_PAD_M = 5.0
+EXIT_START = 0.4
+"""The exit kerb starts this share of the way from the apex to the corner's end..."""
+EXIT_EXTRA_M = 15.0
+"""... and runs this far past the end."""
+CORNER_KERB_MIN_M = 20.0
+"""Shortest apex or exit kerb, m."""
 KERB_MIN_PPM = 1.2
 """Below this zoom (pixels per metre) the kerbs are drawn as run-off: 3 m blocks would be
 smaller than ~4 px and only flicker."""
