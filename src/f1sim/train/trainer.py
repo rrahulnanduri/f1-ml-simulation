@@ -99,8 +99,10 @@ class TrainConfig:
     population: int = 64
     episodes_per_genome: int = 3
     hidden: tuple[int, ...] = (16, 16)
-    sigma0: float = 0.1
+    sigma0: float = 0.05
     sigma_max: float = 0.15  # GA only: cap on the adaptive mutation step
+    sigma_min: float = 0.003  # GA only: floor of the adaptive mutation step
+    step_rule: str = "success"  # GA only: "success" (1/5th rule) or "stale" (widen when stuck)
     use_track_limits: bool = True  # drive on the track limits when the track has them
     max_generations: int = 1000
     max_wall_s: float = 1800.0
@@ -125,6 +127,10 @@ class TrainConfig:
             raise ValueError("sigma0 must be > 0")
         if not self.sigma_max > 0:
             raise ValueError("sigma_max must be > 0")
+        if not 0 < self.sigma_min <= self.sigma_max:
+            raise ValueError("sigma_min must be in (0, sigma_max]")
+        if self.step_rule not in ("stale", "success"):
+            raise ValueError(f"step_rule must be 'stale' or 'success', got {self.step_rule!r}")
         if not self.max_wall_s >= 0:
             raise ValueError("max_wall_s must be >= 0")
         if not self.stage1_episode_s > 0:
@@ -341,6 +347,8 @@ class Trainer:
         if config.optimiser == "ga":
             # The cap never sits below the starting step
             kwargs["sigma_max"] = max(float(config.sigma_max), float(config.sigma0))
+            kwargs["sigma_min"] = min(float(config.sigma_min), kwargs["sigma_max"])
+            kwargs["step_rule"] = config.step_rule
         if init is None and config.optimiser == "ga":
             # Fan-in scaled starting weights rather than the GA's N(0, sigma0) fallback
             init = self._policy.init_params(self.spec, self.population, self._rng)

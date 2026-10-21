@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-21. This section summarises where things stand right now. Rewrite it,
+*Last updated: 2026-10-21 (training speed-up). This section summarises where things stand right now. Rewrite it,
 don't append to it, whenever something important changes.*
 
 **What it is.** AI cars learn to drive real F1 circuits by neuroevolution. The `f1sim` package
@@ -20,13 +20,17 @@ exists, but the new package replaces it.
 - **Ghosts:** `f1sim ghost <track> <year>` builds a smoothed real-driver ghost.
 - **Viewers:** `f1sim replay` and `f1sim drive` use the dark single-red-accent UI, with kerbs and
   pixel-art cars.
-- **Training:** `f1sim train` completes its first Silverstone lap within 75–126 s of training.
-- **Tests:** 510 pass offline. `ruff` is clean.
+- **Training:** `f1sim train` completes its first Silverstone lap within 30–90 s. After 30 min
+  the best laps are 116.0, 100.7 and 108.9 s (seeds 0–2), down from 151–155 s (D14). The same
+  seed reproduces `metrics.csv` exactly (checked on Silverstone, 60 generations).
+- **Tests:** 512 pass offline. `ruff` is clean.
 
 **Open problems, most important first:**
-1. **Trained cars are slow.** Their laps are 151–155 s against the 86 s reference. Both runs
-   stopped improving after about 8 minutes, with the GA's mutation size pinned at its 0.15 cap.
-   M3's plateau criterion fails, and reproducibility from a seed hasn't been checked.
+1. **Trained cars are still slow.** Best laps are 101–116 s against the 87 s reference (+16 to
+   +33%), flattening after about 20 min with sigma on its 0.003 floor. Ideas not yet tried: a
+   bigger or recurrent policy, behaviour-cloning the scripted driver as the starting point, and
+   restarts or a diversity bonus. CMA-ES found no laps and population 128 was slower per
+   minute (15 min runs).
 2. **The new UI is unchecked at 2× scaling.** It was built on a 1× screen. The user's display is
    2×, and the user said "for now it's good".
 3. **Some circuits fail the 2024 alignment check.**
@@ -39,7 +43,7 @@ exists, but the new package replaces it.
 5. **Drive mode's off-track rule still uses the white line**, not the track limits
    (`app/drive.py`).
 
-**Next step:** make the trained AI faster (open problem 1). Then M4 (the full app) and M5
+**Next step:** close the rest of the gap in open problem 1 (or accept it). Then M4 (the full app) and M5
 (breadth).
 
 **Gotchas:**
@@ -148,6 +152,15 @@ between it and the limit. Ghost bodies past the limit fell from 19–22% to 0.0�
 - **Kerbs:** red and white, about 3 m long.
 - **Cars:** 12 × 30 pixel-art sprites, drawn with nearest-neighbour sampling.
 
+**D14 · GA step size by the 1/5th success rule, with a lower floor** (2026-10-21)
+The old runs' completion rate was 6.25% = exactly the 4 elites: no mutated child ever finished
+a lap. The "stale" rule *raised* sigma when the best stalled, pinning it at the 0.15 cap, where
+a mutation wrecks a 626-weight policy. `step_rule = "success"` (default now) shrinks sigma while
+fewer than 20% of children beat the worst elite and grows it above that. Also `sigma0 = 0.05`
+and a new `sigma_min = 0.003`. 12-15 min runs: fixed sigma 0.02/0.04/0.08 gave 117/156/137 s;
+success rule 117/109 s (floor 0.01) and 117/104 s (floor 0.003). Rejected: CMA-ES (no laps),
+population 128 (149 s in 15 min). The old behaviour stays available as `step_rule = "stale"`.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -164,3 +177,4 @@ between it and the limit. Ghost bodies past the limit fell from 19–22% to 0.0�
 | 2026-10-21 | `5eabd79` | Track limits, track format v2 (D12) |
 | 2026-10-21 | `674de72` | Glass UI merged |
 | 2026-10-21 | `15adadf` | UI restyle, kerbs, pixel-art cars (D13); pushed to `origin/main` |
+| 2026-10-21 | (uncommitted) | GA success-rule step size, `sigma_min`, new training defaults (D14) |

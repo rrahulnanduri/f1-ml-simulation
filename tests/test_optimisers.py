@@ -173,6 +173,31 @@ def test_ga_sigma_window_forgets_a_lucky_outlier():
     assert ga.sigma == pytest.approx(0.1215)
 
 
+def test_ga_success_rule_shrinks_when_children_fail_and_grows_when_they_win():
+    ga = GA(DIM, population=10, elites=2, sigma0=0.1, step_rule="success", seed=0)
+    ga.tell(np.zeros(10))  # first population has no parents: sigma unchanged
+    assert ga.sigma == pytest.approx(0.1)
+    elite_good = np.r_[np.full(2, 5.0), np.zeros(8)]  # no child beats the elites
+    ga.tell(elite_good)
+    assert ga.sigma == pytest.approx(0.1 * np.exp(0.5 * (0.0 - 0.2)))
+    sigma = ga.sigma
+    all_win = np.r_[np.zeros(2), np.ones(8)]  # every child beats the worst elite
+    ga.tell(all_win)
+    assert ga.sigma == pytest.approx(sigma * np.exp(0.5 * (1.0 - 0.2)))
+
+
+def test_ga_success_rule_is_clamped_and_validates():
+    ga = GA(DIM, population=10, elites=2, sigma_min=0.05, sigma0=0.06, step_rule="success")
+    ga.tell(np.zeros(10))
+    for _ in range(20):
+        ga.tell(np.r_[np.full(2, 5.0), np.zeros(8)])
+    assert ga.sigma == pytest.approx(0.05)  # clamped at sigma_min
+    with pytest.raises(ValueError, match="step_rule"):
+        GA(DIM, population=10, step_rule="nope")
+    with pytest.raises(ValueError, match="success_target"):
+        GA(DIM, population=10, success_target=1.0)
+
+
 def test_ga_init_rows_and_fill():
     rng = np.random.default_rng(0)
     rows = rng.normal(size=(3, DIM)).astype(np.float32)

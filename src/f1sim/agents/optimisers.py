@@ -190,6 +190,16 @@ class GA(_BestTracker):
     Comparing against a sliding window, rather than the best ever, keeps one lucky noisy
     evaluation from freezing ``sigma`` at its maximum forever.
 
+    **Success rule** (``step_rule="success"``). The stale rule above widens the search when
+    the best stops improving, which is the wrong move when the elites are good and every
+    mutated child is worse (a rugged landscape: a big step wrecks a policy that finishes a
+    lap). The success rule is the 1/5th rule instead. A child *succeeds* when its fitness
+    beats the worst elite of the same generation (the elites are re-evaluated, so this is
+    like-for-like even if the fitness function changes between stages). Each generation
+    ``sigma *= exp(success_gain * (rate - success_target))``: it shrinks while fewer than
+    ``success_target`` of the children succeed and grows while more do. With ``elites == 0``
+    the rule does nothing.
+
     **Initial population.** With ``init`` (``(dim,)`` or ``(k, dim)``), the rows are used as
     they are (only the first ``population`` if ``k`` is larger), and any remaining rows are
     ``init[i % k] + N(0, sigma0)``. The trainer passes ``policy.init_params(spec, population,
@@ -212,11 +222,18 @@ class GA(_BestTracker):
         sigma_min: float = 0.01,
         sigma_max: float = 0.5,
         patience: int = 10,
+        step_rule: str = "stale",
+        success_target: float = 0.2,
+        success_gain: float = 0.5,
         seed: int = 0,
         init: np.ndarray | None = None,
     ) -> None:
         if dim < 1:
             raise ValueError(f"dim must be >= 1, got {dim}")
+        if step_rule not in ("stale", "success"):
+            raise ValueError(f"step_rule must be 'stale' or 'success', got {step_rule!r}")
+        if not 0 < success_target < 1:
+            raise ValueError(f"success_target must be in (0, 1), got {success_target}")
         if population < 2:
             raise ValueError(f"population must be >= 2, got {population}")
         if not 0 <= elites < population:
@@ -237,6 +254,9 @@ class GA(_BestTracker):
         self.sigma_min = float(sigma_min)
         self.sigma_max = float(sigma_max)
         self.patience = int(patience)
+        self.step_rule = step_rule
+        self.success_target = float(success_target)
+        self.success_gain = float(success_gain)
         self.seed = int(seed)
 
         self.sigma = float(np.clip(sigma0, self.sigma_min, self.sigma_max))
@@ -267,7 +287,10 @@ class GA(_BestTracker):
         f = _clean_fitness(fitness, self.population)
         window = self._history[-self.patience :]
         gen_best = self._record(self._pop, f)
-        self._adapt_sigma(gen_best, window)
+        if self.step_rule == "success":
+            self._adapt_sigma_success(f)
+        else:
+            self._adapt_sigma(gen_best, window)
         self._pop = self._breed(f)
         self.generation += 1
 
@@ -284,6 +307,14 @@ class GA(_BestTracker):
             if self._stale >= self.patience:
                 self.sigma *= 1.5
                 self._stale = 0
+        self.sigma = float(np.clip(self.sigma, self.sigma_min, self.sigma_max))
+
+    def _adapt_sigma_success(self, f: np.ndarray) -> None:
+        E = self.elites
+        if E == 0 or self.generation == 0:
+            return  # no elites to compare with / the first population has no parents
+        rate = float(np.mean(f[E:] > f[:E].min()))
+        self.sigma *= float(np.exp(self.success_gain * (rate - self.success_target)))
         self.sigma = float(np.clip(self.sigma, self.sigma_min, self.sigma_max))
 
     def _breed(self, f: np.ndarray) -> np.ndarray:
