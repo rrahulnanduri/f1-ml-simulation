@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from f1sim.app import menu
-from f1sim.app.ui import car_top, hero_maps
+from f1sim.app.ui import car_top, hero_maps, light_stage
 
 # -------------------------------------------------------------------------- discovery
 
@@ -230,3 +230,58 @@ def test_load_falls_back_to_the_drawn_car(tmp_path, monkeypatch):
     m = hero_maps.load()
     assert m.source == "drawn" and m.front_m == 0.0
     assert m.albedo.dtype == np.uint8 and m.albedo.shape[2] == 4
+
+
+# ------------------------------------------------------------------------ light stage
+
+
+def test_stage_blend_weights():
+    xs, ys = (-1.0, 0.0, 1.0), (0.0, 1.0, 2.0)
+    cells, outside = light_stage.blend_weights(xs, ys, 0.0, 1.0)  # exactly on a light
+    assert outside == 0.0
+    assert {(r, c): w for r, c, w in cells if w > 0} == {(1, 1): 1.0}
+    cells, _ = light_stage.blend_weights(xs, ys, 0.5, 0.25)  # between four lights
+    w = {(r, c): wt for r, c, wt in cells}
+    assert sum(w.values()) == pytest.approx(1.0)
+    assert w == pytest.approx({(0, 1): 0.375, (0, 2): 0.375, (1, 1): 0.125, (1, 2): 0.125})
+    cells, outside = light_stage.blend_weights(xs, ys, -4.0, 1.0)  # over the menu
+    assert outside == pytest.approx(3.0)
+    assert {(r, c) for r, c, wt in cells if wt > 0} == {(1, 0)}  # the nearest column
+
+
+def _write_stage(d, complete=True, w=12, h=40):
+    from PIL import Image
+
+    d.mkdir(parents=True)
+    xs, ys = (-0.5, 0.5), (0.5, 1.5, 2.5)
+    for iy in range(len(ys)):
+        for ix in range(len(xs)):
+            a = np.zeros((h, w, 4), np.uint8)
+            a[..., 0] = 10 * (iy * len(xs) + ix)
+            a[..., 3] = 255
+            Image.fromarray(a).save(d / f"light_{iy}_{ix}.png")
+    amb = np.full((h, w, 4), 30, np.uint8)
+    amb[..., 3] = 255
+    Image.fromarray(amb).save(d / "ambient.png")
+    info = {"px_per_m": 10.0, "margin_m": 0.1, "xs": xs, "ys": ys, "complete": complete}
+    (d / "stage.json").write_text(json.dumps(info), encoding="utf-8")
+
+
+def test_light_stage_loads_fades_and_caches(tmp_path):
+    d = tmp_path / "stage"
+    _write_stage(d)
+    st = light_stage.load(d)
+    assert st.images.shape == (6, 40, 12, 3) and st.ambient.shape == (40, 12, 4)
+    assert st.images[5, 0, 0, 0] == 50  # photo order: row * cols + col
+    assert st.size_m == pytest.approx((1.2, 4.0))
+    assert st.ambient[0, 0, 3] == 255 and st.ambient[-1, 0, 3] < 20  # faded at the back
+    assert (d / light_stage.CACHE_NAME).is_file()
+    assert np.array_equal(light_stage.load(d).images, st.images)  # from the cache
+    (d / "light_2_1.png").unlink()
+    assert light_stage.load(d) is None  # a photo missing
+
+
+def test_light_stage_ignores_test_renders(tmp_path):
+    _write_stage(tmp_path / "stage", complete=False)
+    assert light_stage.load(tmp_path / "stage") is None
+    assert light_stage.load(tmp_path / "missing") is None

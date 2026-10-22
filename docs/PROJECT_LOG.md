@@ -21,9 +21,9 @@ exists, but the new package replaces it.
 - **Ghosts:** `f1sim ghost <track> <year>` builds a smoothed real-driver ghost.
 - **Main menu:** `f1sim menu` (D19, D20). A dark hero card with the menu on the left (track
   picker; Drive, Replay, Train, Quit open the existing tools). On the right third is a
-  blacked-out Ferrari SF-26 seen from above, with no logos, rendered in Blender from a real
-  model and lit per pixel by a light at the cursor. Without the renders on disk, the menu
-  falls back to the car drawn in code. `python scripts/dev_menu.py` relaunches the menu
+  metallic-black Ferrari SF-26 seen from above, with no logos. It's photographic: 45
+  path-traced Blender photos with a softbox at different spots, blended by the cursor
+  position (D21). Without them it falls back to relit maps, then to the car drawn in code. `python scripts/dev_menu.py` relaunches the menu
   whenever the source or the renders change.
 - **Viewers:** `f1sim replay` and `f1sim drive` use the dark single-red-accent UI, with kerbs and
   pixel-art cars. Every corner has an apex and an exit kerb (D18). Motion is smooth: Hermite poses, interpolated drive physics, and a 120 Hz tick
@@ -62,8 +62,11 @@ circuits without TUM data).
 - **The hero renders aren't in git.** The SF-26 model (the user's download) and its renders
   live in `assets_src/` (git-ignored). On a fresh checkout the menu shows the drawn car until
   you run:
-  `blender -b --factory-startup -P scripts/hero/render_top.py -- assets_src/sf26/extracted/source/f1_2026_sf26.glb assets_src/sf26/render --blackout`
-  (Blender 5.2 on this machine; about 45 s on the GPU).
+  `blender -b --factory-startup -P scripts/hero/render_top.py -- assets_src/sf26/extracted/source/f1_2026_sf26.glb assets_src/sf26/render --blackout --stage`
+  (Blender 5.2 on this machine; about 3 min on the GPU for the 45 photos). Drop `--stage` for
+  the relit-map fallback (about 45 s).
+- **Don't truncate Blender's output in PowerShell.** `| Select-Object -First N` stops the
+  pipeline once it has N lines, which kills Blender mid-render.
 - **Cache redirection.** On this Windows machine, Claude Desktop's tool processes run inside an
   app package. Writes under `%LOCALAPPDATA%` are redirected to
   `%LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Local`. Tracks built by agents don't
@@ -307,6 +310,31 @@ The code-drawn car looked fake, so the hero now uses a real model, the user's ch
 - **Rejected:** BlendSwap 18333 (1988 car, livery, rFactor conversion) and FetchCFD 1636
   (its NoAI clause).
 
+**D21 · Hero as a light stage: path-traced photos blended by the cursor** (2026-10-22)
+The user wanted it photorealistic, and blacker. The relit maps (D20) faked one bare point
+light with no shadows or reflections of the light source, which looked off. So Cycles now
+photographs the front 4.15 m of the car at 320 px/m:
+- once per position of a 0.7 m disc softbox, 1.9 m up, on a 5 × 9 grid over the car
+  (45 photos, 3.6 s each);
+- plus an ambient photo, the car at rest under a broad dim light.
+
+The menu uploads them as a texture array (128 MB) and blends the four photos around the
+cursor bilinearly. Each photo is path-traced, so every light position has real soft
+shadows, the softbox reflected in the clear coat, and occlusion. Off the grid (over the
+menu, say) the light fades out within 0.9 m.
+
+**The finish** is metallic black, now the default: base 0.02, metal 0.85, roughness 0.30,
+under a clear coat. Carbon is greyscale × 0.12 and tyres × 0.12. Photos use AgX tone mapping
+with the Punchy look.
+
+**Tuning:** softbox 300 W, ambient light 60 W, at-rest photo shown at 0.35.
+
+**Trade-off:** between grid points the highlights cross-fade rather than slide. With a soft
+light that reads naturally; a finer grid costs memory (each photo is 2.8 MB).
+
+**Rejected:** more shader tricks on the relit maps, which can't produce soft shadows or the
+reflection of a real light.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -329,4 +357,5 @@ The code-drawn car looked fake, so the hero now uses a real model, the user's ch
 | 2026-10-21 | (this commit) | Observation spec v2 (racing line), clone-then-GA `f1sim train` (D17) |
 | 2026-10-21 | `c6f1d33` | Apex and exit kerbs at every corner (D18) |
 | 2026-10-21 | `893d94d` | Main menu with the cursor-lit top-down car, live-reload script (D19) |
-| 2026-10-22 | (this commit) | Hero from a real model: SF-26 rendered top-down, blacked out (D20) |
+| 2026-10-22 | `386dbb6` | Hero from a real model: SF-26 rendered top-down, blacked out (D20) |
+| 2026-10-22 | (this commit) | Photographic light-stage hero, metallic black (D21) |

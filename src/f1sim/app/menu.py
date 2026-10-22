@@ -5,14 +5,19 @@ a soft spotlight beam fading in from the top-left, a headline, paragraph and men
 and the hero on the right third.
 
 **The hero.** An F1 car seen from above, nose up, filling the right third from the nose to
-just behind the driver; the rest runs off the bottom of the window. The car is the SF-26
-model rendered by ``scripts/hero/render_top.py`` when its renders exist (logos removed), else
-the generic car drawn in code (:mod:`f1sim.app.ui.hero_maps`). It doesn't move. The cursor is a
-light: a point light above the cursor shades the car per pixel, physically based (GGX
-highlights from each material's roughness and metal, a clear coat on the paint, ambient
-occlusion in the crevices), so reflections slide over the bodywork as you move. It also lights
-the floor around it faintly. Away from the light the car is only just visible. The light
-fades in after the spotlight beam, and out when the cursor leaves the window.
+just behind the driver; the rest runs off the bottom of the window. Best first:
+
+1. **Light stage** (:mod:`f1sim.app.ui.light_stage`): path-traced photos of the blacked-out
+   SF-26, one per softbox position on a grid; the cursor blends the four photos around it.
+   Photographic: real soft shadows, softbox reflections in the clear coat, occlusion.
+2. **Relit maps** (:mod:`f1sim.app.ui.hero_maps`): the same model's colour, normal and
+   material renders, or the generic car drawn in code, shaded per pixel by a point light
+   above the cursor, physically based (GGX highlights from each material's roughness and
+   metal, a clear coat on the paint, ambient occlusion in the crevices).
+
+The car doesn't move; the cursor is the light. It also lights the floor around it faintly.
+Away from the light the car is only just visible. The light fades in after the spotlight
+beam, and out when the cursor leaves the window.
 
 The menu opens the existing tools for the selected built track, each as its own process:
 - **Drive:** ``f1sim drive``, with the newest ghost of the track if there is one.
@@ -45,7 +50,7 @@ from pathlib import Path
 
 import numpy as np
 
-from f1sim.app.ui import car_top, hero_maps, theme
+from f1sim.app.ui import car_top, hero_maps, light_stage, theme
 
 STATE_ENV = "F1SIM_MENU_STATE"
 CARD_BG = theme.hex_colour("#0A0A0B")
@@ -76,6 +81,10 @@ LIGHT_INTENSITY = 7.0
 COAT_ROUGHNESS = 0.07
 """The clear coat's roughness: a little broader than real lacquer, so a point light's
 highlight reads as a streak rather than a pinprick."""
+STAGE_AMBIENT = 0.35
+"""How much of the light stage's ambient photo (the car at rest) shows."""
+STAGE_FADE_OUT_M = 0.9
+"""The stage light fades out this far outside its grid (over the menu, say)."""
 FLOOR_GLOW = 0.05
 """Brightness the cursor light adds to the floor (the card) at its centre."""
 
@@ -284,6 +293,29 @@ void main() {
 }
 """
 
+_STAGE_FS = """
+#version 330
+uniform sampler2DArray u_stage;  // one photo per softbox position
+uniform sampler2D u_ambient;     // the car at rest; alpha = coverage
+uniform vec4 u_layers;           // the four photos around the light...
+uniform vec4 u_weights;          // ...and their bilinear weights
+uniform float u_power;
+uniform float u_ambient_level;
+in vec2 v_uv;
+out vec4 frag;
+void main() {
+    vec4 amb = texture(u_ambient, v_uv);
+    if (amb.a <= 0.0) discard;
+    vec3 lit = u_weights.x * texture(u_stage, vec3(v_uv, u_layers.x)).rgb
+        + u_weights.y * texture(u_stage, vec3(v_uv, u_layers.y)).rgb
+        + u_weights.z * texture(u_stage, vec3(v_uv, u_layers.z)).rgb
+        + u_weights.w * texture(u_stage, vec3(v_uv, u_layers.w)).rgb;
+    // Photos are display-encoded: add the light in (approximately) linear space
+    vec3 c = sqrt(amb.rgb * amb.rgb * u_ambient_level + lit * lit * u_power);
+    frag = vec4(c * amb.a, amb.a);  // premultiplied
+}
+"""
+
 _HERO_FS = """
 #version 330
 uniform sampler2D u_albedo;
@@ -441,7 +473,8 @@ def _make_window_class():
             self.t0 = time.perf_counter()
             self.status = ""
             self.status_t = -10.0
-            self.maps = hero_maps.load()
+            self.stage = light_stage.load()
+            self.maps = None if self.stage is not None else hero_maps.load()
             self._init_gl()
             self._init_text()
             self._refresh_track()
@@ -453,12 +486,15 @@ def _make_window_class():
             ctx = self.ctx
             self._fs_quad = geometry.quad_2d_fs()
             self._p_spot = ctx.program(vertex_shader=_FS_VS, fragment_shader=_SPOT_FS)
-            self._p_hero = ctx.program(vertex_shader=_HERO_VS, fragment_shader=_HERO_FS)
             unit = np.array([0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1], dtype="f4")
             self._unit_quad = ctx.geometry(
                 [BufferDescription(ctx.buffer(data=unit.tobytes()), "2f 2f", ["in_vert", "in_uv"])],
                 mode=ctx.TRIANGLE_STRIP,
             )
+            if self.stage is not None:
+                self._init_stage()
+                return
+            self._p_hero = ctx.program(vertex_shader=_HERO_VS, fragment_shader=_HERO_FS)
             h, w = self.maps.albedo.shape[:2]
             self._tex = {}
             for unit_i, (name, data) in enumerate(_texture_bytes(self.maps).items()):
@@ -481,6 +517,33 @@ def _make_window_class():
             p["u_reach"] = car_top.LIGHT_REACH_M
             p["u_ambient"] = car_top.AMBIENT
             p["u_coat_rough"] = COAT_ROUGHNESS
+
+        def _init_stage(self) -> None:
+            ctx = self.ctx
+            st = self.stage
+            self._p_stage = ctx.program(vertex_shader=_HERO_VS, fragment_shader=_STAGE_FS)
+            n, h, w, _ = st.images.shape
+            lin = (ctx.LINEAR, ctx.LINEAR)
+            # GL's first row is the bottom: flip every photo
+            self._stage_tex = ctx.texture_array(
+                (w, h, n),
+                components=3,
+                data=np.ascontiguousarray(st.images[:, ::-1]).tobytes(),
+                filter=lin,
+                wrap_x=ctx.CLAMP_TO_EDGE,
+                wrap_y=ctx.CLAMP_TO_EDGE,
+            )
+            self._ambient_tex = ctx.texture(
+                (w, h),
+                components=4,
+                data=np.ascontiguousarray(st.ambient[::-1]).tobytes(),
+                filter=lin,
+                wrap_x=ctx.CLAMP_TO_EDGE,
+                wrap_y=ctx.CLAMP_TO_EDGE,
+            )
+            p = self._p_stage
+            p["u_stage"], p["u_ambient"] = 0, 1
+            p["u_ambient_level"] = STAGE_AMBIENT
 
         def _init_text(self) -> None:
             import arcade
@@ -576,7 +639,8 @@ def _make_window_class():
                 y -= 48.0
             self.t_footer.position = (self.left, 28.0)
             self.t_status.position = (self.left, 52.0)
-            self.hero = hero_layout(w, h, self.maps.size_m)
+            size_m = (self.stage or self.maps).size_m
+            self.hero = hero_layout(w, h, size_m)
 
         # ---------------------------------------------------------------- input
 
@@ -676,7 +740,30 @@ def _make_window_class():
             now = time.perf_counter() - self.t0
             self.light.update(delta_time, ready=now > SPOTLIGHT_DELAY_S + 0.5)
 
+        def _draw_stage(self) -> None:
+            ctx = self.ctx
+            st = self.stage
+            light = self.light
+            cells, outside = light_stage.blend_weights(st.xs, st.ys, light.x, light.y)
+            fade = 1.0 - min(outside / STAGE_FADE_OUT_M, 1.0)
+            fade = fade * fade * (3.0 - 2.0 * fade)
+            p = self._p_stage
+            p["u_rect"] = self.hero.rect
+            p["u_size"] = (float(self.width), float(self.height))
+            p["u_layers"] = tuple(float(iy * len(st.xs) + ix) for iy, ix, _ in cells)
+            p["u_weights"] = tuple(float(wt) for _, _, wt in cells)
+            p["u_power"] = light.power * fade
+            self._stage_tex.use(0)
+            self._ambient_tex.use(1)
+            ctx.enable(ctx.BLEND)
+            ctx.blend_func = ctx.BLEND_PREMULTIPLIED_ALPHA
+            self._unit_quad.render(p)
+            ctx.blend_func = ctx.BLEND_DEFAULT
+
         def _draw_hero(self) -> None:
+            if self.stage is not None:
+                self._draw_stage()
+                return
             ctx = self.ctx
             lay = self.hero
             light = self.light

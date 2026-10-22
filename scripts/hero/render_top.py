@@ -1,7 +1,7 @@
 """Render a car model from directly above into the maps the menu hero lights (run in Blender).
 
     blender -b --factory-startup -P scripts/hero/render_top.py -- model.glb out_dir \
-        [--preview] [--blackout]
+        [--preview] [--blackout [--finish gloss|metallic|matte]] [--stage [--stage-test]]
 
 Imports the model, puts its nose towards the top of the image, and renders orthographic
 top-down images with Cycles:
@@ -23,7 +23,21 @@ realistic roughness, metal and clear coat (the model's own values are flat).
 
 ``--blackout`` paints the whole car black: the paint becomes solid gloss black, and every
 other material is turned grey and darkened by ``BLACKOUT_LEVELS`` (carbon weave, tyre and
-metal detail survive as shades of black, but no colour does).
+metal detail survive as shades of black, but no colour does). ``--finish`` then gives the
+whole body (paint and carbon) one finish from ``FINISHES``: ``metallic`` (the default: dark
+metal flake under a clear coat), ``gloss`` (gloss
+black under a clear coat) or ``matte``
+(satin black, no coat). Tyres stay rubber and metal parts stay metal.
+
+**Light stage** (``--stage``): instead of the passes above, photograph the front of the car
+(``STAGE_LENGTH_M`` behind the nose) path-traced, once per position of a softbox
+(``STAGE_SIZE_M`` disc, ``STAGE_LIGHT_Z_M`` above the ground) on the grid ``STAGE_XS`` x
+``STAGE_YS`` over the car, into ``out_dir/stage/light_<row>_<col>.png``, plus
+``ambient.png`` (a dim, broad overhead light: the car at rest). The menu blends the four
+photos nearest the cursor, so every light position has real soft shadows, reflections of the
+softbox in the clear coat and occlusion. ``stage.json`` records the grid (positions in map
+metres: x right of the centre line, y down from the top edge). ``--stage-test`` renders three
+positions only, for tuning.
 
 ``meta.json`` records the scale, the image size and the model's bounds.
 """
@@ -40,6 +54,9 @@ argv = sys.argv[sys.argv.index("--") + 1 :]
 MODEL, OUT = str(Path(argv[0]).resolve()), Path(argv[1]).resolve()
 PREVIEW = "--preview" in argv
 BLACKOUT = "--blackout" in argv
+FINISH = argv[argv.index("--finish") + 1] if "--finish" in argv else "metallic"
+STAGE = "--stage" in argv
+STAGE_TEST = "--stage-test" in argv
 OUT.mkdir(parents=True, exist_ok=True)
 
 PX_PER_M = 700
@@ -63,9 +80,27 @@ BLACKOUT_PAINT = (
 )
 """Painted (or coloured-light) materials that become solid gloss black with ``--blackout``."""
 BLACKOUT_PAINT_COLOUR = (0.012, 0.012, 0.013, 1.0)
-BLACKOUT_LEVELS = {"tyre_tread": 0.18, "tyre_sides": 0.18}
+BLACKOUT_LEVELS = {"tyre_tread": 0.12, "tyre_sides": 0.12}
 """Greyscale multiplier per material with ``--blackout`` (default ``BLACKOUT_DEFAULT``)."""
-BLACKOUT_DEFAULT = 0.22
+BLACKOUT_DEFAULT = 0.12
+BODYWORK = (
+    "sf25_paints",
+    "sf25_details",
+    "sf25_generics",
+    "sf25_carbon1",
+    "sf25_carbon1_white",
+    "sf25_carbon2",
+    "sf25_carbon3",
+)
+"""Materials that make up the body: they all take the ``--finish``."""
+FINISHES = {
+    # name: (base colour, roughness, metallic, clear coat)
+    "gloss": (0.012, 0.14, 0.0, 1.0),
+    "metallic": (0.02, 0.30, 0.85, 1.0),
+    "matte": (0.025, 0.62, 0.0, 0.0),
+}
+"""Body finishes for ``--blackout``. Metallic paint is approximated as a dark metal (the
+flake) under a clear coat; matte is a rough dielectric with no coat."""
 # Realistic surface values by material (the game conversion left roughness ~0.6 and no metal
 # everywhere): (roughness, metallic, clear coat). Matched on the name before any ".001".
 SURFACES = {
@@ -89,6 +124,16 @@ SURFACES = {
 }
 SAMPLES_BEAUTY = 256
 SAMPLES_DATA = 16
+STAGE_PX_PER_M = 320
+STAGE_LENGTH_M = 4.15
+STAGE_XS = (-0.9, -0.45, 0.0, 0.45, 0.9)
+STAGE_YS = (0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0)
+"""Softbox positions, map metres (x right of the centre line, y down from the image top)."""
+STAGE_LIGHT_Z_M = 1.9
+STAGE_SIZE_M = 0.7
+STAGE_POWER_W = 300.0
+STAGE_AMBIENT_POWER_W = 60.0
+SAMPLES_STAGE = 96
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=MODEL)
@@ -258,6 +303,30 @@ def blackout():
             em.default_value = 0.0
 
 
+def apply_finish(name: str) -> None:
+    """Give every bodywork material the finish ``name`` (see ``FINISHES``)."""
+    if name not in FINISHES:
+        raise SystemExit(f"--finish must be one of {', '.join(FINISHES)}, got {name!r}")
+    base, rough, metal, coat = FINISHES[name]
+    for mat in bpy.data.materials:
+        key = mat.name.split(".")[0]
+        if key not in BODYWORK or mat.name not in orig:
+            continue
+        p = orig[mat.name]["p"]
+        nt = mat.node_tree
+        if key in BLACKOUT_PAINT:  # solid paint; the carbon keeps its (greyscale) weave
+            for link in list(p.inputs["Base Color"].links):
+                nt.links.remove(link)
+            p.inputs["Base Color"].default_value = (base, base, base * 1.05, 1.0)
+        for sock_name, v in (("Roughness", rough), ("Metallic", metal), ("Coat Weight", coat)):
+            sock = p.inputs.get(sock_name)
+            if sock is None:
+                continue
+            for link in list(sock.links):
+                nt.links.remove(link)
+            sock.default_value = v
+
+
 def delete_decals():
     """Remove the logo geometry (decal overlays): hidden-but-present overlays would still
     block ambient-occlusion rays and darken the paint under them."""
@@ -403,11 +472,84 @@ def studio():
         scene.collection.objects.link(lo_)
 
 
+def photographic():
+    """AgX tone mapping with a punchier look, like a camera, for the light stage."""
+    vs = scene.view_settings
+    vs.view_transform = "AgX"
+    for look in ("AgX - Punchy", "AgX - Medium High Contrast", "Punchy", "None"):
+        try:
+            vs.look = look
+            return
+        except TypeError:
+            continue
+
+
+def light_stage() -> dict:
+    """Render the softbox grid and the ambient photo; returns ``stage.json``'s content."""
+    stage_dir = OUT / "stage"
+    stage_dir.mkdir(exist_ok=True)
+    # Frame only the front of the car: from MARGIN_M above the nose to STAGE_LENGTH_M behind
+    top, bottom = MARGIN_M, -STAGE_LENGTH_M
+    w_m, h_m = img_w_m, top - bottom
+    cam_data.ortho_scale = max(w_m, h_m)
+    cam.location = (0.0, (top + bottom) / 2, hi.z + 5.0)
+    r.resolution_x = int(round(w_m * STAGE_PX_PER_M))
+    r.resolution_y = int(round(h_m * STAGE_PX_PER_M))
+    r.image_settings.color_depth = "8"
+    photographic()
+    cyc.use_denoising = True
+    for o in [o for o in scene.objects if o.type == "LIGHT"]:
+        bpy.data.objects.remove(o)
+    world = bpy.data.worlds.new("stage")
+    world.use_nodes = True
+    world.node_tree.nodes["Background"].inputs["Color"].default_value = (0, 0, 0, 1)
+    scene.world = world
+
+    def softbox(name, size, power):
+        ld = bpy.data.lights.new(name, "AREA")
+        ld.shape = "DISK"
+        ld.size = size
+        ld.energy = power
+        ob = bpy.data.objects.new(name, ld)
+        scene.collection.objects.link(ob)  # area lights face -z: straight down
+        return ob
+
+    amb = softbox("ambient", 7.0, STAGE_AMBIENT_POWER_W)
+    amb.location = (0.0, (top + bottom) / 2, 4.0)
+    render("stage/ambient", SAMPLES_STAGE)
+    amb.hide_render = True
+    box = softbox("softbox", STAGE_SIZE_M, STAGE_POWER_W)
+    cells = [(iy, ix) for iy in range(len(STAGE_YS)) for ix in range(len(STAGE_XS))]
+    if STAGE_TEST:
+        cells = [(2, 2), (4, 1), (6, 3)]
+    for iy, ix in cells:
+        box.location = (STAGE_XS[ix], MARGIN_M - STAGE_YS[iy], STAGE_LIGHT_Z_M)
+        render(f"stage/light_{iy}_{ix}", SAMPLES_STAGE)
+    return {
+        "px_per_m": STAGE_PX_PER_M,
+        "margin_m": MARGIN_M,
+        "image_px": [r.resolution_x, r.resolution_y],
+        "xs": list(STAGE_XS),
+        "ys": list(STAGE_YS),
+        "light_z_m": STAGE_LIGHT_Z_M,
+        "softbox_m": STAGE_SIZE_M,
+        "power_w": STAGE_POWER_W,
+        "finish": FINISH if BLACKOUT else None,
+        "complete": not STAGE_TEST,
+    }
+
+
 recolour()
 delete_decals()
 set_surfaces()
 if BLACKOUT:
     blackout()
+    apply_finish(FINISH)
+if STAGE:
+    info = light_stage()
+    (OUT / "stage" / "stage.json").write_text(json.dumps(info, indent=1), encoding="utf-8")
+    print("STAGE", json.dumps(info), flush=True)
+    bpy.ops.wm.quit_blender()  # a clean exit (SystemExit makes Blender return 255)
 studio()
 render("beauty", SAMPLES_BEAUTY)
 if not PREVIEW:
@@ -433,6 +575,7 @@ meta = {
     "model": Path(MODEL).name,
     "decals_removed": list(DECALS),
     "blackout": BLACKOUT,
+    "finish": FINISH if BLACKOUT else None,
 }
 (OUT / "meta.json").write_text(json.dumps(meta, indent=1), encoding="utf-8")
 print("META", json.dumps(meta), flush=True)
