@@ -38,7 +38,12 @@ include = ["f1sim*"]
 
 [tool.setuptools.package-data]
 # Bundled UI fonts (SIL OFL 1.1, see THIRD_PARTY.md) with their licences
-"f1sim.app" = ["assets/fonts/*/*.ttf", "assets/fonts/*/OFL.txt"]
+"f1sim.app" = [
+    "assets/fonts/*/*.ttf",
+    "assets/fonts/*/OFL.txt",
+    "assets/hero/stage/*.webp",
+    "assets/hero/stage/*.json",
+]
 
 [tool.ruff]
 line-length = 100

@@ -62,13 +62,14 @@ scripts/dev_menu.py`). Then M4 (the full app: settings, a training view instead 
 console) and M5 (breadth, including a computed racing line for circuits without TUM data).
 
 **Gotchas:**
-- **The hero renders aren't in git** (`docs/hero-finish-compare.png` is just the metallic vs
-  matte comparison). The SF-26 model (the user's download) and its renders
-  live in `assets_src/` (git-ignored). On a fresh checkout the menu shows the drawn car until
-  you run:
+- **The hero photos ship with the app** in `src/f1sim/app/assets/hero/stage` (45 WebP photos,
+  1.2 MB, D23). The SF-26 model (the user's download) and the full-size renders stay local in
+  git-ignored `assets_src/`. To change the hero, re-render, then export and commit the folder:
   `blender -b --factory-startup -P scripts/hero/render_top.py -- assets_src/sf26/extracted/source/f1_2026_sf26.glb assets_src/sf26/render --blackout --stage`
-  (Blender 5.2 on this machine; about 3 min on the GPU for the 45 photos). Drop `--stage` for
-  the relit-map fallback (about 45 s).
+  (Blender 5.2 on this machine; about 3 min on the GPU), then
+  `python scripts/hero/export_stage.py`.
+- **No screenshots or comparison images in the repo.** The user asked for that explicitly.
+  Keep them in a scratch folder.
 - **Don't truncate Blender's output in PowerShell.** `| Select-Object -First N` stops the
   pipeline once it has N lines, which kills Blender mid-render.
 - **Cache redirection.** On this Windows machine, Claude Desktop's tool processes run inside an
@@ -261,7 +262,7 @@ curvature: radius under 300 m, turning at least 15°, 17 at Silverstone. Each ge
 
 They're at least 1 m wide, and merged with the data kerbs. This is drawing only: the track
 limits are unchanged. Rejected: lowering the data threshold, which still leaves unused kerbs
-bare. Before/after map: `docs/kerb-audit-silverstone.png`.
+bare.
 
 **D19 · Main menu with a cursor-lit, code-drawn top-down car** (2026-10-21)
 The user asked for a main menu after a React "interactive 3D" hero card, with the robot
@@ -358,6 +359,18 @@ second window opened. Each viewer was written as its own `arcade.Window`.
   saves a parked position, and only restores a place where at least 120 px of the title
   strip lands on a connected screen.
 
+**D23 · The photographic hero ships with the app; no images of ours in the repo** (2026-10-22)
+The user wanted the Blender render permanently in the app, not only on this machine.
+- **`scripts/hero/export_stage.py`** writes the light stage to `f1sim/app/assets/hero/stage`
+  as WebP at quality 95: 45 photos plus the at-rest one, 1.2 MB in all. The black car
+  compresses well, and the mean error is under half a level out of 255. The folder is
+  package data, so it's in the wheel too.
+- **`light_stage`** loads the bundled photos by default (`F1SIM_HERO_DIR` overrides). Its
+  decoded cache now lives in the user cache folder, never in the repo.
+- **Removed `docs/hero-finish-compare.png` and `docs/kerb-audit-silverstone.png`** at the
+  user's request: no screenshots or comparison images in the repo. They stay in git
+  history unless it's rewritten. `images/screen.png` is the user's own README screenshot.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -384,4 +397,5 @@ second window opened. Each viewer was written as its own `arcade.Window`.
 | 2026-10-22 | `e8c39be` | Photographic light-stage hero, metallic black (D21) |
 | 2026-10-22 | `df83489` | One app window: menu, drive and replay as Views (D22) |
 | 2026-10-22 | `a7b8848` | Fix: window restored off-screen after being minimised |
-| 2026-10-22 | (this commit) | Project log brought up to date; finish comparison image |
+| 2026-10-22 | `fe054f5` | Project log brought up to date; finish comparison image |
+| 2026-10-22 | (this commit) | Hero photos bundled with the app; comparison and audit images removed (D23) |

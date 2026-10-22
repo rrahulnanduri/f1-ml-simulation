@@ -267,7 +267,8 @@ def _write_stage(d, complete=True, w=12, h=40):
     (d / "stage.json").write_text(json.dumps(info), encoding="utf-8")
 
 
-def test_light_stage_loads_fades_and_caches(tmp_path):
+def test_light_stage_loads_fades_and_caches(tmp_path, monkeypatch):
+    monkeypatch.setenv("F1SIM_CACHE_DIR", str(tmp_path / "cache"))
     d = tmp_path / "stage"
     _write_stage(d)
     st = light_stage.load(d)
@@ -275,7 +276,9 @@ def test_light_stage_loads_fades_and_caches(tmp_path):
     assert st.images[5, 0, 0, 0] == 50  # photo order: row * cols + col
     assert st.size_m == pytest.approx((1.2, 4.0))
     assert st.ambient[0, 0, 3] == 255 and st.ambient[-1, 0, 3] < 20  # faded at the back
-    assert (d / light_stage.CACHE_NAME).is_file()
+    cache = light_stage.cache_path(d)
+    assert cache.is_file() and tmp_path / "cache" in cache.parents  # never next to the photos
+    assert not list(d.glob("*.npz"))
     assert np.array_equal(light_stage.load(d).images, st.images)  # from the cache
     (d / "light_2_1.png").unlink()
     assert light_stage.load(d) is None  # a photo missing
@@ -285,3 +288,17 @@ def test_light_stage_ignores_test_renders(tmp_path):
     _write_stage(tmp_path / "stage", complete=False)
     assert light_stage.load(tmp_path / "stage") is None
     assert light_stage.load(tmp_path / "missing") is None
+
+
+def test_the_bundled_light_stage_ships_and_loads(tmp_path, monkeypatch):
+    """The photographic hero ships with the app (scripts/hero/export_stage.py)."""
+    monkeypatch.setenv("F1SIM_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.delenv(hero_maps.RENDER_DIR_ENV, raising=False)
+    assert light_stage.stage_dir() == light_stage.BUNDLED_DIR
+    st = light_stage.load()
+    assert st is not None
+    assert st.images.shape[0] == len(st.xs) * len(st.ys) == 45
+    assert st.ambient.shape[:2] == st.images.shape[1:3] and st.ambient.shape[2] == 4
+    assert st.size_m[1] > 4.0  # the nose to behind the driver, and more
+    monkeypatch.setenv(hero_maps.RENDER_DIR_ENV, str(tmp_path / "elsewhere"))
+    assert light_stage.stage_dir() == tmp_path / "elsewhere" / "stage"

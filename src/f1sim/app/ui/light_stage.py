@@ -6,16 +6,24 @@ with a softbox on a grid of positions (``stage/light_<row>_<col>.png``), plus ``
 cursor (:func:`blend_weights`), so wherever the light is, the car has real soft shadows,
 reflections of the softbox in its clear coat and occlusion: photographic, not shaded.
 
-:func:`load` reads a stage folder into a :class:`LightStage`, fades the back edge of the photos
-(they stop ``STAGE_LENGTH_M`` behind the nose) over ``FADE_M``, and caches the arrays as
-``stage_cache.npz`` while the PNGs are unchanged. Grid positions and pixel coordinates use
-the hero's map frame: metres right of the centre line, and down from the top edge.
+The app ships the photos (``scripts/hero/export_stage.py`` writes them, as WebP, to
+``f1sim/app/assets/hero/stage``: :data:`BUNDLED_DIR`), so every checkout and installed copy
+shows the photographic car. ``F1SIM_HERO_DIR`` points at another render folder instead (its
+``stage`` subfolder; PNG or WebP).
+
+:func:`load` reads a stage folder into a :class:`LightStage` and fades the back edge of the
+photos (they stop ``STAGE_LENGTH_M`` behind the nose) over ``FADE_M``. The decoded arrays are
+cached in the user cache folder (``paths.cache_dir()/hero``, never in the repo) while the
+source files are unchanged. Grid positions and pixel coordinates use the hero's map frame:
+metres right of the centre line, and down from the top edge.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,8 +32,10 @@ import numpy as np
 from f1sim.app.ui import hero_maps
 
 FADE_M = 0.35
-CACHE_NAME = "stage_cache.npz"
-CACHE_VERSION = 1
+CACHE_VERSION = 2
+BUNDLED_DIR = Path(__file__).resolve().parent.parent / "assets" / "hero" / "stage"
+"""The photos that ship with the app (``scripts/hero/export_stage.py``)."""
+EXTENSIONS = (".webp", ".png")
 
 
 @dataclass(frozen=True)
@@ -44,7 +54,26 @@ class LightStage:
 
 
 def stage_dir() -> Path:
-    return hero_maps.render_dir() / "stage"
+    """``F1SIM_HERO_DIR``'s ``stage`` folder when set, else the bundled photos."""
+    if os.environ.get(hero_maps.RENDER_DIR_ENV):
+        return hero_maps.render_dir() / "stage"
+    return BUNDLED_DIR
+
+
+def cache_path(directory: Path) -> Path:
+    """Where the decoded arrays of ``directory`` are cached (outside the repo)."""
+    from f1sim import paths
+
+    key = hashlib.sha1(str(Path(directory).resolve()).encode("utf-8")).hexdigest()[:12]
+    return paths.cache_dir() / "hero" / f"stage_{key}.npz"
+
+
+def _find(d: Path, name: str) -> Path | None:
+    for ext in EXTENSIONS:
+        p = d / f"{name}{ext}"
+        if p.is_file():
+            return p
+    return None
 
 
 def _read_rgba(path: Path) -> np.ndarray:
@@ -64,13 +93,14 @@ def load(directory: Path | None = None) -> LightStage | None:
     if not info.get("complete", False):
         return None
     xs, ys = tuple(info["xs"]), tuple(info["ys"])
-    paths = [d / f"light_{iy}_{ix}.png" for iy in range(len(ys)) for ix in range(len(xs))]
-    amb_path = d / "ambient.png"
-    if not amb_path.is_file() or not all(p.is_file() for p in paths):
+    found = [_find(d, f"light_{iy}_{ix}") for iy in range(len(ys)) for ix in range(len(xs))]
+    amb_path = _find(d, "ambient")
+    if amb_path is None or any(p is None for p in found):
         return None
+    paths = list(found)
     ppm, front = float(info["px_per_m"]), float(info["margin_m"])
     stamp = max(p.stat().st_mtime for p in [*paths, amb_path, info_path])
-    cache = d / CACHE_NAME
+    cache = cache_path(d)
     if cache.is_file() and cache.stat().st_mtime >= stamp:
         try:
             with np.load(cache, allow_pickle=False) as z:
@@ -87,6 +117,7 @@ def load(directory: Path | None = None) -> LightStage | None:
     images = np.stack([_read_rgba(p)[..., :3] for p in paths])
     stage = LightStage(images, ambient, xs, ys, ppm, front)
     try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
         np.savez(cache, version=CACHE_VERSION, images=images, ambient=ambient)
     except OSError:
         pass
