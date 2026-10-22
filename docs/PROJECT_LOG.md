@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-22 (one-window app, photographic menu hero). This section summarises
+*Last updated: 2026-10-22 (driving hero D24; round-2 plan approved, not started). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
@@ -60,17 +60,27 @@ exists, but the new package replaces it.
 6. **Drive mode's off-track rule still uses the white line**, not the track limits
    (`app/drive.py`).
 
-**Next step:** keep refining the app with the user (live reload: `python
-scripts/dev_menu.py`). Then M4 (the full app: settings, a training view instead of the
+**Next step:** build the approved **driving hero, round 2** plan,
+[docs/hero-round2-plan.md](hero-round2-plan.md) (not started; follow its build order). The
+user asked for:
+- a bigger car (they chose 55% of the window height);
+- a cursor light that spreads over and around the car realistically: one sliding highlight
+  instead of blended photos, the floor lit by the same light, a shadow cast away from it;
+- slower cars on track that the hero overtakes constantly, in other dark finishes (they
+  chose gunmetal, graphite and satin grey) so the black hero stands out.
+Keep refining with the user via live reload (`python scripts/dev_menu.py`). Then M4 (the full app: settings, a training view instead of the
 console) and M5 (breadth, including a computed racing line for circuits without TUM data).
 
 **Gotchas:**
 - **The hero photos ship with the app** in `src/f1sim/app/assets/hero/stage` (45 WebP photos,
-  1.2 MB, D23). The SF-26 model (the user's download) and the full-size renders stay local in
+  1.2 MB, D23) and, for the driving hero, `assets/hero/drive` (112 WebP, 2.55 MB) plus the
+  circuit `assets/hero/marina_bay.npz` (D24; rebuild it with
+  `python scripts/hero/build_circuit.py`, which needs OpenF1). The SF-26 model (the user's download) and the full-size renders stay local in
   git-ignored `assets_src/`. To change the hero, re-render, then export and commit the folder:
   `blender -b --factory-startup -P scripts/hero/render_top.py -- assets_src/sf26/extracted/source/f1_2026_sf26.glb assets_src/sf26/render --blackout --stage`
   (Blender 5.2 on this machine; about 3 min on the GPU), then
-  `python scripts/hero/export_stage.py`.
+  `python scripts/hero/export_stage.py`. For the driving set use `--drive` instead of
+  `--stage`, then `python scripts/hero/export_stage.py --drive`.
 - **No screenshots or comparison images in the repo.** The user asked for that explicitly.
   Keep them in a scratch folder.
 - **Don't truncate Blender's output in PowerShell.** `| Select-Object -First N` stops the
@@ -443,3 +453,4 @@ track moving underneath.
 | 2026-10-22 | `d6dc3a7` | Hero photos bundled with the app; comparison and audit images removed (D23) |
 | 2026-10-22 | `79d9167` | History rewritten without the two images; log hashes updated |
 | 2026-10-22 | `3f0eb8b` | Driving hero: endless Marina Bay laps, steering front wheels (D24) |
+| 2026-10-22 | (this commit) | Round-2 driving-hero plan approved and saved to docs (not started) |
