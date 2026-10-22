@@ -5,8 +5,9 @@ hairline, one red accent (``ACCENT``) for highlights, white text at 100 % / 60 %
 UPPERCASE headlines (Archivo Expanded Bold), 10 px UPPERCASE "micro" labels with 1 px tracking,
 and JetBrains Mono for tabular numbers.
 
-Everything here is constants and pure functions except :func:`load_fonts` and
-:func:`make_text`, which touch arcade/pyglet only when called (never on import).
+Everything here is constants and pure functions except :func:`load_fonts`, :func:`make_text`
+and :class:`SharpText`, which touch arcade/pyglet only when called (never on import). All text
+is a :class:`SharpText`: sharp on HiDPI displays.
 
 Colours are ``(r, g, b, a)`` tuples of ints 0-255. Sizes are screen pixels at 1x scale; arcade
 text sizes are points, so :func:`px_to_pt` converts (pyglet renders at 96 dpi: 1 pt = 4/3 px).
@@ -419,6 +420,169 @@ def px_to_pt(px: float) -> float:
     return px * 0.75
 
 
+def pixel_ratio() -> float:
+    """Framebuffer pixels per logical pixel of the current window (1 without one)."""
+    try:
+        import arcade
+
+        return float(arcade.get_window().get_pixel_ratio()) or 1.0
+    except Exception:  # noqa: BLE001 - no window (tests, before it opens)
+        return 1.0
+
+
+class SharpText:
+    """An ``arcade.Text`` that stays sharp at any display scale.
+
+    arcade's HiDPI mode ("stretch") lays everything out in logical pixels and stretches them
+    onto the framebuffer, so pyglet's 96-dpi glyphs come out magnified, blurred on a 2x
+    display. This keeps the logical API the layouts use (``position``, ``x``, ``y``,
+    ``content_width``, ``width`` and so on, all in logical pixels) but rasters the glyphs at
+    the framebuffer's DPI and draws them at whole framebuffer pixels under a framebuffer-pixel
+    projection. It follows the window's pixel ratio when that changes (another monitor)."""
+
+    def __init__(self, text, tracking_px: float = 0.0, ratio: float | None = None):
+        self._t = text  # the arcade.Text, laid out in framebuffer pixels
+        self._x, self._y = float(text.x), float(text.y)
+        self._tracking = tracking_px
+        self._wrap: float | None = None
+        self._ratio = 0.0
+        self._sync(ratio)
+
+    # The pixel ratio: everything physical is logical times this
+
+    def _sync(self, ratio: float | None = None) -> float:
+        r = pixel_ratio() if ratio is None else ratio
+        if r != self._ratio:
+            self._ratio = r
+            t = self._t
+            t.label.dpi = 96 * r
+            if self._tracking:
+                t.tracking = self._tracking * r
+            if self._wrap is not None:
+                t.width = int(self._wrap * r)
+            self._move()
+        return r
+
+    def _move(self) -> None:
+        r = self._ratio
+        self._t.position = (round(self._x * r), round(self._y * r))
+
+    # Logical-pixel API (the subset of arcade.Text the app uses)
+
+    @property
+    def label(self):
+        return self._t.label
+
+    @property
+    def text(self) -> str:
+        return self._t.text
+
+    @text.setter
+    def text(self, value) -> None:
+        self._t.text = value
+
+    @property
+    def color(self):
+        return self._t.color
+
+    @color.setter
+    def color(self, value) -> None:
+        self._t.color = value
+
+    @property
+    def x(self) -> float:
+        return self._x
+
+    @x.setter
+    def x(self, value: float) -> None:
+        self.position = (value, self._y)
+
+    @property
+    def y(self) -> float:
+        return self._y
+
+    @y.setter
+    def y(self, value: float) -> None:
+        self.position = (self._x, value)
+
+    @property
+    def position(self) -> tuple[float, float]:
+        return self._x, self._y
+
+    @position.setter
+    def position(self, value) -> None:
+        x, y = float(value[0]), float(value[1])
+        if (x, y) != (self._x, self._y):
+            self._x, self._y = x, y
+            self._move()
+
+    @property
+    def anchor_x(self) -> str:
+        return self._t.anchor_x
+
+    @anchor_x.setter
+    def anchor_x(self, value: str) -> None:
+        self._t.anchor_x = value
+
+    @property
+    def anchor_y(self) -> str:
+        return self._t.anchor_y
+
+    @anchor_y.setter
+    def anchor_y(self, value: str) -> None:
+        self._t.anchor_y = value
+
+    @property
+    def font_size(self) -> float:
+        return self._t.font_size  # points: the DPI scales them
+
+    @font_size.setter
+    def font_size(self, value: float) -> None:
+        self._t.font_size = value
+
+    @property
+    def tracking(self) -> float:
+        return self._tracking
+
+    @tracking.setter
+    def tracking(self, px: float) -> None:
+        self._tracking = px
+        self._t.tracking = px * self._ratio
+
+    @property
+    def width(self) -> float | None:
+        """The wrap width of multiline text, logical pixels."""
+        return self._wrap
+
+    @width.setter
+    def width(self, px: float) -> None:
+        self._wrap = float(px)
+        self._t.width = int(px * self._ratio)
+
+    @property
+    def content_width(self) -> float:
+        r = self._sync()
+        return self._t.content_width / r
+
+    @property
+    def content_height(self) -> float:
+        r = self._sync()
+        return self._t.content_height / r
+
+    def draw(self) -> None:
+        import arcade
+        from pyglet.math import Mat4
+
+        self._sync()
+        window = arcade.get_window()
+        fw, fh = window.get_framebuffer_size()
+        projection, view = window.projection, window.view
+        window.projection = Mat4.orthogonal_projection(0, fw, 0, fh, -100, 100)
+        window.view = Mat4()
+        self._t.draw()
+        window.projection, window.view = projection, view
+
+
 def make_text(
     text: str,
     px: float,
@@ -428,9 +592,11 @@ def make_text(
     anchor_x: str = "left",
     anchor_y: str = "baseline",
     tracking_px: float = 0.0,
-):
-    """An ``arcade.Text`` in one of the :data:`FACES`. Create once, then only change
-    ``.text`` / ``.color`` / ``.position``."""
+    multiline: bool = False,
+    width: float | None = None,
+) -> SharpText:
+    """A :class:`SharpText` in one of the :data:`FACES`. Create once, then only change
+    ``.text`` / ``.color`` / ``.position``. ``width`` wraps ``multiline`` text."""
     import arcade
 
     style = FACES[face]
@@ -443,26 +609,17 @@ def make_text(
         font_name=style.names,
         anchor_x=anchor_x,
         anchor_y=anchor_y,
+        multiline=multiline,
+        width=int(width) if width is not None else None,
     )
     if style.weight != "normal":
         t.label.weight = style.weight
     if style.stretch:
         t.label.set_style("stretch", style.stretch)
-    t.tracking_px = tracking_px
-    if tracking_px:
-        t.tracking = tracking_px
-    return t
-
-
-def set_text_ratio(t, ratio: float) -> None:
-    """Raster ``t``'s glyphs at ``ratio`` physical pixels per logical pixel. arcade's HiDPI
-    mode stretches logical pixels onto the framebuffer, which would magnify 96-dpi glyphs
-    (blurred on a 2x display): draw text with this at a physical-pixel projection instead,
-    at ``ratio`` times its logical position and width."""
-    t.label.dpi = 96 * ratio
-    tracking = getattr(t, "tracking_px", 0.0)
-    if tracking:
-        t.tracking = tracking * ratio
+    sharp = SharpText(t, tracking_px)
+    if width is not None:
+        sharp.width = width
+    return sharp
 
 
 def micro(text: str, colour: Colour = TEXT_LABEL, anchor_x: str = "left"):

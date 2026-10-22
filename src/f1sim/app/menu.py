@@ -539,7 +539,6 @@ def _texture_bytes(maps: hero_maps.HeroMaps) -> dict[str, bytes]:
 def _make_view_class():
     import arcade
     from arcade.gl import BufferDescription, geometry
-    from pyglet.math import Mat4
 
     from f1sim.app.shell import Screen
 
@@ -756,25 +755,20 @@ def _make_view_class():
             p["u_ambient_level"] = STAGE_AMBIENT
 
         def _init_text(self) -> None:
-
-            f = theme.FACES
             self.t_kicker = theme.micro("F1SIM  ·  NEUROEVOLUTION", theme.ACCENT)
             self.t_head = [
                 theme.make_text("LEARN TO", 60, HEADLINE_TOP, face="headline"),
                 theme.make_text("RACE.", 60, HEADLINE_BOTTOM, face="headline"),
             ]
-            self.t_body = arcade.Text(
+            self.t_body = theme.make_text(
                 "AI drivers teach themselves to lap real Formula 1 circuits. Pick a track, "
                 "drive it yourself against a real driver's ghost, replay the fastest AI lap, "
                 "or start training a new generation.",
-                0,
-                0,
+                16,
                 BODY_TEXT,
-                theme.px_to_pt(16),
-                font_name=f["medium"].names,
+                anchor_y="top",
                 multiline=True,
                 width=440,
-                anchor_y="top",
             )
             self.t_track_label = theme.micro("Track", theme.TEXT_SECONDARY)
             self.t_track = theme.make_text("", 15, theme.TEXT_PRIMARY, face="headline")
@@ -816,16 +810,11 @@ def _make_view_class():
             super().on_resize(width, height)
             w, h = float(width), float(height)
             # Text is laid out on whole pixels (a glyph between pixels is resampled: blurred)
-            # and rastered at the framebuffer's resolution (see _draw_text)
-            ratio = float(self.window.get_pixel_ratio())
-            self.text_ratio = ratio
-            for t in self._texts():
-                theme.set_text_ratio(t, ratio)
             self.left = float(round(max(48.0, 0.07 * w)))
             col_w = float(round(min(460.0, 0.42 * w - self.left)))
             self.col_w = col_w
-            self.t_body.width = int(col_w * ratio)
-            body_h = float(round(self.t_body.content_height / ratio))
+            self.t_body.width = col_w
+            body_h = float(round(self.t_body.content_height))
             # Column height, top of the kicker to the bottom of the last button
             total = 62.0 + 66.0 + 34.0 + body_h + 40.0 + 34.0 + 30.0 + 4 * 48.0 - 8.0
             footer_room = 70.0
@@ -854,8 +843,6 @@ def _make_view_class():
                 y -= 48.0
             self.t_footer.position = (self.left, 28.0)
             self.t_status.position = (self.left, 52.0)
-            for t in self._texts():  # logical -> framebuffer pixels
-                t.position = (round(t.x * ratio), round(t.y * ratio))
             if self.drive is not None:
                 self.hero = drive_layout(w, h, self.dstage.size_m, self.dstage.rear_axle_y)
                 self.traffic.view_m = view_radius_m(w, h, self.hero, self.dstage.rear_axle_y)
@@ -1217,15 +1204,9 @@ def _make_view_class():
                 self.t_notes[i].color = (
                     theme.white(0.75) if active and not disabled else theme.TEXT_TERTIARY
                 )
-            # The text in framebuffer pixels (its positions were scaled in on_resize)
-            ctx = self.ctx
-            logical = ctx.projection_matrix
-            fw, fh = self.window.get_framebuffer_size()
-            ctx.projection_matrix = Mat4.orthogonal_projection(0, fw, 0, fh, -100, 100)
             for t in self._texts():
                 if t is not self.t_status or time.perf_counter() - self.status_t < 4.0:
                     t.draw()
-            ctx.projection_matrix = logical
 
     return MenuView
 

@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-22 (driving hero round 2, D25). This section summarises
+*Last updated: 2026-10-22 (sharp text everywhere, D26). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
@@ -41,15 +41,14 @@ exists, but the new package replaces it.
   before D16/D17 the best was 100.7 s. The policy sees the racing line (observation spec v2).
   `--init random` (`configs/train_scratch.toml`) still trains from scratch. The same seed
   reproduces `metrics.csv` exactly.
-- **Tests:** 571 pass offline. `ruff check` is clean.
+- **Tests:** 573 pass offline. `ruff check` is clean.
 
 **Open problems, most important first:**
 1. **Training needs a racing line.** Spec v2 observes a TUM raceline, or the centre line where
    a circuit has none. The 9 circuits without TUM data (open problem 4) would train against
    their centre line, a poor line. Computing a minimum-curvature line for them is the fix.
-2. **The UI isn't fully checked at 2× scaling.** The user's main display is 2×. The menu's
-   text now rasters at the framebuffer's DPI (D25), but that was only checked at 1× here
-   (this display is 1×); the drive and replay HUDs still draw 96-dpi text, stretched.
+2. **The 2× UI is checked in simulation only.** Text is sharp at any scale (D26), verified
+   in a simulated 192-dpi window. A look on the user's real 2× display is still worth doing.
 3. **Some circuits fail the 2024 alignment check.**
    - Shanghai, Spa, Mexico City and the Red Bull Ring fail for no known reason.
    - Yas Marina, Albert Park, Barcelona and Zandvoort fail because their layouts changed after
@@ -488,6 +487,23 @@ translucent, and lamps that linger and sit at random.
   pixels; at 1× the paragraph was also smeared by fractional positions.
 - **Cost:** 4.6 ms a frame at 2560×1440 with six cars (was 3.6 ms at 1600×900).
 
+**D26 · Sharp text everywhere: one wrapper renders at the framebuffer's DPI** (2026-10-22)
+The user asked for sharp text across the whole app. arcade forces pyglet's HiDPI "stretch"
+mode: layouts are in logical pixels, stretched onto the framebuffer, so pyglet's 96-dpi
+glyph bitmaps were magnified 2× on the user's display (blocky and soft). D25 fixed the menu
+by hand; the HUD has dozens of texts whose layouts read back measured widths.
+- **`theme.SharpText`** wraps every `arcade.Text` (`make_text` and `micro` return it). It keeps
+  the logical-pixel API the layouts use (`position`, `x`, `y`, `content_width`, the wrap
+  `width`, `tracking`). Underneath it rasters at `96 × pixel ratio` dpi, sits on whole
+  framebuffer pixels and draws under a framebuffer-pixel projection. It re-syncs when the
+  pixel ratio changes (the window moved to another display). No call site changed; the
+  menu's own scaling from D25 went.
+- **Rejected:** pyglet's "scaled" mode (every view's projection and input would change), and
+  scaling positions per call site (the HUD measures text to place the next item).
+- **Checked** by making pyglet report a 192-dpi (and 144-dpi) screen, which opens a real
+  2× (1.5×) stretch window: before/after crops of the menu, drive and replay HUDs. At 1× nothing
+  changes. The pixel-art cars stay pixel art on purpose.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -519,4 +535,5 @@ translucent, and lamps that linger and sit at random.
 | 2026-10-22 | `79d9167` | History rewritten without the two images; log hashes updated |
 | 2026-10-22 | `3f0eb8b` | Driving hero: endless Marina Bay laps, steering front wheels (D24) |
 | 2026-10-22 | `8e73dcb` | Round-2 driving-hero plan approved and saved to docs |
-| 2026-10-22 | (this commit) | Driving hero round 2: bigger car, live light model, traffic, trackside lamps, sharp text (D25) |
+| 2026-10-22 | `2334f4f` | Driving hero round 2: bigger car, live light model, traffic, trackside lamps, sharp text (D25) |
+| 2026-10-22 | (this commit) | Sharp text across the app at any display scale (D26) |
