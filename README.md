@@ -44,6 +44,10 @@ pip install -e ".[dev,fast]"
 The `fast` extra adds numba, which compiles the ray casts and track projection. With 64 cars,
 the simulation runs at 64× real time with it and 17.6× without (`python scripts/bench.py`).
 
+**Always run the latest version (Windows):** double-click `scripts\run_latest.bat`, or a
+desktop shortcut to it. It pulls the latest commits, reinstalls only if the dependencies
+changed, then opens the menu. Arguments go to `f1sim`, e.g. `run_latest.bat drive silverstone`.
+
 ## Build tracks (new package)
 
 List circuits, then build one from TUM data, aligned to a FastF1 qualifying lap:
