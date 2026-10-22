@@ -6,7 +6,8 @@ and Esc there comes back to the menu (the same menu view, so its textures aren't
 ``f1sim drive`` and ``f1sim replay`` open the same screens on their own, where Esc quits.
 
 :class:`AppWindow` owns what's per window: the frame pacing (a 1/120 s tick with vsync,
-:data:`FRAME_INTERVAL_S`) and, with ``F1SIM_MENU_STATE`` set to a file (the live-reload
+:data:`FRAME_INTERVAL_S`), the rendering quality (:mod:`f1sim.app.ui.quality`: it feeds every
+frame's duration to the governor) and, with ``F1SIM_MENU_STATE`` set to a file (the live-reload
 script sets it), the window's place and size, saved on every move and restored on start.
 
 :class:`Screen` gives a view the few window calls the viewers were written against
@@ -17,11 +18,18 @@ back (``on_back``) rather than closing the window when there is somewhere to go 
 from __future__ import annotations
 
 import json
+import logging
 import os
+import time
 from collections.abc import Callable
 from pathlib import Path
 
 import arcade
+
+from f1sim.app.ui import quality
+
+log = logging.getLogger(__name__)
+ENV_SET = f"set by {quality.ENV}"
 
 STATE_ENV = "F1SIM_MENU_STATE"
 FRAME_INTERVAL_S = 1.0 / 120.0
@@ -99,6 +107,32 @@ class AppWindow(arcade.Window):
             if on_a_screen(x, y, self.width, _screens()):
                 self.set_location(x, y)
         self.menu = None  # the menu view, kept while other screens are shown
+        # Rendering quality: a tier from the GPU, stepped down if frames stay slow
+        gov = quality.setup(str(getattr(self.ctx.info, "RENDERER", "")))
+        log.info(
+            "Rendering quality: %s (%s; %s)",
+            gov.tier.name,
+            "auto" if gov.auto else ENV_SET,
+            getattr(self.ctx.info, "RENDERER", "?"),
+        )
+        self._last_frame = None
+
+    def flip(self) -> None:
+        """Present the frame, and feed its real duration to the quality governor. (Measured
+        here, once per drawn frame: a clock callback every loop turn would keep pyglet's loop
+        from ever sleeping.)"""
+        super().flip()
+        now = time.perf_counter()
+        if self._last_frame is not None and quality.current.feed(now - self._last_frame):
+            log.info("Frames are slow: rendering quality down to %s", quality.tier().name)
+        self._last_frame = now
+
+    def on_hide(self) -> None:
+        quality.current.paused = True  # minimised: the frame rate says nothing
+
+    def on_show(self) -> None:
+        quality.current.paused = False
+        self._last_frame = None
 
     def on_move(self, x: int, y: int) -> None:
         self._persist()

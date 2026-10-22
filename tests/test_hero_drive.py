@@ -246,8 +246,24 @@ def test_the_bundled_driving_stage_ships_with_its_maps():
     assert st.ys[0] < 0.0 and st.ys[-1] > st.size_m[1]  # and past both ends
     for layer in (st.body, st.wheels):
         assert layer["light"].shape[0] == cells and layer["light"].ndim == 3  # grey photos
-        h, w = layer["light"].shape[1:]
+        h, w = layer["albedo"].shape[:2]
+        assert layer["light"].shape[1:] == ((h + 1) // 2, (w + 1) // 2)  # at half size
         for m in hd.STAGE_MAPS:
             assert layer[m].shape == (h, w, 4)
     assert st.white_floor > 0 and st.ambient_gain >= 1
     assert 5.0 < st.size_m[1] < 6.5 and 3.0 < st.wheelbase < 4.0
+
+
+def test_the_driving_stage_is_cached_once_decoded(tmp_path, monkeypatch):
+    monkeypatch.setenv("F1SIM_CACHE_DIR", str(tmp_path))
+    cache = hd.stage_cache_path(hd.DRIVE_DIR)
+    assert str(cache).startswith(str(tmp_path)) and not cache.exists()
+    first = hd.load_stage()
+    assert cache.is_file()  # decoded once...
+    again = hd.load_stage()  # ...then read back
+    for layer in ("body", "wheel"):
+        for k in ("light", *hd.STAGE_MAPS):
+            assert np.array_equal(
+                getattr(first, layer if layer == "body" else "wheels")[k],
+                getattr(again, layer if layer == "body" else "wheels")[k],
+            )

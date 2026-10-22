@@ -26,6 +26,7 @@ Pure numpy: the menu (:mod:`f1sim.app.menu`) draws it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from dataclasses import dataclass
@@ -529,7 +530,9 @@ class DriveStage:
     rows around them, ``wheel_rows``), each with:
 
     - ``light``: per softbox position, the light falling on the car (grey, uint8, sRGB
-      encoded; a white floor under the softbox reads ``white_floor`` linear);
+      encoded; a white floor under the softbox reads ``white_floor`` linear), at half the
+      maps' resolution: the menu only takes the shadowing from it (a quarter of the memory
+      and upload);
     - ``ambient``: the same at rest (RGBA; the body's alpha adds the soft ground shadow),
       ``ambient_gain`` times brighter;
     - the data maps ``albedo`` (RGBA, alpha = coverage), ``normal``, ``surface`` (roughness,
@@ -562,10 +565,44 @@ DRIVE_DIR = ASSETS / "drive"
 STAGE_MAPS = ("ambient", "albedo", "normal", "surface", "ao")
 
 
-def load_stage(directory: Path | None = None) -> DriveStage | None:
-    """The bundled driving stage, or None if it's missing or incomplete."""
+STAGE_CACHE_VERSION = 1
+
+
+def stage_cache_path(directory: Path) -> Path:
+    """Where the decoded arrays of a driving stage are cached (the user cache, never the
+    repo)."""
+    from f1sim import paths
+
+    key = hashlib.sha1(str(Path(directory).resolve()).encode("utf-8")).hexdigest()[:12]
+    return paths.cache_dir() / "hero" / f"drive_{key}.npz"
+
+
+def _decode_stage(d: Path, cells: list[str]) -> dict | None:
+    """Both layers' arrays from the WebP files (about 2 s: hence the cache)."""
     from PIL import Image
 
+    def read(name, mode, half=False):
+        p = d / f"{name}.webp"
+        if not p.is_file():
+            return None
+        im = Image.open(p).convert(mode)
+        if half:  # box-filtered to half size, covering the same area
+            im = im.resize(((im.width + 1) // 2, (im.height + 1) // 2), Image.BOX)
+        return np.asarray(im)
+
+    layers = {}
+    for layer in ("body", "wheel"):
+        light = [read(f"{layer}_{c}", "L", half=True) for c in cells]
+        maps = {m: read(f"{layer}_{m}", "RGBA") for m in STAGE_MAPS}
+        if any(a is None for a in [*light, *maps.values()]):
+            return None
+        layers[layer] = {"light": np.stack(light), **maps}
+    return layers
+
+
+def load_stage(directory: Path | None = None) -> DriveStage | None:
+    """The bundled driving stage, or None if it's missing or incomplete. The decoded arrays
+    are cached (:func:`stage_cache_path`) while the files are unchanged."""
     d = Path(directory) if directory is not None else DRIVE_DIR
     info_path = d / "stage.json"
     if not info_path.is_file():
@@ -575,18 +612,29 @@ def load_stage(directory: Path | None = None) -> DriveStage | None:
         return None  # an older set, before the live light model
     xs, ys = tuple(info["xs"]), tuple(info["ys"])
     cells = [f"{r}_{c}" for r in range(len(ys)) for c in range(len(xs))]
-
-    def read(name, mode):
-        p = d / f"{name}.webp"
-        return np.asarray(Image.open(p).convert(mode)) if p.is_file() else None
-
-    layers = {}
-    for layer in ("body", "wheel"):
-        light = [read(f"{layer}_{c}", "L") for c in cells]
-        maps = {m: read(f"{layer}_{m}", "RGBA") for m in STAGE_MAPS}
-        if any(a is None for a in [*light, *maps.values()]):
+    stamp = max(p.stat().st_mtime for p in d.iterdir())
+    cache = stage_cache_path(d)
+    layers = None
+    if cache.is_file() and cache.stat().st_mtime >= stamp:
+        try:
+            with np.load(cache, allow_pickle=False) as z:
+                if int(z["version"]) == STAGE_CACHE_VERSION:
+                    layers = {
+                        layer: {k: z[f"{layer}_{k}"] for k in ("light", *STAGE_MAPS)}
+                        for layer in ("body", "wheel")
+                    }
+        except (OSError, ValueError, KeyError):
+            layers = None
+    if layers is None:
+        layers = _decode_stage(d, cells)
+        if layers is None:
             return None
-        layers[layer] = {"light": np.stack(light), **maps}
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            flat = {f"{layer}_{k}": v for layer, arrs in layers.items() for k, v in arrs.items()}
+            np.savez(cache, version=STAGE_CACHE_VERSION, **flat)
+        except OSError:
+            pass
     wheels_info = info["wheels"]
     return DriveStage(
         body=layers["body"],

@@ -59,7 +59,15 @@ from pathlib import Path
 
 import numpy as np
 
-from f1sim.app.ui import car_top, drive_shaders, hero_drive, hero_maps, light_stage, theme
+from f1sim.app.ui import (
+    car_top,
+    drive_shaders,
+    hero_drive,
+    hero_maps,
+    light_stage,
+    quality,
+    theme,
+)
 
 CARD_BG = theme.hex_colour("#0A0A0B")
 """The card: near-black, like the original's ``bg-black/[0.96]``."""
@@ -136,6 +144,9 @@ LAMP_REACH_M = 14.0
 LAMP_GLOW_M = 0.18
 MAX_LAMPS = 8
 MAX_SHADOW_CARS = 6
+"""The shaders' array sizes; the quality tier lights and shadows fewer."""
+FLOOR_LIGHT_UNIT = 12
+"""The texture unit of the floor's light buffer (the car's maps take 0-11)."""
 SHADOW_EDGE_M = 0.45
 """The ground shadow fades out over this distance from the photo's edges (the broad light's
 shadow reaches them and would otherwise end in a visible rectangle)."""
@@ -153,13 +164,15 @@ ITEMS = ("Drive", "Replay", "Train", "Quit")
 
 def built_tracks() -> list[tuple[str, str]]:
     """``(track_id, circuit name)`` of every built track, by id."""
+    from f1sim import paths
     from f1sim.data import catalog
-    from f1sim.data.track_pipeline import track_path
 
+    # paths, not track_pipeline: importing the pipeline (numba and all) takes most of a
+    # second at start-up
     return [
         (e.id, e.name)
         for e in sorted(catalog.CATALOG.values(), key=lambda e: e.id)
-        if track_path(e.id).exists()
+        if paths.track_file(e.id).exists()
     ]
 
 
@@ -637,6 +650,10 @@ def _make_view_class():
             ds = drive_shaders
             self._p_track = ctx.program(vertex_shader=ds.TRACK_VS, fragment_shader=ds.TRACK_FS)
             self._p_floor = ctx.program(vertex_shader=_FS_VS, fragment_shader=ds.FLOOR_FS)
+            self._p_floor_light = ctx.program(
+                vertex_shader=_FS_VS, fragment_shader=ds.FLOOR_LIGHT_FS
+            )
+            self._floor_buf = None  # (size, texture, framebuffer): see _floor_buffer
             self._p_drive = ctx.program(vertex_shader=ds.CAR_VS, fragment_shader=ds.CAR_FS)
             mip = (ctx.LINEAR_MIPMAP_LINEAR, ctx.LINEAR)
             clamp = ctx.CLAMP_TO_EDGE
@@ -706,6 +723,9 @@ def _make_view_class():
                 u_strip=(row0 / st.px_per_m, rows / st.px_per_m),
             )
             for p in (self._p_floor, self._p_track):
+                set_uniforms(p, **light, u_floor_light=FLOOR_LIGHT_UNIT)
+            set_uniforms(self._p_track, u_floor_albedo=FLOOR_ALBEDO, u_line_lit=LINE_LIT)
+            for p in (self._p_floor_light,):
                 set_uniforms(
                     p,
                     **light,
@@ -1034,7 +1054,7 @@ def _make_view_class():
             return cars, light, [(p, col) for _, p, col in lamps[:MAX_LAMPS]]
 
         def _floor_uniforms(self, program, cars, light, lamps) -> None:
-            shadow_cars = cars[-MAX_SHADOW_CARS:]  # the hero is last
+            shadow_cars = cars[-quality.tier().shadow_cars :]  # the hero is last
             set_uniforms(
                 program,
                 u_ppm=self.hero.px_per_m,
@@ -1050,12 +1070,41 @@ def _make_view_class():
                 ),
             )
 
+        def _floor_buffer(self):
+            """The floor's light buffer: ``quality.tier().floor_scale`` of the window's
+            logical size (the light and shadows are soft, so a small buffer upsamples
+            cleanly, and its cost doesn't grow with the display's pixel ratio)."""
+            scale = quality.tier().floor_scale
+            size = (max(int(self.width * scale), 1), max(int(self.height * scale), 1))
+            if self._floor_buf is None or self._floor_buf[0] != size:
+                ctx = self.ctx
+                tex = ctx.texture(
+                    size,
+                    components=4,
+                    dtype="f2",  # the lamps' light runs well above 1
+                    filter=(ctx.LINEAR, ctx.LINEAR),
+                    wrap_x=ctx.CLAMP_TO_EDGE,
+                    wrap_y=ctx.CLAMP_TO_EDGE,
+                )
+                self._floor_buf = (size, tex, ctx.framebuffer(color_attachments=[tex]))
+            return self._floor_buf
+
         def _draw_floor(self, now: float) -> None:
             """The card's floor, lit by the cursor light and the lamps, with the cars'
             shadows; the spotlight beam on top."""
             self._scene = self._drive_scene()
-            p = self._p_floor
+            size, tex, fbo = self._floor_buffer()
+            p = self._p_floor_light
             self._floor_uniforms(p, *self._scene)
+            set_uniforms(p, u_size=(float(self.width), float(self.height)))
+            for name in ("u_body_alb", "u_body_srf", "u_body_amb"):  # for the shadows
+                self._drive_tex[self._units[name]].use(self._units[name])
+            with fbo.activate():
+                fbo.viewport = (0, 0, *size)
+                self._fs_quad.render(p)
+            tex.use(FLOOR_LIGHT_UNIT)
+            p = self._p_floor
+            self._floor_uniforms(p, *self._scene)  # the lamp heads' glow
             set_uniforms(
                 p,
                 u_size=(float(self.width), float(self.height)),
@@ -1063,8 +1112,6 @@ def _make_view_class():
                 u_bg=_rgb(CARD_BG),
                 u_lamp_glow_px=LAMP_GLOW_M * self.hero.px_per_m,
             )
-            for name in ("u_body_alb", "u_body_srf", "u_body_amb"):  # for the shadows
-                self._drive_tex[self._units[name]].use(self._units[name])
             self._fs_quad.render(p)
 
         def _draw_drive(self) -> None:
@@ -1076,7 +1123,6 @@ def _make_view_class():
             ctx.enable(ctx.BLEND)
             ctx.blend_func = ctx.BLEND_PREMULTIPLIED_ALPHA
             t = self._p_track
-            self._floor_uniforms(t, cars, light, lamps)
             set_uniforms(
                 t,
                 u_car=(x, y),
@@ -1089,8 +1135,9 @@ def _make_view_class():
             self._track.render(t)
             for unit, tex in enumerate(self._drive_tex):
                 tex.use(unit)
+            car_lamps = lamps[: quality.tier().car_lamps]
             for anchor, angle, car, finish in cars:
-                self._draw_car(anchor, angle, car.steer, finish, light, lamps)
+                self._draw_car(anchor, angle, car.steer, finish, light, car_lamps)
             ctx.blend_func = ctx.BLEND_DEFAULT
 
         def _draw_car(self, anchor, angle, steer, finish, light, lamps) -> None:
@@ -1204,9 +1251,10 @@ def _make_view_class():
                 self.t_notes[i].color = (
                     theme.white(0.75) if active and not disabled else theme.TEXT_TERTIARY
                 )
-            for t in self._texts():
-                if t is not self.t_status or time.perf_counter() - self.status_t < 4.0:
-                    t.draw()
+            with theme.text_batch():
+                for t in self._texts():
+                    if t is not self.t_status or time.perf_counter() - self.status_t < 4.0:
+                        t.draw()
 
     return MenuView
 

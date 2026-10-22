@@ -41,6 +41,11 @@ def tracks_dir() -> Path:
     return _ensure(cache_dir() / "tracks")
 
 
+def track_file(track_id: str) -> Path:
+    """Where the built track ``track_id`` is (``f1sim build-track``)."""
+    return tracks_dir() / f"{track_id}.track.json"
+
+
 def ghosts_dir() -> Path:
     """Ghost laps (``.npz`` + ``.json``)."""
     return _ensure(cache_dir() / "ghosts")

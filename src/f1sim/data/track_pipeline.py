@@ -44,7 +44,7 @@ class BuildReport:
 
 
 def track_path(track_id: str) -> Path:
-    return paths.tracks_dir() / f"{track_id}.track.json"
+    return paths.track_file(track_id)
 
 
 def load_track(track_id: str) -> Track:

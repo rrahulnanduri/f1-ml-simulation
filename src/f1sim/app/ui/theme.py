@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -570,17 +571,52 @@ class SharpText:
         return self._t.content_height / r
 
     def draw(self) -> None:
-        import arcade
-        from pyglet.math import Mat4
-
         self._sync()
-        window = arcade.get_window()
-        fw, fh = window.get_framebuffer_size()
-        projection, view = window.projection, window.view
-        window.projection = Mat4.orthogonal_projection(0, fw, 0, fh, -100, 100)
-        window.view = Mat4()
-        self._t.draw()
-        window.projection, window.view = projection, view
+        if _batch is not None:
+            _batch.append(self._t)  # drawn when the batch ends
+        else:
+            _draw_in_pixels([self._t])
+
+
+_batch: list | None = None
+_pixel_projection: dict[tuple[int, int], object] = {}
+
+
+def _draw_in_pixels(texts) -> None:
+    """Draw ``arcade.Text`` objects laid out in framebuffer pixels, under one projection."""
+    import arcade
+    from pyglet.math import Mat4
+
+    window = arcade.get_window()
+    size = window.get_framebuffer_size()
+    pixels = _pixel_projection.get(size)
+    if pixels is None:
+        pixels = _pixel_projection[size] = Mat4.orthogonal_projection(
+            0, size[0], 0, size[1], -100, 100
+        )
+    projection, view = window.projection, window.view
+    window.projection, window.view = pixels, Mat4()
+    for t in texts:
+        t.draw()
+    window.projection, window.view = projection, view
+
+
+@contextmanager
+def text_batch():
+    """Inside this block :meth:`SharpText.draw` only queues; the queue is drawn at the end
+    under one projection change (one per text costs as much as drawing the text). Text then
+    lands above everything else drawn in the block: batch per widget, not per screen."""
+    global _batch
+    if _batch is not None:  # already batching
+        yield
+        return
+    _batch = []
+    try:
+        yield
+    finally:
+        queued, _batch = _batch, None
+        if queued:
+            _draw_in_pixels(queued)
 
 
 def make_text(

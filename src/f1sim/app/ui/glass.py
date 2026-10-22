@@ -1,14 +1,15 @@
 """Card rendering over a dark, faintly blurred scene (arcade 3.3 / OpenGL 3.3).
 
-The scene goes to an offscreen texture (4x multisampled, then resolved), is blurred once per
-frame, and each HUD card is a solid near-black rounded rectangle with a white hairline whose
-fill lets only ``1 - CARD_FILL`` of the blurred scene through, so the track faintly shows.
+The scene goes to an offscreen texture (multisampled, then resolved), is blurred once per
+frame (both at the quality tier's settings: :mod:`f1sim.app.ui.quality`), and each HUD card
+is a solid near-black rounded rectangle with a white hairline whose fill lets only
+``1 - CARD_FILL`` of the blurred scene through, so the track faintly shows.
 
 Per frame::
 
     with glass.scene():        # offscreen framebuffer, cleared to the background + vignette
         ...draw track and cars...
-    glass.present()            # resolve, one separable Gaussian blur at half resolution, then
+    glass.present()            # resolve, one separable Gaussian blur at reduced size, then
                                # the sharp scene is copied to the screen
     glass.panel(rect)          # one card: blurred backdrop x (1 - fill) + 1 px hairline
 
@@ -31,12 +32,10 @@ import logging
 import math
 from collections.abc import Iterator
 
-from f1sim.app.ui import theme
+from f1sim.app.ui import quality, theme
 from f1sim.app.ui.layout import Rect, capsule_points, rounded_rect_points
 
 log = logging.getLogger(__name__)
-
-MSAA_SAMPLES = 4
 
 _QUAD_VS = """
 #version 330
@@ -95,13 +94,13 @@ uniform sampler2D u_tex;
 uniform vec2 u_step;    // one destination texel along the blur direction, in uv
 uniform float u_sigma;  // in destination texels
 uniform float u_lod;    // source mip level matching the destination resolution
+uniform int u_radius;   // taps either side: 3 sigma
 in vec2 v_uv;
 out vec4 f_color;
-const int RADIUS = 10;
 void main() {
     vec3 acc = vec3(0.0);
     float wsum = 0.0;
-    for (int i = -RADIUS; i <= RADIUS; ++i) {
+    for (int i = -u_radius; i <= u_radius; ++i) {
         float w = exp(-0.5 * float(i * i) / (u_sigma * u_sigma));
         acc += w * textureLod(u_tex, v_uv + float(i) * u_step, u_lod).rgb;
         wsum += w;
@@ -217,18 +216,21 @@ class GlassRenderer:
 
     def _ensure_targets(self) -> None:
         """Scene targets at the physical framebuffer size (2x the window on a 200 % display):
-        a multisampled one to draw into and a plain one it resolves to; blur targets at half
-        the *logical* size, so the blur's sigma and cost are the same in window pixels at any
-        pixel ratio."""
+        a multisampled one to draw into (``quality.tier().msaa`` samples) and a plain one it
+        resolves to; blur targets at ``1 / quality.tier().blur_div`` of the *logical* size, so
+        the blur's sigma and cost are the same in window pixels at any pixel ratio."""
         size = tuple(int(v) for v in self.window.get_framebuffer_size())
         size = (max(size[0], 1), max(size[1], 1))
         logical = (max(int(self.window.width), 1), max(int(self.window.height), 1))
-        if (size, logical) == self._size:
+        tier = quality.tier()
+        key = (size, logical, tier.msaa, tier.blur_div)
+        if key == self._size:
             return
         ctx = self.ctx
         lin = (ctx.LINEAR, ctx.LINEAR)
         clamp = ctx.CLAMP_TO_EDGE
-        half = (max(logical[0] // 2, 1), max(logical[1] // 2, 1))
+        div = tier.blur_div
+        half = (max(logical[0] // div, 1), max(logical[1] // div, 1))
         self._scene_tex = ctx.texture(
             size,
             components=4,
@@ -238,7 +240,7 @@ class GlassRenderer:
         )
         self._scene_fbo = ctx.framebuffer(color_attachments=[self._scene_tex])
         self._msaa_fbo = None
-        samples = min(MSAA_SAMPLES, int(getattr(ctx.info, "MAX_SAMPLES", 0) or 0))
+        samples = min(tier.msaa, int(getattr(ctx.info, "MAX_SAMPLES", 0) or 0))
         if samples > 1:
             try:
                 self._msaa_tex = ctx.texture(size, components=4, samples=samples)
@@ -253,7 +255,7 @@ class GlassRenderer:
             for _ in range(2)
         ]
         self._blur_fbo = [ctx.framebuffer(color_attachments=[t]) for t in self._blur_tex]
-        self._size = (size, logical)
+        self._size = key
         self._phys = size
         from arcade.camera import Camera2D
 
@@ -340,7 +342,9 @@ class GlassRenderer:
         ctx.disable(ctx.BLEND)
         hw, hh = self._half
         blur = self._p_blur
-        blur["u_sigma"] = theme.BLUR_SIGMA_PX * 0.5  # texels of the half-size targets
+        sigma = theme.BLUR_SIGMA_PX / quality.tier().blur_div  # texels of the blur targets
+        blur["u_sigma"] = sigma
+        blur["u_radius"] = max(int(math.ceil(3.0 * sigma)), 1)
         lod = self._lod
         self._scene_tex.build_mipmaps(max_level=int(math.ceil(lod)) + 1)
         # Horizontal: scene (at the mip level matching the target) -> A; vertical: A -> B.

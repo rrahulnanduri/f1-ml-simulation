@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-22 (sharp text everywhere, D26). This section summarises
+*Last updated: 2026-10-22 (performance tiers, D27). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
@@ -41,7 +41,7 @@ exists, but the new package replaces it.
   before D16/D17 the best was 100.7 s. The policy sees the racing line (observation spec v2).
   `--init random` (`configs/train_scratch.toml`) still trains from scratch. The same seed
   reproduces `metrics.csv` exactly.
-- **Tests:** 573 pass offline. `ruff check` is clean.
+- **Tests:** 586 pass offline. `ruff check` is clean.
 
 **Open problems, most important first:**
 1. **Training needs a racing line.** Spec v2 observes a TUM raceline, or the centre line where
@@ -92,6 +92,10 @@ data).
   appear in the user's own terminal until copied to `%LOCALAPPDATA%\f1sim` (decision D9).
 - **F1 live timing needs a sign-in.** It returns 401 without an F1 TV subscription, so FastF1 only
   works for sessions already in its cache. Use OpenF1 for 2023 onwards (D6).
+- **Rendering quality:** `F1SIM_QUALITY=high|medium|low` forces a tier (default `auto`; the
+  log says which tier it picked and why). `F1SIM_GL_DEBUG=1` turns pyglet's GL error checks
+  back on, for debugging GL. This laptop runs Python on its integrated Intel Arc, not the
+  RTX (so the app starts at medium here).
 - **Use the repo venv:** `.venv\Scripts\python.exe` (Python 3.13). Install with
   `pip install -e ".[dev,fast,es]"`.
 
@@ -504,6 +508,43 @@ by hand; the HUD has dozens of texts whose layouts read back measured widths.
   2× (1.5×) stretch window: before/after crops of the menu, drive and replay HUDs. At 1× nothing
   changes. The pixel-art cars stay pixel art on purpose.
 
+**D27 · Lighter on slow machines: no GL error checks, batched text, quality tiers** (2026-10-22)
+The user asked for the app to run smoothly on weaker devices. Measured first (GPU timer
+queries per pass, cProfile per frame, startup), then fixed the largest costs:
+- **pyglet's GL error checks off** (`f1sim/app/__init__.py`, before arcade loads;
+  `F1SIM_GL_DEBUG=1` restores them). It called `glGetError` after each of ~1,800 GL calls a
+  frame. That halved the Python calls per frame, and the old GPU timings had been inflated
+  by the stalls.
+- **Batched text** (`theme.text_batch`): sharp text (D26) swapped the projection twice per
+  label, which cost more than drawing the label. Each HUD widget now draws its text in one
+  swap. Drive-screen CPU draw: 11 → 3 ms.
+- **Quality tiers** (`app/ui/quality.py`): high, medium and low set the menu floor's light
+  buffer size, the lamps and shadows per car, and the glass MSAA and blur size.
+  - The start tier comes from the GL renderer: integrated GPUs start at medium, software
+    renderers at low. `F1SIM_QUALITY` forces a tier.
+  - A governor steps down when the median of 90 frames is over 1/45 s. It settles for 3 s
+    after a start or a step, ignores stalls over 0.25 s and pauses while minimised. It never
+    steps back up (that would flicker).
+  - It's fed from `AppWindow.flip`. A per-turn clock callback was tried first, but it kept
+    pyglet's loop from sleeping: a busy core.
+- **Menu floor at reduced resolution:** `FLOOR_LIGHT_FS` lights the floor (and its contact
+  shadow) into a buffer of 0.25–0.5 × the logical window size. The floor and the track lines
+  sample it, and its cost no longer grows with the display's pixel ratio. It looks the same
+  (the light and shadows are soft).
+- **Glass blur** taps follow its sigma (3σ) instead of a fixed 21.
+- **Start-up 3.4 → 0.8 s:**
+  - The light photos load at half size (they only give shadowing now): a quarter of the
+    texture memory.
+  - The decoded stage is cached in the user cache (`hero/drive_<key>.npz`, 46 MB; 0.05 s
+    to load).
+  - The menu no longer imports the track pipeline (numba) just to list built tracks
+    (`paths.track_file`).
+- **Measured in the real window on this laptop's integrated Intel Arc 140T** (Windows runs
+  Python on it): every tier holds the 120 Hz tick on every screen. CPU per screen, before →
+  after: menu 30 → 25%, drive 50 → 33%, replay 59 → 43% of a core.
+- **Not tried:** a lower draw rate on 60 Hz displays (D15 found a 1/60 s timer hitches
+  here).
+
 ## Change log
 
 | Date | Commit | Change |
@@ -536,4 +577,5 @@ by hand; the HUD has dozens of texts whose layouts read back measured widths.
 | 2026-10-22 | `3f0eb8b` | Driving hero: endless Marina Bay laps, steering front wheels (D24) |
 | 2026-10-22 | `8e73dcb` | Round-2 driving-hero plan approved and saved to docs |
 | 2026-10-22 | `2334f4f` | Driving hero round 2: bigger car, live light model, traffic, trackside lamps, sharp text (D25) |
-| 2026-10-22 | (this commit) | Sharp text across the app at any display scale (D26) |
+| 2026-10-22 | `5bc7d70` | Sharp text across the app at any display scale (D26) |
+| 2026-10-22 | (this commit) | Lighter on slow machines: GL checks off, batched text, quality tiers, faster start (D27) |

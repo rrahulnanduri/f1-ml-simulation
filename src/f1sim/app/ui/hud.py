@@ -713,15 +713,20 @@ class Hud:
         return lay.stage_centre(*self._win)
 
     def draw(self, now: float) -> None:
-        self.ticker.draw(now)
-        self.headline.draw()
-        self.tower.draw()
-        self.gap.draw()
-        self.speed.draw()
-        self.card.draw(now)
-        self.footer.draw()
-        if self.show_banner:
-            self.banner.draw()
+        # Each widget's text is batched (one projection change each: see theme.text_batch),
+        # after its own panel and before the next widget
+        for draw in (
+            lambda: self.ticker.draw(now),
+            self.headline.draw,
+            self.tower.draw,
+            self.gap.draw,
+            self.speed.draw,
+            lambda: self.card.draw(now),
+            self.footer.draw,
+            *((self.banner.draw,) if self.show_banner else ()),
+        ):
+            with theme.text_batch():
+                draw()
 
     # ------------------------------------------------------------------- input
 

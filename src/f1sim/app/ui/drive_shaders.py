@@ -23,7 +23,9 @@ shows ``f * pi * u_white * e``.
   way, without shadows.
 - *At rest*: the ambient photo (a broad overhead light) and a sheen of it in the coat.
 
-**The floor** (:data:`FLOOR_FS`, and the track lines through :data:`TRACK_FS`) is darkened
+**The floor** is lit by :data:`FLOOR_LIGHT_FS` into a buffer smaller than the window (the
+light and the shadows are soft; see :mod:`f1sim.app.ui.quality`), which :data:`FLOOR_FS` and
+the track lines (:data:`TRACK_FS`) sample. It is darkened
 under each car by its soft ground shadow at rest (the ambient photo's alpha, which takes only
 the floor's own dim light), and gets the same light as the cars:
 ``u_floor_albedo * u_white * softbox_e`` with the floor's normal, darkened by the cars'
@@ -164,11 +166,27 @@ vec3 floor_light(vec2 px) {
 }
 """
 
+FLOOR_LIGHT_FS = (
+    "#version 330\n"
+    + COMMON
+    + FLOOR_LIGHT
+    + """
+uniform vec2 u_size;   // the window, logical pixels
+in vec2 v_uv;
+out vec4 frag;
+void main() {
+    vec2 p = v_uv * u_size;
+    frag = vec4(floor_light(p), contact_shadow(p));
+}
+"""
+)
+
 FLOOR_FS = (
     "#version 330\n"
     + COMMON
     + FLOOR_LIGHT
     + """
+uniform sampler2D u_floor_light;  // FLOOR_LIGHT_FS's output: light, ground shadow
 uniform vec2 u_size;
 uniform float u_appear;
 uniform vec3 u_bg;
@@ -187,9 +205,10 @@ void main() {
     float width = 0.05 * Ld + 0.16 * max(along, 0.0);
     float beam = exp(-2.2 * (across / width) * (across / width))
         * smoothstep(0.0, 0.25 * Ld, along) * exp(-along / (0.85 * Ld));
-    vec3 bg = decode(u_bg + vec3(0.17 * beam * u_appear)) * (1.0 - contact_shadow(p));
+    vec4 light = texture(u_floor_light, v_uv);
+    vec3 bg = decode(u_bg + vec3(0.17 * beam * u_appear)) * (1.0 - light.a);
     // The floor, lit; the lamp heads glow
-    vec3 lit = floor_light(p);
+    vec3 lit = light.rgb;
     vec3 glow = vec3(0.0);
     for (int k = 0; k < u_n_lamps; k++) {
         float r = distance(p, u_lamp_px[k].xy) / u_lamp_glow_px;
@@ -208,6 +227,8 @@ TRACK_FS = (
     + COMMON
     + FLOOR_LIGHT
     + """
+uniform sampler2D u_floor_light;  // FLOOR_LIGHT_FS's output: light, ground shadow
+uniform vec2 u_size;
 uniform vec2 u_fade;  // the track is at u_under left of x0, full right of x1 (pixels)
 uniform float u_under;
 uniform float u_line_lit;   // how strongly the lines pick up the floor light
@@ -216,9 +237,10 @@ in vec2 v_px;
 out vec4 frag;
 void main() {
     float a = v_col.a * mix(u_under, 1.0, smoothstep(u_fade.x, u_fade.y, v_px.x));
-    a *= 1.0 - 0.8 * contact_shadow(v_px);
+    vec4 light = texture(u_floor_light, v_px / u_size);
+    a *= 1.0 - 0.8 * light.a;
     // Painted lines and kerbs reflect the light like the floor, only brighter
-    vec3 lit = display(floor_light(v_px) * u_line_lit / u_floor_albedo);
+    vec3 lit = display(light.rgb * u_line_lit / u_floor_albedo);
     vec3 c = v_col.rgb * a + lit * v_col.rgb * min(1.0, 2.5 * a);
     frag = vec4(c, a);  // premultiplied
 }
