@@ -22,10 +22,13 @@ exists, but the new package replaces it.
 - **The app is one window** (`f1sim menu`, D19–D22). The menu is its home screen; Drive and
   Replay switch the window to those screens, and Esc comes back. Train opens a console. The
   window remembers its place, but only restores it if it lands on a connected screen.
-- **The menu** is a dark hero card: track picker and buttons on the left. On the right third
-  is a metallic-black Ferrari SF-26 seen from above, with no logos. It's photographic: 45
-  path-traced Blender photos with a softbox at different spots, blended by the cursor
-  position (D21). Without them it falls back to relit maps, then to the car drawn in code.
+- **The menu** is a dark hero card: track picker and buttons on the left. On the right is a
+  metallic-black Ferrari SF-26 seen from above, with no logos, driving endless laps of
+  Marina Bay at Russell's 2025 pole-lap speed (D24). The car stays fixed while the track
+  (limit lines and kerbs) moves and turns underneath it, and its front wheels steer. It's
+  photographic: path-traced Blender photos blended by the cursor light (D21, D24). Without
+  the driving set it falls back to the still light stage, then relit maps, then the car
+  drawn in code.
   `python scripts/dev_menu.py` relaunches the app whenever the source or the renders change.
 - **Viewers:** the drive and replay screens use the dark single-red-accent UI, with kerbs and
   pixel-art cars. Every corner has an apex and an exit kerb (D18). Motion is smooth: Hermite
@@ -36,7 +39,7 @@ exists, but the new package replaces it.
   before D16/D17 the best was 100.7 s. The policy sees the racing line (observation spec v2).
   `--init random` (`configs/train_scratch.toml`) still trains from scratch. The same seed
   reproduces `metrics.csv` exactly.
-- **Tests:** 548 pass offline. `ruff` is clean.
+- **Tests:** 555 pass offline. `ruff` is clean.
 
 **Open problems, most important first:**
 1. **Training needs a racing line.** Spec v2 observes a TUM raceline, or the centre line where
@@ -375,6 +378,41 @@ The user wanted the Blender render permanently in the app, not only on this mach
   force-pushed. The final files didn't change. The commit hashes in this log are the new
   ones.
 
+**D24 · The hero car drives: endless laps of Marina Bay, steering front wheels** (2026-10-22)
+The user asked for the hero car to drive Singapore, with the camera fixed on it and the
+track moving underneath.
+- **Circuit** (`scripts/hero/build_circuit.py`): Singapore isn't in TUM, so it comes from
+  Russell's 2025 pole lap via OpenF1 (1:29.158, 351 positions at 3.9 Hz).
+  - Racing line: a periodic spline through the positions, one point per metre (4,867 m).
+  - Speed: from the speed sensor, 66–316 km/h. Driving the line at that speed takes 88.7 s.
+  - Road: 12 m wide around a centre line shifted so the racing line sits 1.8 m off the
+    inside edge at apexes.
+  - Kerbs: the corner rule (D18), 19 corners.
+  - Output: `assets/hero/marina_bay.npz`, 158 kB.
+- **Photos** (`render_top.py --drive`): the whole car at 240 px/m, on 5 × 11 softbox
+  positions, in two layers:
+  - **Body:** everything but the front wheels. Its at-rest photo carries a soft ground
+    shadow from a shadow-catcher plane.
+  - **Front wheels:** split off by material (tyre, rim, disc), then everything inside their
+    volume (rim covers, brake ducts, upright).
+  - The softbox photos have no ground: their shadow was huge and swung with the light. The
+    wheels cast no ground shadow, since it would stay straight while they steer.
+  - Exported as WebP to `assets/hero/drive` (2.55 MB, the wheel photos cropped to their
+    strip).
+- **Motion** (`app/ui/hero_drive.py`): the rear axle follows the line at the real speed and
+  loops forever; the heading is the line's direction.
+  - Steering is `atan(wheelbase × curvature)` under the front axle, × 2.5 (the real 5° is
+    invisible at menu size), capped at 28° and eased.
+  - The track shader rotates the world so the heading points up. The car is 40% of the
+    window high, at 72% across.
+  - The track is full strength right of the menu and 22% behind it.
+- **Composite** (menu shader): ground shadow, then the wheels (sampled rotated about their
+  centres), then the body, all lit by the four softbox photos around the cursor.
+  - The shadow fades within 0.45 m of the photo edges, which removed a faint rectangle.
+  - The tyres are drawn 2.6× brighter, or the steering couldn't be seen.
+- **Found by checking zoomed screenshots:** the steering direction was first reversed (map y
+  points down), and the rim covers first stayed straight while the tyres turned.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -403,4 +441,5 @@ The user wanted the Blender render permanently in the app, not only on this mach
 | 2026-10-22 | `6666cd2` | Fix: window restored off-screen after being minimised |
 | 2026-10-22 | `0986f22` | Project log brought up to date; finish comparison image |
 | 2026-10-22 | `d6dc3a7` | Hero photos bundled with the app; comparison and audit images removed (D23) |
-| 2026-10-22 | (this commit) | History rewritten without the two images; log hashes updated |
+| 2026-10-22 | `79d9167` | History rewritten without the two images; log hashes updated |
+| 2026-10-22 | `3f0eb8b` | Driving hero: endless Marina Bay laps, steering front wheels (D24) |
