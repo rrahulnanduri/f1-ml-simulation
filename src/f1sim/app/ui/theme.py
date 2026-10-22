@@ -448,9 +448,21 @@ def make_text(
         t.label.weight = style.weight
     if style.stretch:
         t.label.set_style("stretch", style.stretch)
+    t.tracking_px = tracking_px
     if tracking_px:
         t.tracking = tracking_px
     return t
+
+
+def set_text_ratio(t, ratio: float) -> None:
+    """Raster ``t``'s glyphs at ``ratio`` physical pixels per logical pixel. arcade's HiDPI
+    mode stretches logical pixels onto the framebuffer, which would magnify 96-dpi glyphs
+    (blurred on a 2x display): draw text with this at a physical-pixel projection instead,
+    at ``ratio`` times its logical position and width."""
+    t.label.dpi = 96 * ratio
+    tracking = getattr(t, "tracking_px", 0.0)
+    if tracking:
+        t.tracking = tracking * ratio
 
 
 def micro(text: str, colour: Colour = TEXT_LABEL, anchor_x: str = "left"):

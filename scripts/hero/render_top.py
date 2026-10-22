@@ -41,22 +41,33 @@ metres: x right of the centre line, y down from the top edge). ``--stage-test`` 
 positions only, for tuning.
 
 **Driving stage** (``--drive``): the light stage for the driving hero
-(:mod:`f1sim.app.ui.hero_drive`). The whole car, at ``DRIVE_PX_PER_M``, on a softbox grid
-``STAGE_XS`` x ``DRIVE_YS`` over its full length, in two layers so the front wheels can
-steer: ``drive_stage/body_<row>_<col>.png`` (everything but the front wheels) and
-``wheel_<row>_<col>.png`` (only the front wheels), plus ``body_ambient`` and
-``wheel_ambient``. The front wheels are found by material (tyres, rims, discs) at the axle
-nearer the nose; then every face inside their volume (rim covers, brake ducts, upright)
-goes with them. In ``body_ambient`` a shadow-catcher ground plane
-puts the car's soft contact shadow (not the front wheels') into the alpha, so it falls on the
-track drawn below; the softbox photos have no ground.
-``stage.json`` adds the wheel centres and both axles, in map metres.
+(:mod:`f1sim.app.ui.hero_drive`). The whole car, at ``DRIVE_PX_PER_M``, in two layers so the
+front wheels can steer: ``body_*`` (everything but the front wheels) and ``wheel_*`` (only the
+front wheels). The front wheels are found by material (tyres, rims, discs) at the axle nearer
+the nose; then every face inside their volume (rim covers, brake ducts, upright) goes with
+them. Per layer, into ``drive_stage/``:
+
+- the data maps ``<layer>_albedo``, ``_normal``, ``_surface`` and ``_ao`` (as above), for the
+  menu's live reflections and the other cars' finishes;
+- ``<layer>_<row>_<col>``: the **light falling on the car** from a softbox on the grid
+  ``DRIVE_XS`` x ``DRIVE_YS`` (wider than the car and past both ends, so a light beside it is
+  photographed too). Every material is plain white diffuse for these (normal maps and
+  cut-outs kept) and light doesn't bounce (the car is near-black), so a photo is the
+  irradiance: the menu multiplies it by each finish's colour and adds the reflections itself;
+- ``<layer>_ambient``: the same under a dim, broad overhead light (the car at rest). In the
+  body's, a shadow-catcher ground plane puts the car's soft contact shadow (not the front
+  wheels') into the alpha.
+
+The photos are exposed so that a white floor ``STAGE_LIGHT_Z_M`` under the softbox would read
+``DRIVE_WHITE_FLOOR`` (linear; a calibration render measures it): the menu's light model
+works in those units. ``stage.json`` adds the wheel centres, both axles and that exposure.
 
 ``meta.json`` records the scale, the image size and the model's bounds.
 """
 
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -149,8 +160,14 @@ STAGE_POWER_W = 300.0
 STAGE_AMBIENT_POWER_W = 60.0
 SAMPLES_STAGE = 96
 DRIVE_PX_PER_M = 240
-DRIVE_YS = tuple(round(0.55 * i, 2) for i in range(11))
-"""Driving-stage softbox rows over the full car, metres down from the image top."""
+DRIVE_XS = tuple(round(-1.8 + 0.45 * i, 2) for i in range(9))
+DRIVE_YS = tuple(round(-1.1 + 0.55 * i, 2) for i in range(15))
+"""Driving-stage softbox positions: about 1.8 m either side of the centre line, and from 1 m
+ahead of the nose to 1 m behind the tail (metres down from the image top)."""
+DRIVE_WHITE_FLOOR = 0.25
+DRIVE_AMBIENT_STOPS = 3.0
+"""The ambient photos are exposed this much brighter (they're dim; 8 bits need the room)."""
+SAMPLES_DRIVE = 64
 WHEEL_MATS = ("tyre_tread", "tyre_sides", "sf25_wheel_hub", "discs")
 WHEEL_HALF_WIDTH_M = 0.16
 WHEEL_GRAB_M = 0.04
@@ -561,6 +578,68 @@ def light_stage() -> dict:
     }
 
 
+def diffuse_only() -> None:
+    """Every material plain white diffuse, keeping its normal map and alpha (``--drive``)."""
+    plain = (
+        ("Base Color", (1.0, 1.0, 1.0, 1.0)),
+        ("Metallic", 0.0),
+        ("Roughness", 1.0),
+        ("Specular IOR Level", 0.0),
+        ("Coat Weight", 0.0),
+        ("Sheen Weight", 0.0),
+        ("Transmission Weight", 0.0),
+        ("Subsurface Weight", 0.0),
+        ("Emission Strength", 0.0),
+    )
+    for mat in bpy.data.materials:
+        if mat.name not in orig:
+            continue
+        p, nt = orig[mat.name]["p"], mat.node_tree
+        for name, v in plain:
+            sock = p.inputs.get(name)
+            if sock is None:
+                continue
+            for link in list(sock.links):
+                nt.links.remove(link)
+            sock.default_value = v
+
+
+def white_floor_value(ground, body, wheels, box, y: float) -> float:
+    """Linear value (exposure 0) of a white floor ``STAGE_LIGHT_Z_M`` under the softbox at
+    ``y``, from a calibration render (an EXR: scene-linear, no view transform)."""
+    mat = bpy.data.materials.new("white_floor")
+    mat.use_nodes = True
+    bsdf = next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    bsdf.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+    bsdf.inputs["Roughness"].default_value = 1.0
+    bsdf.inputs["Specular IOR Level"].default_value = 0.0
+    ground.data.materials.append(mat)
+    ground.is_shadow_catcher = False
+    ground.hide_render = False
+    body.hide_render = wheels.hide_render = True
+    box.hide_render = False
+    box.location = (0.0, y, STAGE_LIGHT_Z_M)
+    fmt, depth = r.image_settings.file_format, r.image_settings.color_depth
+    r.image_settings.file_format = "OPEN_EXR"
+    r.image_settings.color_depth = "32"
+    cyc.samples = 64
+    r.filepath = str(OUT / "drive_stage" / "calibration.exr")
+    bpy.ops.render.render(write_still=True)
+    img = bpy.data.images.load(r.filepath)
+    w, h = img.size
+    px = img.pixels[:]
+    # The floor under the light: the camera looks straight down, image row 0 at the bottom
+    scale = cam_data.ortho_scale / max(w, h)
+    cy = int((y - (cam.location.y - 0.5 * h * scale)) / scale)
+    cx = w // 2
+    vals = [px[4 * ((cy + j) * w + cx + i) + 1] for j in range(-3, 4) for i in range(-3, 4)]
+    r.image_settings.file_format, r.image_settings.color_depth = fmt, depth
+    ground.data.materials.clear()
+    ground.is_shadow_catcher = True
+    body.hide_render = wheels.hide_render = False
+    return sum(vals) / len(vals)
+
+
 def split_front_wheels():
     """Move the front wheels (tyre, rim and disc faces at the axle nearer the nose) into
     their own object. Returns it, the wheel centres and both axles (world x, y)."""
@@ -634,14 +713,31 @@ def drive_stage() -> dict:
     r.resolution_x = int(round(w_m * DRIVE_PX_PER_M))
     r.resolution_y = int(round(h_m * DRIVE_PX_PER_M))
     r.image_settings.color_depth = "8"
-    photographic()
-    cyc.use_denoising = True
     for o in [o for o in scene.objects if o.type == "LIGHT"]:
         bpy.data.objects.remove(o)
     world = bpy.data.worlds.new("drive")
     world.use_nodes = True
     world.node_tree.nodes["Background"].inputs["Color"].default_value = (0, 0, 0, 1)
     scene.world = world
+    layers = (("body", body, wheels), ("wheel", wheels, body))
+    # The data maps, from the finished materials
+    cyc.use_denoising = False
+    for kind in ("albedo", "normal", "surface", "ao"):
+        scene.view_settings.view_transform = "Standard" if kind == "albedo" else "Raw"
+        scene.view_settings.look = "None"
+        set_emission(kind)
+        for layer, shown, hidden in layers:
+            shown.visible_camera, hidden.visible_camera = True, False
+            render(f"drive_stage/{layer}_{kind}", SAMPLES_DATA)
+        restore()
+    # The light photos: white diffuse, no bounces, a fixed exposure
+    diffuse_only()
+    cyc.use_denoising = True
+    cyc.diffuse_bounces = cyc.glossy_bounces = cyc.transmission_bounces = 0
+    cyc.volume_bounces = 0
+    scene.view_settings.view_transform = "Standard"
+    scene.view_settings.look = "None"
+    scene.view_settings.exposure = 0.0
     bpy.ops.mesh.primitive_plane_add(size=40.0, location=(0.0, (top + bottom) / 2, 0.0))
     ground = bpy.context.active_object
     ground.is_shadow_catcher = True
@@ -658,25 +754,31 @@ def drive_stage() -> dict:
     amb = softbox("ambient", 7.0, STAGE_AMBIENT_POWER_W)
     amb.location = (0.0, (top + bottom) / 2, 4.0)
     box = softbox("softbox", STAGE_SIZE_M, STAGE_POWER_W)
-    cells = [(iy, ix) for iy in range(len(DRIVE_YS)) for ix in range(len(STAGE_XS))]
+    amb.hide_render = True
+    floor0 = white_floor_value(ground, body, wheels, box, (top + bottom) / 2)
+    exposure = math.log2(DRIVE_WHITE_FLOOR / floor0)
+    scene.view_settings.exposure = exposure
+    print("WHITE_FLOOR", floor0, "EXPOSURE", exposure, flush=True)
+    cells = [(iy, ix) for iy in range(len(DRIVE_YS)) for ix in range(len(DRIVE_XS))]
     if STAGE_TEST:
-        cells = [(2, 2), (5, 1), (8, 3)]
-    for layer in ("body", "wheel"):
+        cells = [(4, 4), (7, 2), (7, 8), (10, 6)]
+    for layer, shown, hidden in layers:
         # Body: the wheels only cast shadows; wheels: the body only casts shadows, no ground
-        body.visible_camera = layer == "body"
-        wheels.visible_camera = layer == "wheel"
+        shown.visible_camera, hidden.visible_camera = True, False
         # The ground shadow comes from the broad ambient light only (a soft contact shadow):
-        # under the low softbox it was huge and swung with the cursor. The front wheels cast
-        # none, as theirs would stay straight while they steer.
+        # the menu casts the cursor light's shadow itself. The front wheels cast none, as
+        # theirs would stay straight while they steer.
         wheels.visible_shadow = layer == "wheel"
         ground.hide_render = layer == "wheel"
         amb.hide_render, box.hide_render = False, True
-        render(f"drive_stage/{layer}_ambient", SAMPLES_STAGE)
+        scene.view_settings.exposure = exposure + DRIVE_AMBIENT_STOPS
+        render(f"drive_stage/{layer}_ambient", SAMPLES_DRIVE)
+        scene.view_settings.exposure = exposure
         ground.hide_render = True
         amb.hide_render, box.hide_render = True, False
         for iy, ix in cells:
-            box.location = (STAGE_XS[ix], MARGIN_M - DRIVE_YS[iy], STAGE_LIGHT_Z_M)
-            render(f"drive_stage/{layer}_{iy}_{ix}", SAMPLES_STAGE)
+            box.location = (DRIVE_XS[ix], MARGIN_M - DRIVE_YS[iy], STAGE_LIGHT_Z_M)
+            render(f"drive_stage/{layer}_{iy}_{ix}", SAMPLES_DRIVE)
 
     def to_map(c):
         return {"x": c["x"], "y": MARGIN_M - c["y"], "r": c["r"]}
@@ -685,11 +787,15 @@ def drive_stage() -> dict:
         "px_per_m": DRIVE_PX_PER_M,
         "margin_m": MARGIN_M,
         "image_px": [r.resolution_x, r.resolution_y],
-        "xs": list(STAGE_XS),
+        "xs": list(DRIVE_XS),
         "ys": list(DRIVE_YS),
         "light_z_m": STAGE_LIGHT_Z_M,
         "softbox_m": STAGE_SIZE_M,
         "power_w": STAGE_POWER_W,
+        "white_floor": DRIVE_WHITE_FLOOR,
+        "exposure": exposure,
+        "ambient_gain": 2.0**DRIVE_AMBIENT_STOPS,
+        "height_scale_m": HEIGHT_SCALE_M,
         "finish": FINISH if BLACKOUT else None,
         "wheels": [to_map(c) for c in front_c],
         "front_axle_y": MARGIN_M - sum(c["y"] for c in front_c) / 2,
@@ -709,7 +815,7 @@ if DRIVE:
     info = drive_stage()
     (OUT / "drive_stage" / "stage.json").write_text(json.dumps(info, indent=1), encoding="utf-8")
     print("DRIVE_STAGE", json.dumps(info), flush=True)
-    bpy.ops.wm.quit_blender()
+    os._exit(0)  # quit_blender() returns and the script would go on to the studio passes
 if STAGE:
     info = light_stage()
     (OUT / "stage" / "stage.json").write_text(json.dumps(info, indent=1), encoding="utf-8")

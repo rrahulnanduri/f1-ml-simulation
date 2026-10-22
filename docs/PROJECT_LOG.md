@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-22 (driving hero D24; round-2 plan approved, not started). This section summarises
+*Last updated: 2026-10-22 (driving hero round 2, D25). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
@@ -23,12 +23,14 @@ exists, but the new package replaces it.
   Replay switch the window to those screens, and Esc comes back. Train opens a console. The
   window remembers its place, but only restores it if it lands on a connected screen.
 - **The menu** is a dark hero card: track picker and buttons on the left. On the right is a
-  metallic-black Ferrari SF-26 seen from above, with no logos, driving endless laps of
-  Marina Bay at Russell's 2025 pole-lap speed (D24). The car stays fixed while the track
-  (limit lines and kerbs) moves and turns underneath it, and its front wheels steer. It's
-  photographic: path-traced Blender photos blended by the cursor light (D21, D24). Without
-  the driving set it falls back to the still light stage, then relit maps, then the car
-  drawn in code.
+  metallic-black Ferrari SF-26 seen from above (55% of the window high, no logos), driving
+  endless laps of Marina Bay at Russell's 2025 pole-lap speed. It keeps overtaking five
+  slower cars in gunmetal, graphite and satin grey, and red and blue lamps flash by the
+  track (D24, D25). The car stays fixed while the track moves and turns underneath it;
+  every car's front wheels steer. One light model lights the cars, the floor and the track
+  lines: photographed diffuse light from a Blender light stage, live GGX reflections, and
+  the cars' shadows cast away from the cursor (D25). Without the driving set the menu falls
+  back to the still light stage, then relit maps, then the car drawn in code.
   `python scripts/dev_menu.py` relaunches the app whenever the source or the renders change.
 - **Viewers:** the drive and replay screens use the dark single-red-accent UI, with kerbs and
   pixel-art cars. Every corner has an apex and an exit kerb (D18). Motion is smooth: Hermite
@@ -39,14 +41,15 @@ exists, but the new package replaces it.
   before D16/D17 the best was 100.7 s. The policy sees the racing line (observation spec v2).
   `--init random` (`configs/train_scratch.toml`) still trains from scratch. The same seed
   reproduces `metrics.csv` exactly.
-- **Tests:** 555 pass offline. `ruff` is clean.
+- **Tests:** 571 pass offline. `ruff check` is clean.
 
 **Open problems, most important first:**
 1. **Training needs a racing line.** Spec v2 observes a TUM raceline, or the centre line where
    a circuit has none. The 9 circuits without TUM data (open problem 4) would train against
    their centre line, a poor line. Computing a minimum-curvature line for them is the fix.
-2. **The UI isn't fully checked at 2× scaling.** The user's main display is 2×; the menu
-   looks right there in screenshots, but the drive and replay HUDs haven't been reviewed on it.
+2. **The UI isn't fully checked at 2× scaling.** The user's main display is 2×. The menu's
+   text now rasters at the framebuffer's DPI (D25), but that was only checked at 1× here
+   (this display is 1×); the drive and replay HUDs still draw 96-dpi text, stretched.
 3. **Some circuits fail the 2024 alignment check.**
    - Shanghai, Spa, Mexico City and the Red Bull Ring fail for no known reason.
    - Yas Marina, Albert Park, Barcelona and Zandvoort fail because their layouts changed after
@@ -60,25 +63,24 @@ exists, but the new package replaces it.
 6. **Drive mode's off-track rule still uses the white line**, not the track limits
    (`app/drive.py`).
 
-**Next step:** build the approved **driving hero, round 2** plan,
-[docs/hero-round2-plan.md](hero-round2-plan.md) (not started; follow its build order). The
-user asked for:
-- a bigger car (they chose 55% of the window height);
-- a cursor light that spreads over and around the car realistically: one sliding highlight
-  instead of blended photos, the floor lit by the same light, a shadow cast away from it;
-- slower cars on track that the hero overtakes constantly, in other dark finishes (they
-  chose gunmetal, graphite and satin grey) so the black hero stands out.
-Keep refining with the user via live reload (`python scripts/dev_menu.py`). Then M4 (the full app: settings, a training view instead of the
-console) and M5 (breadth, including a computed racing line for circuits without TUM data).
+**Next step:** the user is reviewing the round-2 hero in the live-reload app
+(`python scripts/dev_menu.py`). Their notes so far went into D25: a solid-looking car,
+lingering lamp light, random lamp positions. Likely next tweaks are taste: the constants at
+the top of `app/menu.py` (`DRIVE_*`, `LAMP_*`, `CAST_SHADOW_*`) and the finishes in
+`hero_drive.RIVAL_FINISHES`. Then M4 (the full app: settings, a training view instead of
+the console) and M5 (breadth, including a computed racing line for circuits without TUM
+data).
 
 **Gotchas:**
 - **The hero photos ship with the app** in `src/f1sim/app/assets/hero/stage` (45 WebP photos,
-  1.2 MB, D23) and, for the driving hero, `assets/hero/drive` (112 WebP, 2.55 MB) plus the
+  1.2 MB, D23) and, for the driving hero, `assets/hero/drive` (280 WebP, 2.13 MB: light
+  photos and data maps, D25) plus the
   circuit `assets/hero/marina_bay.npz` (D24; rebuild it with
   `python scripts/hero/build_circuit.py`, which needs OpenF1). The SF-26 model (the user's download) and the full-size renders stay local in
   git-ignored `assets_src/`. To change the hero, re-render, then export and commit the folder:
   `blender -b --factory-startup -P scripts/hero/render_top.py -- assets_src/sf26/extracted/source/f1_2026_sf26.glb assets_src/sf26/render --blackout --stage`
-  (Blender 5.2 on this machine; about 3 min on the GPU), then
+  (Blender 5.2 at `C:\Program Files\Blender Foundation\Blender 5.2\blender.exe`, not on
+  PATH; about 3 min on the GPU, the `--drive` set about 15 min), then
   `python scripts/hero/export_stage.py`. For the driving set use `--drive` instead of
   `--stage`, then `python scripts/hero/export_stage.py --drive`.
 - **No screenshots or comparison images in the repo.** The user asked for that explicitly.
@@ -423,6 +425,69 @@ track moving underneath.
 - **Found by checking zoomed screenshots:** the steering direction was first reversed (map y
   points down), and the rim covers first stayed straight while the tyres turned.
 
+**D25 · Driving hero round 2: a bigger car, one light model, traffic, trackside lamps** (2026-10-22)
+The user asked for a bigger car, a cursor light that behaves like a real light, and slower
+cars to overtake ([hero-round2-plan.md](hero-round2-plan.md)). Midway they added red and blue
+flashing lamps by the track, sharper menu text, a car that looks solid rather than
+translucent, and lamps that linger and sit at random.
+- **Size:** the car is 55% of the window high (was 40%), its centre at 72% across and 42% up,
+  so more track shows ahead.
+- **Light faults confirmed first** (zoomed sweeps of the D24 shader): the light switched off
+  just past the sidepod (the grid ended at ±0.9 m), the floor pool was a separate fake that
+  didn't match the car, and blending four photos made two or four faint reflections fade
+  into each other instead of one that slides.
+- **Photos** (`render_top.py --drive`): every material white diffuse, no bounces, exposed so
+  a white floor 1.9 m under the softbox reads 0.25 linear (a calibration render measures it).
+  So each photo is the light falling on the car, in known units. The grid is 9 × 15 positions:
+  ±1.8 m across, 1 m past both ends. The data maps (albedo, normal, surface, AO) are rendered
+  for both layers too. Exported grey, 280 WebP, 2.13 MB.
+  - Rejected: one diffuse grid per finish (3 × the size), and Cycles' DiffDir/DiffCol passes
+    (they need the compositor).
+- **Light model** (`app/ui/drive_shaders.py`, one model for cars, floor and track):
+  - *Diffuse* = analytic softbox irradiance × the visibility the photos saw (their light
+    over the unshadowed light they'd give). So the photos supply shadows and occlusion, and
+    beyond the grid the light keeps falling off with distance instead of switching off.
+  - *Reflections* are live GGX (base and clear coat) with the softbox as a sphere light
+    (representative point, energy-normalised widening). One highlight that slides.
+  - *Floor and track lines* get the same light; the cursor light casts the cars' shadows
+    away from it (`p = (g(z−h) + Lh)/z`, height from the map, mip-blurred). The fake pool is
+    gone; the beam stays.
+  - *Contact shadow* moved into the floor pass and only darkens the floor's own dim light;
+    drawn over the car's quad it cut into the cursor's pool as a visible rectangle.
+  - *Finishes:* the bodywork (the clear-coat weight map) takes a per-finish colour scale,
+    roughness, metal and coat, so one asset set draws every car.
+- **The user's "translucent, not sturdy" note:** the at-rest coat sheen fell on every
+  upward face and veiled the car in milky grey; it now lights only curved shoulders, so flat
+  tops stay dark like gloss black. The photographed self-shadows are lifted 30%, and the cast
+  shadow is softer and lighter (seen from above, a crisp one repeats the car's outline beside
+  it like a ghost).
+- **Traffic** (`hero_drive.Traffic`, pure numpy, seeded):
+  - Five slower cars at 0.72–0.86 pace, in gunmetal, graphite and satin grey.
+  - `Drive` has an offset from the line: a critically damped spring. The heading adds
+    `atan(dd/ds)`, and the steering uses the shifted path's curvature, so the wheels turn
+    into a dive.
+  - `track_room` gives the room to each limit (shapely, 0.2 s).
+  - The hero picks a side when a car is within 35 m: the inside of the next corner, or the
+    side with more room. It moves up to 2.6 m over, while the cars in reach give 0.5–1.3 m.
+    It holds the side until 8 m clear, and may still switch while the car is more than 15 m
+    ahead.
+  - The room is checked over the pass's real track distance:
+    `(gap + clear + length) × v / closing speed`, plus the spring's settling distance.
+    Measured in relative metres, the hero got trapped alongside and swerved into cars.
+  - Every car follows any car ahead it isn't, or won't stay, clear of sideways (planned
+    and current offsets). Cars are processed front to back.
+  - Cars more than 25 m behind and out of view reappear 60–160 m ahead, out of view.
+  - 10 laps × 8 seeds: no overlaps (oriented-box test), no car past the limits, an overtake
+    every ~3 s. The hero waits behind 10–20% of the time, mostly in slow corners.
+- **Lamps** (`trackside_lamps`): red and blue head pairs at random gaps (30–140 m), random
+  sides and 0.6–4.5 m outside the limits. Each unit has its own phase and rate (0.8–1.25×).
+  A double strobe, red then blue, each flash decaying over 0.11 s so it lingers on the
+  passing cars. Up to 8 nearest are lit (small omni lights, no shadows), and the heads glow.
+- **Sharp text:** arcade's HiDPI `stretch` mode magnifies 96-dpi glyphs on a 2× display. Text
+  is now rastered at the framebuffer's DPI and drawn under a pixel projection, on whole
+  pixels; at 1× the paragraph was also smeared by fractional positions.
+- **Cost:** 4.6 ms a frame at 2560×1440 with six cars (was 3.6 ms at 1600×900).
+
 ## Change log
 
 | Date | Commit | Change |
@@ -453,4 +518,5 @@ track moving underneath.
 | 2026-10-22 | `d6dc3a7` | Hero photos bundled with the app; comparison and audit images removed (D23) |
 | 2026-10-22 | `79d9167` | History rewritten without the two images; log hashes updated |
 | 2026-10-22 | `3f0eb8b` | Driving hero: endless Marina Bay laps, steering front wheels (D24) |
-| 2026-10-22 | (this commit) | Round-2 driving-hero plan approved and saved to docs (not started) |
+| 2026-10-22 | `8e73dcb` | Round-2 driving-hero plan approved and saved to docs |
+| 2026-10-22 | (this commit) | Driving hero round 2: bigger car, live light model, traffic, trackside lamps, sharp text (D25) |

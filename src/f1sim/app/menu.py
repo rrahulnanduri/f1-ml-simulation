@@ -7,12 +7,14 @@ and the hero on the right third.
 **The hero.** An F1 car seen from above, nose up. Best first:
 
 0. **Driving** (:mod:`f1sim.app.ui.hero_drive`): the photographed car laps Marina Bay at a
-   real pole lap's speed, forever. It stays fixed on screen (whole, about half the window
-   high, ``DRIVE_X`` across) while the circuit, drawn as track-limit lines and kerbs, moves
-   and turns underneath it; its front wheels steer through the corners. Behind the menu
-   column the track is drawn faintly. The car is lit like the light stage below, in three
-   layers: the soft ground shadow, the front wheels (turned by the steering angle) and the
-   body.
+   real pole lap's speed, forever, overtaking slower cars in other dark finishes. It stays
+   fixed on screen (``DRIVE_CAR_HEIGHT`` of the window high, at ``DRIVE_X``, ``DRIVE_Y``)
+   while the circuit, drawn as track-limit lines and kerbs, moves and turns underneath it;
+   every car's front wheels steer. Behind the menu column the track is drawn faintly. Red
+   and blue lamps flash by the track. One light model (:mod:`f1sim.app.ui.drive_shaders`)
+   lights the floor, the track and every car: photographed diffuse light, live reflections,
+   the cars' shadows cast away from the cursor. Each car is drawn in three layers: the
+   soft ground shadow, the front wheels (turned by the steering angle) and the body.
 1. **Light stage** (:mod:`f1sim.app.ui.light_stage`): path-traced photos of the blacked-out
    SF-26, one per softbox position on a grid; the cursor blends the four photos around it.
    Photographic: real soft shadows, softbox reflections in the clear coat, occlusion.
@@ -21,7 +23,7 @@ and the hero on the right third.
    above the cursor, physically based (GGX highlights from each material's roughness and
    metal, a clear coat on the paint, ambient occlusion in the crevices).
 
-The car doesn't move; the cursor is the light. It also lights the floor around it faintly.
+The car doesn't move on screen; the cursor is the light. It also lights the floor around it.
 Away from the light the car is only just visible. The light fades in after the spotlight
 beam, and out when the cursor leaves the window.
 
@@ -57,7 +59,7 @@ from pathlib import Path
 
 import numpy as np
 
-from f1sim.app.ui import car_top, hero_drive, hero_maps, light_stage, theme
+from f1sim.app.ui import car_top, drive_shaders, hero_drive, hero_maps, light_stage, theme
 
 CARD_BG = theme.hex_colour("#0A0A0B")
 """The card: near-black, like the original's ``bg-black/[0.96]``."""
@@ -91,10 +93,12 @@ STAGE_AMBIENT = 0.35
 """How much of the light stage's ambient photo (the car at rest) shows."""
 STAGE_FADE_OUT_M = 0.9
 """The stage light fades out this far outside its grid (over the menu, say)."""
-DRIVE_CAR_HEIGHT = 0.40
+DRIVE_CAR_HEIGHT = 0.55
 """The driving car's length as a share of the window height."""
 DRIVE_X = 0.72
-"""The driving car's centre, as a share of the window width."""
+DRIVE_Y = 0.42
+"""The driving car's centre, as a share of the window width and height (a little low, so
+more track shows ahead, where the slower cars come from)."""
 TRACK_LINE_HALF_M = 0.07
 """Half the width of a drawn track-limit line, metres."""
 TRACK_LINE = (1.0, 1.0, 1.0, 0.40)
@@ -104,13 +108,39 @@ TRACK_FADE_PX = 70.0
 """The track rises to full strength over this many pixels right of the menu column..."""
 TRACK_UNDER_MENU = 0.22
 """... from this strength behind the menu column, so its lines sweep the whole page."""
-DRIVE_AMBIENT = 0.55
-"""The driving car at rest (smaller on screen than the static hero, so a little brighter)."""
+DRIVE_AMBIENT = 0.3
+"""The at-rest light on the driving cars (the ambient photo's level)."""
+DRIVE_AMBIENT_SPEC = 0.05
+"""The sheen of that broad overhead light in the clear coat (upward faces)."""
+CAST_SHADOW_BLUR = 2.0
+CAST_SHADOW_STRENGTH = 0.6
+"""The cursor light's shadow on the floor: softer and lighter than the softbox would give, so
+it doesn't repeat the car's outline beside it (seen from above, that reads as a ghost)."""
+SELF_SHADOW_LIFT = 0.3
+"""The photographed self-shadows are lifted this much: at full strength they read as a
+shadow laid over the car, not as its shape."""
+DRIVE_LIGHT = 2.0
+"""The cursor light's strength, in units of the photographed softbox."""
+DRIVE_EXPOSURE = 2.2
+DRIVE_COAT_ROUGHNESS = 0.06
+FLOOR_ALBEDO = 0.06
+"""The floor (dark asphalt): lit by the same light as the cars."""
+LINE_LIT = 0.55
+"""The painted lines' and kerbs' reflectance (they're lit by the floor light too)."""
+LAMP_GAIN = 60.0
+"""The trackside lamps' strength at the peak of a flash, in softbox units (strobes: bright
+enough to tint a car several metres away)."""
+LAMP_RADIUS_M = 0.35
+LAMP_REACH_M = 14.0
+"""Lamps farther than this outside the window are left out (at most ``MAX_LAMPS``)."""
+LAMP_GLOW_M = 0.18
+MAX_LAMPS = 8
+MAX_SHADOW_CARS = 6
 SHADOW_EDGE_M = 0.45
 """The ground shadow fades out over this distance from the photo's edges (the broad light's
 shadow reaches them and would otherwise end in a visible rectangle)."""
-WHEEL_GAIN = 2.6
-"""The front tyres are drawn this much brighter (a dark rubber grey rather than the
+WHEEL_GAIN = 1.2
+"""The front tyres' colour is this much lighter (a dark rubber grey rather than the
 blacked-out body's near-black): otherwise their steering is invisible against the dark."""
 FLOOR_GLOW = 0.05
 """Brightness the cursor light adds to the floor (the card) at its centre."""
@@ -237,13 +267,58 @@ def hero_layout(width: float, height: float, size_m: tuple[float, float]) -> Her
 def drive_layout(
     width: float, height: float, size_m: tuple[float, float], rear_axle_y: float
 ) -> HeroLayout:
-    """The driving car whole, ``DRIVE_CAR_HEIGHT`` of the window high, centred vertically at
-    ``DRIVE_X`` across. ``size_m`` is the photo's (width, length)."""
+    """The driving car whole, ``DRIVE_CAR_HEIGHT`` of the window high, its centre at
+    (``DRIVE_X``, ``DRIVE_Y``) of the window. ``size_m`` is the photo's (width, length)."""
     width_m, length_m = size_m
     ppm = DRIVE_CAR_HEIGHT * height / length_m
     left = DRIVE_X * width - 0.5 * width_m * ppm
-    top = 0.5 * height + 0.5 * length_m * ppm
+    top = DRIVE_Y * height + 0.5 * length_m * ppm
     return HeroLayout(left=left, top=top, px_per_m=ppm, width_m=width_m, length_m=length_m)
+
+
+def view_radius_m(width: float, height: float, layout: HeroLayout, rear_axle_y: float) -> float:
+    """How far from the hero's rear axle (metres) a car can still show in the window: the
+    farthest window corner, plus a car length."""
+    ax, ay = layout.to_window(0.0, rear_axle_y)
+    corner = max(math.hypot(x - ax, y - ay) for x in (0.0, width) for y in (0.0, height))
+    return corner / layout.px_per_m + hero_drive.CAR_LENGTH_M
+
+
+def car_in_hero_frame(layout: HeroLayout, rear_axle_y: float, hero_pose, pose):
+    """Where a car at ``pose`` (world) shows: its rear axle in window pixels and its rotation
+    on screen (radians, anticlockwise), with the hero fixed nose up."""
+    anchor = layout.to_window(0.0, rear_axle_y)
+    px = hero_drive.world_to_screen(pose[:2], hero_pose, layout.px_per_m, anchor)
+    return (float(px[0]), float(px[1])), pose[2] - hero_pose[2]
+
+
+def window_to_car(layout: HeroLayout, rear_axle_y: float, px, anchor, angle):
+    """A window point (pixels) in the map frame (metres) of a car whose rear axle shows at
+    ``anchor``, turned ``angle`` on screen."""
+    vx, vy = (px[0] - anchor[0]) / layout.px_per_m, (px[1] - anchor[1]) / layout.px_per_m
+    c, s = math.cos(-angle), math.sin(-angle)
+    return c * vx - s * vy, rear_axle_y - (s * vx + c * vy)
+
+
+def light_in_car(layout: HeroLayout, rear_axle_y: float, light_xy, anchor, angle):
+    """The cursor light (hero map metres) in the map frame of a car whose rear axle shows at
+    ``anchor`` (window pixels), turned ``angle`` on screen."""
+    return window_to_car(layout, rear_axle_y, layout.to_window(*light_xy), anchor, angle)
+
+
+def set_uniforms(program, **values) -> None:
+    """Set the uniforms ``program`` uses (the compiler drops unused ones: skip those)."""
+    for name, value in values.items():
+        try:
+            program[name] = value
+        except KeyError:
+            pass
+
+
+def _flat(rows, n: int, width: int) -> tuple[float, ...]:
+    """``rows`` of ``width`` floats, padded to ``n`` rows, flattened (an array uniform)."""
+    out = [float(v) for row in rows[:n] for v in row]
+    return tuple(out + [0.0] * (n * width - len(out)))
 
 
 @dataclass
@@ -352,105 +427,6 @@ void main() {
     // Photos are display-encoded: add the light in (approximately) linear space
     vec3 c = sqrt(amb.rgb * amb.rgb * u_ambient_level + lit * lit * u_power);
     frag = vec4(c * amb.a, amb.a);  // premultiplied
-}
-"""
-
-_TRACK_VS = """
-#version 330
-uniform vec2 u_car;     // the rear axle, world metres
-uniform vec2 u_rot;     // cos, sin of the rotation that puts the car's heading up
-uniform float u_ppm;
-uniform vec2 u_anchor;  // the rear axle on screen, window pixels
-uniform vec2 u_size;
-in vec2 in_pos;
-in vec4 in_col;
-out vec4 v_col;
-out float v_x;
-void main() {
-    vec2 d = in_pos - u_car;
-    vec2 r = vec2(u_rot.x * d.x - u_rot.y * d.y, u_rot.y * d.x + u_rot.x * d.y);
-    vec2 px = u_anchor + r * u_ppm;
-    v_col = in_col;
-    v_x = px.x;
-    gl_Position = vec4(px / u_size * 2.0 - 1.0, 0.0, 1.0);
-}
-"""
-
-_TRACK_FS = """
-#version 330
-uniform vec2 u_fade;  // the track is at u_under left of x0, full right of x1 (pixels)
-uniform float u_under;
-in vec4 v_col;
-in float v_x;
-out vec4 frag;
-void main() {
-    float a = v_col.a * mix(u_under, 1.0, smoothstep(u_fade.x, u_fade.y, v_x));
-    frag = vec4(v_col.rgb * a, a);  // premultiplied
-}
-"""
-
-_DRIVE_FS = """
-#version 330
-uniform sampler2DArray u_body;   // the car without its front wheels, one photo per softbox
-uniform sampler2DArray u_wheels; // only the front wheels: a strip of rows
-uniform sampler2D u_body_amb;    // at rest; alpha = car coverage + soft ground shadow
-uniform sampler2D u_wheel_amb;
-uniform vec4 u_layers;
-uniform vec4 u_weights;
-uniform float u_power;
-uniform float u_ambient_level;
-uniform vec2 u_size_m;           // the full photo, metres
-uniform vec4 u_wheels_m;         // wheel centres (x0, y0, x1, y1), map metres
-uniform float u_wheel_r;
-uniform vec2 u_strip;            // wheel strip: top row and height, map metres
-uniform float u_steer;           // rad, + = left
-uniform float u_shadow_edge;     // metres
-uniform float u_wheel_gain;      // brighter rubber, so the steering reads
-in vec2 v_uv;
-out vec4 frag;
-
-vec4 lit(sampler2DArray tex, vec2 uv) {
-    return u_weights.x * texture(tex, vec3(uv, u_layers.x))
-        + u_weights.y * texture(tex, vec3(uv, u_layers.y))
-        + u_weights.z * texture(tex, vec3(uv, u_layers.z))
-        + u_weights.w * texture(tex, vec3(uv, u_layers.w));
-}
-
-vec3 shade(vec3 amb, vec3 light) {
-    // photos are display-encoded: add the light in (approximately) linear space
-    return sqrt(amb * amb * u_ambient_level + light * light * u_power);
-}
-
-void main() {
-    vec2 pos = vec2((v_uv.x - 0.5) * u_size_m.x, (1.0 - v_uv.y) * u_size_m.y);
-    // Body: car coverage from the softbox photos (no ground); the ambient alpha adds the shadow
-    vec4 ba = texture(u_body_amb, v_uv);
-    vec4 bl = lit(u_body, v_uv);
-    float car_a = bl.a;
-    vec3 body = shade(ba.rgb, bl.rgb / max(bl.a, 1e-4));
-    float shadow_a = clamp((ba.a - car_a) / max(1.0 - car_a, 1e-4), 0.0, 1.0);
-    float to_edge = min(min(0.5 * u_size_m.x - abs(pos.x), pos.y), u_size_m.y - pos.y);
-    shadow_a *= smoothstep(0.0, u_shadow_edge, to_edge);
-    // Front wheel: sample the straight wheel rotated about its centre by the steering angle
-    vec2 c = pos.x < 0.0 ? u_wheels_m.xy : u_wheels_m.zw;
-    vec2 d = pos - c;
-    vec4 wheel = vec4(0.0);
-    if (dot(d, d) < u_wheel_r * u_wheel_r) {
-        float cs = cos(u_steer), sn = sin(u_steer);
-        // Map y points down, so turning the wheel anticlockwise on screen (a left steer) is
-        // a rotation by -steer here: sample the straight photo rotated back by +steer
-        vec2 q = c + vec2(cs * d.x - sn * d.y, sn * d.x + cs * d.y);
-        vec2 wuv = vec2(q.x / u_size_m.x + 0.5, 1.0 - (q.y - u_strip.x) / u_strip.y);
-        if (all(greaterThan(wuv, vec2(0.0))) && all(lessThan(wuv, vec2(1.0)))) {
-            vec4 wa = texture(u_wheel_amb, wuv);
-            vec4 wl = lit(u_wheels, wuv);
-            vec3 w = shade(wa.rgb, wl.rgb / max(wl.a, 1e-4)) * u_wheel_gain;
-            wheel = vec4(w * wl.a, wl.a);
-        }
-    }
-    // Bottom to top: ground shadow, front wheels, body (premultiplied)
-    vec4 under = wheel + (1.0 - wheel.a) * vec4(0.0, 0.0, 0.0, shadow_a);
-    frag = vec4(body * car_a, car_a) + (1.0 - car_a) * under;
 }
 """
 
@@ -563,6 +539,7 @@ def _texture_bytes(maps: hero_maps.HeroMaps) -> dict[str, bytes]:
 def _make_view_class():
     import arcade
     from arcade.gl import BufferDescription, geometry
+    from pyglet.math import Mat4
 
     from f1sim.app.shell import Screen
 
@@ -582,13 +559,16 @@ def _make_view_class():
             self.hover: int | None = None
             self.light = Light()
             self.t0 = time.perf_counter()
+            self.clock = 0.0  # seconds of animation (the lamps' flashes)
             self.status = ""
             self.status_t = -10.0
             circuit = hero_drive.load_circuit()
             self.dstage = hero_drive.load_stage() if circuit is not None else None
             self.drive = None
+            self.traffic = None
             if self.dstage is not None:
                 self.drive = hero_drive.Drive(circuit, wheelbase_m=self.dstage.wheelbase)
+                self.traffic = hero_drive.Traffic(self.drive)
             self.stage = light_stage.load() if self.drive is None else None
             no_photos = self.stage is None and self.drive is None
             self.maps = hero_maps.load() if no_photos else None
@@ -655,16 +635,18 @@ def _make_view_class():
                 [BufferDescription(ctx.buffer(data=data.tobytes()), "2f 4f", ["in_pos", "in_col"])],
                 mode=ctx.TRIANGLES,
             )
-            self._p_track = ctx.program(vertex_shader=_TRACK_VS, fragment_shader=_TRACK_FS)
-            self._p_drive = ctx.program(vertex_shader=_HERO_VS, fragment_shader=_DRIVE_FS)
+            ds = drive_shaders
+            self._p_track = ctx.program(vertex_shader=ds.TRACK_VS, fragment_shader=ds.TRACK_FS)
+            self._p_floor = ctx.program(vertex_shader=_FS_VS, fragment_shader=ds.FLOOR_FS)
+            self._p_drive = ctx.program(vertex_shader=ds.CAR_VS, fragment_shader=ds.CAR_FS)
             mip = (ctx.LINEAR_MIPMAP_LINEAR, ctx.LINEAR)
             clamp = ctx.CLAMP_TO_EDGE
 
-            def array(images):
-                n, h, w, _ = images.shape
+            def array(images):  # (n, h, w) grey
+                n, h, w = images.shape
                 t = ctx.texture_array(
                     (w, h, n),
-                    components=4,
+                    components=1,
                     data=np.ascontiguousarray(images[:, ::-1]).tobytes(),
                     filter=mip,
                     wrap_x=clamp,
@@ -686,21 +668,65 @@ def _make_view_class():
                 t.build_mipmaps()
                 return t
 
-            self._tex_body = array(st.body)
-            self._tex_wheels = array(st.wheels)
-            self._tex_body_amb = single(st.body_ambient)
-            self._tex_wheel_amb = single(st.wheels_ambient)
-            p = self._p_drive
-            p["u_body"], p["u_wheels"], p["u_body_amb"], p["u_wheel_amb"] = 0, 1, 2, 3
-            p["u_ambient_level"] = DRIVE_AMBIENT
-            p["u_shadow_edge"] = SHADOW_EDGE_M
-            p["u_wheel_gain"] = WHEEL_GAIN
-            p["u_size_m"] = st.size_m
+            # Texture units: the softbox photos, then each layer's ambient photo and maps
+            self._drive_tex = [array(st.body["light"]), array(st.wheels["light"])]
+            names = []
+            for layer, maps in (("body", st.body), ("wheel", st.wheels)):
+                for m, short in zip(
+                    hero_drive.STAGE_MAPS, ("amb", "alb", "nrm", "srf", "ao"), strict=True
+                ):
+                    self._drive_tex.append(single(maps[m]))
+                    names.append(f"u_{layer}_{short}")
+            units = {"u_body_light": 0, "u_wheel_light": 1}
+            units.update({n: i + 2 for i, n in enumerate(names)})
+            self._units = units
+            light = {
+                "u_white": st.white_floor,
+                "u_h0": st.light_z,
+                "u_r0": 0.5 * st.softbox_m,
+                "u_exposure": DRIVE_EXPOSURE,
+            }
             (x0, y0), (x1, y1) = sorted(st.wheel_centres)
-            p["u_wheels_m"] = (x0, y0, x1, y1)
-            p["u_wheel_r"] = st.wheel_radius + 0.08
             row0, rows = st.wheel_rows
-            p["u_strip"] = (row0 / st.px_per_m, rows / st.px_per_m)
+            set_uniforms(
+                self._p_drive,
+                **units,
+                **light,
+                u_ambient_level=DRIVE_AMBIENT,
+                u_ambient_gain=st.ambient_gain,
+                u_amb_spec=DRIVE_AMBIENT_SPEC,
+                u_vis_lift=SELF_SHADOW_LIFT,
+                u_height_scale=st.height_scale,
+                u_coat_rough=DRIVE_COAT_ROUGHNESS,
+                u_wheel_gain=WHEEL_GAIN,
+                u_lamp_r=LAMP_RADIUS_M,
+                u_size_m=st.size_m,
+                u_axle_y=st.rear_axle_y,
+                u_wheels_m=(x0, y0, x1, y1),
+                u_wheel_r=st.wheel_radius + 0.08,
+                u_strip=(row0 / st.px_per_m, rows / st.px_per_m),
+            )
+            for p in (self._p_floor, self._p_track):
+                set_uniforms(
+                    p,
+                    **light,
+                    u_cover=units["u_body_alb"],
+                    u_height=units["u_body_srf"],
+                    u_contact=units["u_body_amb"],
+                    u_contact_edge=SHADOW_EDGE_M,
+                    u_car_size_m=st.size_m,
+                    u_axle_y=st.rear_axle_y,
+                    u_height_scale=st.height_scale,
+                    u_tex_ppm=st.px_per_m,
+                    u_shadow_blur=CAST_SHADOW_BLUR,
+                    u_shadow_strength=CAST_SHADOW_STRENGTH,
+                    u_floor_albedo=FLOOR_ALBEDO,
+                    u_line_lit=LINE_LIT,
+                )
+            self.lamps = hero_drive.trackside_lamps(
+                c, room=(self.traffic.room_left, self.traffic.room_right)
+            )
+            self._lamp_xy = np.array([(lp.x, lp.y) for lp in self.lamps])
 
         def _init_stage(self) -> None:
             ctx = self.ctx
@@ -789,15 +815,21 @@ def _make_view_class():
         def on_resize(self, width: int, height: int) -> None:
             super().on_resize(width, height)
             w, h = float(width), float(height)
-            self.left = max(48.0, 0.07 * w)
-            col_w = min(460.0, 0.42 * w - self.left)
+            # Text is laid out on whole pixels (a glyph between pixels is resampled: blurred)
+            # and rastered at the framebuffer's resolution (see _draw_text)
+            ratio = float(self.window.get_pixel_ratio())
+            self.text_ratio = ratio
+            for t in self._texts():
+                theme.set_text_ratio(t, ratio)
+            self.left = float(round(max(48.0, 0.07 * w)))
+            col_w = float(round(min(460.0, 0.42 * w - self.left)))
             self.col_w = col_w
-            self.t_body.width = int(col_w)
-            body_h = float(self.t_body.content_height)
+            self.t_body.width = int(col_w * ratio)
+            body_h = float(round(self.t_body.content_height / ratio))
             # Column height, top of the kicker to the bottom of the last button
             total = 62.0 + 66.0 + 34.0 + body_h + 40.0 + 34.0 + 30.0 + 4 * 48.0 - 8.0
             footer_room = 70.0
-            y = min(0.5 * (h + footer_room) + 0.5 * total, h - 48.0)
+            y = float(round(min(0.5 * (h + footer_room) + 0.5 * total, h - 48.0)))
             self.t_kicker.position = (self.left, y)
             y -= 62.0
             for k, t in enumerate(self.t_head):
@@ -822,8 +854,11 @@ def _make_view_class():
                 y -= 48.0
             self.t_footer.position = (self.left, 28.0)
             self.t_status.position = (self.left, 52.0)
+            for t in self._texts():  # logical -> framebuffer pixels
+                t.position = (round(t.x * ratio), round(t.y * ratio))
             if self.drive is not None:
                 self.hero = drive_layout(w, h, self.dstage.size_m, self.dstage.rear_axle_y)
+                self.traffic.view_m = view_radius_m(w, h, self.hero, self.dstage.rear_axle_y)
                 self.track_fade = (
                     self.left + col_w + 10.0,
                     self.left + col_w + 10.0 + TRACK_FADE_PX,
@@ -953,8 +988,9 @@ def _make_view_class():
         def on_update(self, delta_time: float) -> None:
             now = time.perf_counter() - self.t0
             self.light.update(delta_time, ready=now > SPOTLIGHT_DELAY_S + 0.5)
-            if self.drive is not None:
-                self.drive.update(min(delta_time, 0.1))
+            self.clock += delta_time
+            if self.traffic is not None:
+                self.traffic.update(min(delta_time, 0.1))
 
         def _draw_stage(self) -> None:
             ctx = self.ctx
@@ -976,38 +1012,129 @@ def _make_view_class():
             self._unit_quad.render(p)
             ctx.blend_func = ctx.BLEND_DEFAULT
 
+        def _drive_scene(self):
+            """This frame's cars on screen (``(anchor, angle, drive, finish)``, the hero
+            last), the cursor light (window pixels, height) and the lit lamp heads (window
+            pixels and height, colour)."""
+            st, lay = self.dstage, self.hero
+            pose = self.drive.pose()
+            reach = 0.5 * hero_drive.CAR_LENGTH_M * lay.px_per_m + lay.px_per_m
+            cars = []
+            for car, finish in self.traffic.cars():
+                anchor, angle = car_in_hero_frame(lay, st.rear_axle_y, pose, car.pose())
+                if (
+                    -reach < anchor[0] < self.width + reach
+                    and -reach < anchor[1] < self.height + reach
+                ):
+                    cars.append((anchor, angle, car, finish))
+            hero_anchor = lay.to_window(0.0, st.rear_axle_y)
+            cars.append((hero_anchor, 0.0, self.drive, hero_drive.HERO_FINISH))
+            lx, ly = lay.to_window(self.light.x, self.light.y)
+            light = (lx, ly, st.light_z)
+            px = hero_drive.world_to_screen(self._lamp_xy, pose, lay.px_per_m, hero_anchor)
+            margin = LAMP_REACH_M * lay.px_per_m
+            lamps = []
+            for lamp, (x, y) in zip(self.lamps, px, strict=True):
+                if not (-margin < x < self.width + margin and -margin < y < self.height + margin):
+                    continue
+                b = hero_drive.lamp_brightness(lamp, self.clock) * LAMP_GAIN
+                if b > 1e-3:
+                    rgb = hero_drive.LAMP_COLOURS[lamp.colour]
+                    d = math.hypot(x - hero_anchor[0], y - hero_anchor[1])
+                    head = (float(x), float(y), hero_drive.LAMP_HEIGHT_M)
+                    lamps.append((d, head, tuple(b * v for v in rgb)))
+            lamps.sort(key=lambda item: item[0])
+            return cars, light, [(p, col) for _, p, col in lamps[:MAX_LAMPS]]
+
+        def _floor_uniforms(self, program, cars, light, lamps) -> None:
+            shadow_cars = cars[-MAX_SHADOW_CARS:]  # the hero is last
+            set_uniforms(
+                program,
+                u_ppm=self.hero.px_per_m,
+                u_light_px=light,
+                u_power=self.light.power * DRIVE_LIGHT,
+                u_n_lamps=len(lamps),
+                u_lamp_px=_flat([p for p, _ in lamps], MAX_LAMPS, 3),
+                u_lamp_col=_flat([c for _, c in lamps], MAX_LAMPS, 3),
+                u_n_cars=len(shadow_cars),
+                u_car_anchor=_flat([a for a, *_ in shadow_cars], MAX_SHADOW_CARS, 2),
+                u_car_rot=_flat(
+                    [(math.cos(g), math.sin(g)) for _, g, *_ in shadow_cars], MAX_SHADOW_CARS, 2
+                ),
+            )
+
+        def _draw_floor(self, now: float) -> None:
+            """The card's floor, lit by the cursor light and the lamps, with the cars'
+            shadows; the spotlight beam on top."""
+            self._scene = self._drive_scene()
+            p = self._p_floor
+            self._floor_uniforms(p, *self._scene)
+            set_uniforms(
+                p,
+                u_size=(float(self.width), float(self.height)),
+                u_appear=min(max((now - SPOTLIGHT_DELAY_S) / SPOTLIGHT_FADE_S, 0.0), 1.0),
+                u_bg=_rgb(CARD_BG),
+                u_lamp_glow_px=LAMP_GLOW_M * self.hero.px_per_m,
+            )
+            for name in ("u_body_alb", "u_body_srf", "u_body_amb"):  # for the shadows
+                self._drive_tex[self._units[name]].use(self._units[name])
+            self._fs_quad.render(p)
+
         def _draw_drive(self) -> None:
             ctx = self.ctx
-            st, light = self.dstage, self.light
+            st, lay = self.dstage, self.hero
+            cars, light, lamps = self._scene
             x, y, heading = self.drive.pose()
             a = math.pi / 2 - heading
             ctx.enable(ctx.BLEND)
             ctx.blend_func = ctx.BLEND_PREMULTIPLIED_ALPHA
             t = self._p_track
-            t["u_car"] = (x, y)
-            t["u_rot"] = (math.cos(a), math.sin(a))
-            t["u_ppm"] = self.hero.px_per_m
-            t["u_anchor"] = self.hero.to_window(0.0, st.rear_axle_y)
-            t["u_size"] = (float(self.width), float(self.height))
-            t["u_fade"] = self.track_fade
-            t["u_under"] = TRACK_UNDER_MENU
+            self._floor_uniforms(t, cars, light, lamps)
+            set_uniforms(
+                t,
+                u_car=(x, y),
+                u_rot=(math.cos(a), math.sin(a)),
+                u_anchor=lay.to_window(0.0, st.rear_axle_y),
+                u_size=(float(self.width), float(self.height)),
+                u_fade=self.track_fade,
+                u_under=TRACK_UNDER_MENU,
+            )
             self._track.render(t)
-            cells, outside = light_stage.blend_weights(st.xs, st.ys, light.x, light.y)
-            fade = 1.0 - min(outside / STAGE_FADE_OUT_M, 1.0)
-            fade = fade * fade * (3.0 - 2.0 * fade)
-            p = self._p_drive
-            p["u_rect"] = self.hero.rect
-            p["u_size"] = (float(self.width), float(self.height))
-            p["u_layers"] = tuple(float(iy * len(st.xs) + ix) for iy, ix, _ in cells)
-            p["u_weights"] = tuple(float(wt) for _, _, wt in cells)
-            p["u_power"] = light.power * fade
-            p["u_steer"] = self.drive.steer
-            self._tex_body.use(0)
-            self._tex_wheels.use(1)
-            self._tex_body_amb.use(2)
-            self._tex_wheel_amb.use(3)
-            self._unit_quad.render(p)
+            for unit, tex in enumerate(self._drive_tex):
+                tex.use(unit)
+            for anchor, angle, car, finish in cars:
+                self._draw_car(anchor, angle, car.steer, finish, light, lamps)
             ctx.blend_func = ctx.BLEND_DEFAULT
+
+        def _draw_car(self, anchor, angle, steer, finish, light, lamps) -> None:
+            """One car, its rear axle at ``anchor`` (window pixels), turned ``angle`` on
+            screen, lit by the cursor light and the lamps in its own frame."""
+            st, lay = self.dstage, self.hero
+            lx, ly = window_to_car(lay, st.rear_axle_y, light[:2], anchor, angle)
+            cells, _ = light_stage.blend_weights(st.xs, st.ys, lx, ly)
+            gx = min(max(lx, st.xs[0]), st.xs[-1])
+            gy = min(max(ly, st.ys[0]), st.ys[-1])
+            local = [
+                (*window_to_car(lay, st.rear_axle_y, p[:2], anchor, angle), p[2]) for p, _ in lamps
+            ]
+            set_uniforms(
+                self._p_drive,
+                u_anchor=anchor,
+                u_rot=(math.cos(angle), math.sin(angle)),
+                u_ppm=lay.px_per_m,
+                u_size=(float(self.width), float(self.height)),
+                u_layers=tuple(float(iy * len(st.xs) + ix) for iy, ix, _ in cells),
+                u_weights=tuple(float(wt) for _, _, wt in cells),
+                u_light=(lx, ly, light[2]),
+                u_light_grid=(gx, gy, light[2]),
+                u_power=self.light.power * DRIVE_LIGHT,
+                u_finish=(finish.albedo_scale, finish.roughness, finish.metallic, finish.coat),
+                u_steer=steer,
+                u_n_lamps=len(lamps),
+                u_lamp_pos=_flat(local, MAX_LAMPS, 3),
+                u_lamp_col=_flat([c for _, c in lamps], MAX_LAMPS, 3),
+            )
+            self._unit_quad.render(self._p_drive)
 
         def _draw_hero(self) -> None:
             if self.drive is not None:
@@ -1037,6 +1164,12 @@ def _make_view_class():
             self.clear()
             ctx = self.ctx
             ctx.disable(ctx.BLEND)
+            if self.drive is not None:
+                self._draw_floor(now)
+                ctx.enable(ctx.BLEND)
+                self._draw_hero()
+                self._draw_text()
+                return
             p = self._p_spot
             p["u_size"] = (float(self.width), float(self.height))
             p["u_appear"] = min(max((now - SPOTLIGHT_DELAY_S) / SPOTLIGHT_FADE_S, 0.0), 1.0)
@@ -1048,15 +1181,23 @@ def _make_view_class():
             self._fs_quad.render(p)
             ctx.enable(ctx.BLEND)
             self._draw_hero()
+            self._draw_text()
 
-            self.t_kicker.draw()
-            for t in self.t_head:
-                t.draw()
-            self.t_body.draw()
-            self.t_track_label.draw()
-            for t in self.t_arrows:
-                t.draw()
-            self.t_track.draw()
+        def _texts(self) -> list:
+            return [
+                self.t_kicker,
+                *self.t_head,
+                self.t_body,
+                self.t_track_label,
+                *self.t_arrows,
+                self.t_track,
+                *self.t_items,
+                *self.t_notes,
+                self.t_footer,
+                self.t_status,
+            ]
+
+        def _draw_text(self) -> None:
             for i, b in enumerate(self.buttons):
                 left, bottom, bw, bh = b.rect
                 active = i == self.focus
@@ -1072,15 +1213,19 @@ def _make_view_class():
                     arcade.draw_lrbt_rectangle_outline(
                         left, left + bw, bottom, bottom + bh, theme.white(0.20), 1
                     )
-                t = self.t_items[i]
-                t.color = theme.TEXT_TERTIARY if disabled else theme.TEXT_PRIMARY
-                t.draw()
-                n = self.t_notes[i]
-                n.color = theme.white(0.75) if active and not disabled else theme.TEXT_TERTIARY
-                n.draw()
-            if time.perf_counter() - self.status_t < 4.0:
-                self.t_status.draw()
-            self.t_footer.draw()
+                self.t_items[i].color = theme.TEXT_TERTIARY if disabled else theme.TEXT_PRIMARY
+                self.t_notes[i].color = (
+                    theme.white(0.75) if active and not disabled else theme.TEXT_TERTIARY
+                )
+            # The text in framebuffer pixels (its positions were scaled in on_resize)
+            ctx = self.ctx
+            logical = ctx.projection_matrix
+            fw, fh = self.window.get_framebuffer_size()
+            ctx.projection_matrix = Mat4.orthogonal_projection(0, fw, 0, fh, -100, 100)
+            for t in self._texts():
+                if t is not self.t_status or time.perf_counter() - self.status_t < 4.0:
+                    t.draw()
+            ctx.projection_matrix = logical
 
     return MenuView
 

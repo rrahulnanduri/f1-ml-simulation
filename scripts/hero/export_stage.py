@@ -11,9 +11,12 @@ the installed package: the 45 photos of the black car come to under 1 MB.
 
 ``--drive`` exports ``render_top.py --drive`` output (default
 ``assets_src/sf26/render/drive_stage``) to ``src/f1sim/app/assets/hero/drive`` for the driving
-hero: ``body_*`` and ``body_ambient`` as RGBA WebP (the ambient photo's alpha carries the
-soft ground shadow), and the front-wheel photos cropped to the strip of rows around the
-wheels (``WHEEL_PAD_M`` beyond their radius), recorded as ``wheel_rows`` in ``stage.json``.
+hero. The softbox photos are grey (white diffuse under a white light) and smooth: they go as
+WebP at ``LIGHT_QUALITY``, without alpha (the albedo map's alpha is the car's coverage). The
+data maps (``albedo``, ``normal``, ``surface``, ``ao``) and the ambient photos (whose alpha
+carries the soft ground shadow) keep ``QUALITY``. Every front-wheel image is cropped to the
+strip of rows around the wheels (``WHEEL_PAD_M`` beyond their radius), recorded as
+``wheel_rows`` in ``stage.json``.
 
 Re-run it after re-rendering, then commit the folder.
 """
@@ -33,7 +36,9 @@ DEST = ROOT / "src" / "f1sim" / "app" / "assets" / "hero" / "stage"
 DRIVE_SOURCE = ROOT / "assets_src" / "sf26" / "render" / "drive_stage"
 DRIVE_DEST = ROOT / "src" / "f1sim" / "app" / "assets" / "hero" / "drive"
 QUALITY = 95
+LIGHT_QUALITY = 82
 WHEEL_PAD_M = 0.25
+MAPS = ("albedo", "normal", "surface", "ao")
 
 
 def main(source: Path = SOURCE) -> int:
@@ -81,7 +86,7 @@ def export_drive(source: Path = DRIVE_SOURCE) -> int:
         return 1
     cells = [f"{r}_{c}" for r in range(len(info["ys"])) for c in range(len(info["xs"]))]
     names = [f"{layer}_{c}" for layer in ("body", "wheel") for c in cells]
-    names += ["body_ambient", "wheel_ambient"]
+    names += [f"{layer}_{m}" for layer in ("body", "wheel") for m in ("ambient", *MAPS)]
     missing = [n for n in names if not (source / f"{n}.png").is_file()]
     if missing:
         print(f"missing in {source}: {', '.join(missing[:5])}...")
@@ -101,7 +106,13 @@ def export_drive(source: Path = DRIVE_SOURCE) -> int:
         if name.startswith("wheel"):
             im = im.crop((0, row0, im.width, row1))
         out = DRIVE_DEST / f"{name}.webp"
-        im.save(out, "WEBP", quality=QUALITY, method=6, exact=True)
+        kind = name.split("_", 1)[1]
+        if kind in ("albedo", "ambient"):
+            im.save(out, "WEBP", quality=QUALITY, method=6, exact=True)
+        elif kind in MAPS:
+            im.convert("RGB").save(out, "WEBP", quality=QUALITY, method=6)
+        else:  # a softbox photo: grey, coverage comes from the albedo map
+            im.convert("L").convert("RGB").save(out, "WEBP", quality=LIGHT_QUALITY, method=6)
         total += out.stat().st_size
     (DRIVE_DEST / "stage.json").write_text(json.dumps(info, indent=1), encoding="utf-8")
     print(f"wrote {len(names)} photos to {DRIVE_DEST.relative_to(ROOT)} ({total / 1e6:.2f} MB)")

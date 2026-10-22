@@ -302,3 +302,49 @@ def test_the_bundled_light_stage_ships_and_loads(tmp_path, monkeypatch):
     assert st.size_m[1] > 4.0  # the nose to behind the driver, and more
     monkeypatch.setenv(hero_maps.RENDER_DIR_ENV, str(tmp_path / "elsewhere"))
     assert light_stage.stage_dir() == tmp_path / "elsewhere" / "stage"
+
+
+# ------------------------------------------------------------------------ driving hero
+
+DRIVE_SIZE_M = (2.15, 5.72)
+AXLE_Y = 4.9
+
+
+@pytest.mark.parametrize(("w", "h"), [(1280, 760), (1920, 1080), (1000, 1000)])
+def test_the_driving_car_is_big_and_sits_a_little_low(w, h):
+    lay = menu.drive_layout(w, h, DRIVE_SIZE_M, AXLE_Y)
+    left, bottom, rw, rh = lay.rect
+    assert rh == pytest.approx(menu.DRIVE_CAR_HEIGHT * h)
+    assert left + 0.5 * rw == pytest.approx(menu.DRIVE_X * w)
+    assert bottom + 0.5 * rh == pytest.approx(menu.DRIVE_Y * h)
+    assert menu.DRIVE_Y < 0.5  # more track ahead than behind
+    assert left > 0.42 * w  # clear of the menu column
+
+
+def test_cars_and_the_light_map_between_frames():
+    from f1sim.app.ui import hero_drive
+
+    lay = menu.drive_layout(1600, 900, DRIVE_SIZE_M, AXLE_Y)
+    hero = (100.0, 50.0, 0.4)
+    # A car 10 m straight ahead of the hero, turned 30 degrees left
+    ahead = (100.0 + 10 * np.cos(0.4), 50.0 + 10 * np.sin(0.4), 0.4 + np.radians(30))
+    anchor, angle = menu.car_in_hero_frame(lay, AXLE_Y, hero, ahead)
+    hx, hy = lay.to_window(0.0, AXLE_Y)
+    assert anchor == pytest.approx((hx, hy + 10 * lay.px_per_m))
+    assert angle == pytest.approx(np.radians(30))
+    # The hero's own frame: the light keeps its map coordinates
+    assert menu.light_in_car(lay, AXLE_Y, (0.3, 2.0), (hx, hy), 0.0) == pytest.approx((0.3, 2.0))
+    # Over the turned car's rear axle the light is at its rear axle
+    over = lay.to_car(*anchor)
+    assert menu.light_in_car(lay, AXLE_Y, over, anchor, angle) == pytest.approx((0.0, AXLE_Y))
+    # 1 m to the turned car's left (on screen: rotated 30 degrees)
+    left = (anchor[0] - lay.px_per_m * np.cos(np.radians(30)), anchor[1] - lay.px_per_m * 0.5)
+    lx, ly = menu.window_to_car(lay, AXLE_Y, left, anchor, angle)
+    assert (lx, ly) == pytest.approx((-1.0, AXLE_Y))
+    r = menu.view_radius_m(1600, 900, lay, AXLE_Y)
+    assert hero_drive.CAR_LENGTH_M < r < 40.0
+
+
+def test_flat_array_uniforms_pad_to_size():
+    assert menu._flat([(1, 2, 3)], 2, 3) == (1.0, 2.0, 3.0, 0.0, 0.0, 0.0)
+    assert menu._flat([(1, 2)] * 5, 2, 2) == (1.0, 2.0, 1.0, 2.0)

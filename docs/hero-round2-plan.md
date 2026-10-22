@@ -1,22 +1,20 @@
 # Driving hero, round 2: a bigger car, believable light, slower cars to overtake
 
-*Status (2026-10-22): **approved by the user, not started.** No code has been changed for it
-yet; the last commit before it is the D24 driving hero. When work starts, tick the steps off
-below and record each decision as a `D<n>` entry in [PROJECT_LOG.md](PROJECT_LOG.md); fold
-this file's outcome into the log when it's done.*
+*Status (2026-10-22): **done** (D25 in [PROJECT_LOG.md](PROJECT_LOG.md), which records what
+was built, what changed on the way and the user's additions: trackside lamps, sharp text).*
 
 **Build order** (each step is checked in the app before the next):
-1. [ ] Bigger car: `DRIVE_CAR_HEIGHT` 0.55, new `DRIVE_Y` 0.42 (`src/f1sim/app/menu.py`).
-2. [ ] Track widths, lateral offset in `Drive`, `Traffic` (pure numpy) + tests.
-3. [ ] Draw the slower cars: rotated-car vertex shader, the light moved into each car's frame.
-4. [ ] Confirm the three lighting faults below in zoomed screenshots (scratchpad only).
-5. [ ] Re-render: wider softbox grid, diffuse only with a white-ish base colour, data maps
+1. [x] Bigger car: `DRIVE_CAR_HEIGHT` 0.55, new `DRIVE_Y` 0.42 (`src/f1sim/app/menu.py`).
+2. [x] Track widths, lateral offset in `Drive`, `Traffic` (pure numpy) + tests.
+3. [x] Draw the slower cars: rotated-car vertex shader, the light moved into each car's frame.
+4. [x] Confirm the three lighting faults below in zoomed screenshots (scratchpad only).
+5. [x] Re-render: wider softbox grid, diffuse only with a white-ish base colour, data maps
    (`albedo`, `normal`, `surface`, `ao`) for body and front wheels, then
    `export_stage.py --drive`. Render command: the one in the log's Gotchas with
    `--drive` in place of `--stage`.
-6. [ ] Shader: per-finish albedo × photographed diffuse + live GGX coat/metal reflection,
+6. [x] Shader: per-finish albedo × photographed diffuse + live GGX coat/metal reflection,
    floor lit by the same light, shadow cast away from the cursor; retire the fake floor pool.
-7. [ ] Verify (below), log D25, commit. Ask before pushing.
+7. [x] Verify (below), log D25, commit. Ask before pushing.
 
 ## Context
 The driving hero (D24) works. The user wants three more things:
