@@ -2,9 +2,9 @@
 
 ## Current state
 
-*Last updated: 2026-10-21 (observation spec v2, clone-then-GA training). This section
-summarises where things stand right now. Rewrite it, don't append to it, whenever something
-important changes.*
+*Last updated: 2026-10-22 (one-window app, photographic menu hero). This section summarises
+where things stand right now. Rewrite it, don't append to it, whenever something important
+changes.*
 
 **What it is.** AI cars learn to drive real F1 circuits by neuroevolution. The `f1sim` package
 (`src/f1sim/`) has real track geometry, F1-like physics, headless training, real-driver ghost
@@ -19,30 +19,31 @@ exists, but the new package replaces it.
   2024 pole of 85.819 s.
 - **Simulation:** 64 cars at about 64× real time with numba.
 - **Ghosts:** `f1sim ghost <track> <year>` builds a smoothed real-driver ghost.
-- **Main menu:** `f1sim menu` (D19–D22). The app is one window. The menu is its home
-  screen; Drive and Replay switch the window to those screens, and Esc comes back. Train
-  opens a console. The menu is a dark hero card: track picker and buttons on the left. On the right third is a
-  metallic-black Ferrari SF-26 seen from above, with no logos. It's photographic: 45
+- **The app is one window** (`f1sim menu`, D19–D22). The menu is its home screen; Drive and
+  Replay switch the window to those screens, and Esc comes back. Train opens a console. The
+  window remembers its place, but only restores it if it lands on a connected screen.
+- **The menu** is a dark hero card: track picker and buttons on the left. On the right third
+  is a metallic-black Ferrari SF-26 seen from above, with no logos. It's photographic: 45
   path-traced Blender photos with a softbox at different spots, blended by the cursor
-  position (D21). Without them it falls back to relit maps, then to the car drawn in code. `python scripts/dev_menu.py` relaunches the menu
-  whenever the source or the renders change.
-- **Viewers:** `f1sim replay` and `f1sim drive` use the dark single-red-accent UI, with kerbs and
-  pixel-art cars. Every corner has an apex and an exit kerb (D18). Motion is smooth: Hermite poses, interpolated drive physics, and a 120 Hz tick
-  with vsync (D15).
+  position (D21). Without them it falls back to relit maps, then to the car drawn in code.
+  `python scripts/dev_menu.py` relaunches the app whenever the source or the renders change.
+- **Viewers:** the drive and replay screens use the dark single-red-accent UI, with kerbs and
+  pixel-art cars. Every corner has an apex and an exit kerb (D18). Motion is smooth: Hermite
+  poses, interpolated drive physics, and a 120 Hz tick with vsync (D15).
 - **Training:** `f1sim train` first copies the scripted driver into the policy (about 65 s),
   then evolves it with the GA (D17). After 20 min the best Silverstone laps are 85.10, 85.45
   and 85.53 s (seeds 0–2). That beats the 86.43 s reference lap and Russell's 85.82 s pole;
   before D16/D17 the best was 100.7 s. The policy sees the racing line (observation spec v2).
   `--init random` (`configs/train_scratch.toml`) still trains from scratch. The same seed
   reproduces `metrics.csv` exactly.
-- **Tests:** 547 pass offline. `ruff` is clean.
+- **Tests:** 548 pass offline. `ruff` is clean.
 
 **Open problems, most important first:**
 1. **Training needs a racing line.** Spec v2 observes a TUM raceline, or the centre line where
    a circuit has none. The 9 circuits without TUM data (open problem 4) would train against
    their centre line, a poor line. Computing a minimum-curvature line for them is the fix.
-2. **The new UI is unchecked at 2× scaling.** It was built on a 1× screen. The user's display is
-   2×, and the user said "for now it's good".
+2. **The UI isn't fully checked at 2× scaling.** The user's main display is 2×; the menu
+   looks right there in screenshots, but the drive and replay HUDs haven't been reviewed on it.
 3. **Some circuits fail the 2024 alignment check.**
    - Shanghai, Spa, Mexico City and the Red Bull Ring fail for no known reason.
    - Yas Marina, Albert Park, Barcelona and Zandvoort fail because their layouts changed after
@@ -56,11 +57,13 @@ exists, but the new package replaces it.
 6. **Drive mode's off-track rule still uses the white line**, not the track limits
    (`app/drive.py`).
 
-**Next step:** iterate on the menu hero with the user (live reload running). Then M4 (the full app) and M5 (breadth, including a computed racing line for
-circuits without TUM data).
+**Next step:** keep refining the app with the user (live reload: `python
+scripts/dev_menu.py`). Then M4 (the full app: settings, a training view instead of the
+console) and M5 (breadth, including a computed racing line for circuits without TUM data).
 
 **Gotchas:**
-- **The hero renders aren't in git.** The SF-26 model (the user's download) and its renders
+- **The hero renders aren't in git** (`docs/hero-finish-compare.png` is just the metallic vs
+  matte comparison). The SF-26 model (the user's download) and its renders
   live in `assets_src/` (git-ignored). On a fresh checkout the menu shows the drawn car until
   you run:
   `blender -b --factory-startup -P scripts/hero/render_top.py -- assets_src/sf26/extracted/source/f1_2026_sf26.glb assets_src/sf26/render --blackout --stage`
@@ -380,4 +383,5 @@ second window opened. Each viewer was written as its own `arcade.Window`.
 | 2026-10-22 | `386dbb6` | Hero from a real model: SF-26 rendered top-down, blacked out (D20) |
 | 2026-10-22 | `e8c39be` | Photographic light-stage hero, metallic black (D21) |
 | 2026-10-22 | `df83489` | One app window: menu, drive and replay as Views (D22) |
-| 2026-10-22 | (this commit) | Fix: window restored off-screen after being minimised |
+| 2026-10-22 | `a7b8848` | Fix: window restored off-screen after being minimised |
+| 2026-10-22 | (this commit) | Project log brought up to date; finish comparison image |
