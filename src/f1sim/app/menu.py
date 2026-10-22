@@ -89,6 +89,10 @@ LIGHT_TAU_S = 0.08
 """How quickly the light follows the cursor (frame-rate independent)."""
 POWER_TAU_S = 0.35
 """How quickly the light fades in and out."""
+LIGHT_LEVEL_RANGE = (0.25, 1.10)
+LIGHT_LEVEL_STEP = 0.05
+"""The mouse wheel sets the light's level: each click up or down moves it this much, from 75%
+dimmer than the default (1) to 10% brighter."""
 INTRO_LIGHT = (0.35, 2.0)
 """Where the light sits (metres right of the centre line, back from the top of the maps)
 before the cursor first moves: over the cockpit."""
@@ -337,7 +341,7 @@ def _flat(rows, n: int, width: int) -> tuple[float, ...]:
 @dataclass
 class Light:
     """The cursor light: plan position (car metres) easing towards a target, and a power
-    0..1 easing towards on (cursor in the window) or off."""
+    easing towards on (cursor in the window: ``level``) or off (0)."""
 
     x: float = INTRO_LIGHT[0]
     y: float = INTRO_LIGHT[1]
@@ -345,6 +349,12 @@ class Light:
     target_y: float = INTRO_LIGHT[1]
     power: float = 0.0
     on: bool = True
+    level: float = 1.0
+
+    def scroll(self, clicks: float) -> None:
+        """Brighter for wheel clicks up, dimmer down, within ``LIGHT_LEVEL_RANGE``."""
+        lo, hi = LIGHT_LEVEL_RANGE
+        self.level = min(max(self.level + clicks * LIGHT_LEVEL_STEP, lo), hi)
 
     def aim(self, x: float, y: float) -> None:
         self.target_x, self.target_y = x, y
@@ -359,7 +369,7 @@ class Light:
         k = 1.0 - math.exp(-dt / LIGHT_TAU_S)
         self.x += k * (self.target_x - self.x)
         self.y += k * (self.target_y - self.y)
-        goal = 1.0 if (self.on and ready) else 0.0
+        goal = self.level if (self.on and ready) else 0.0
         self.power += (1.0 - math.exp(-dt / POWER_TAU_S)) * (goal - self.power)
 
 
@@ -892,6 +902,9 @@ def _make_view_class():
         def on_mouse_enter(self, x: int, y: int) -> None:
             self.light.aim(*self.hero.to_car(x, y))
 
+        def on_mouse_scroll(self, x: int, y: int, scroll_x: float, scroll_y: float) -> None:
+            self.light.scroll(scroll_y)
+
         def on_mouse_leave(self, x: int, y: int) -> None:
             self.light.off()
             self.hover = None
@@ -1127,6 +1140,7 @@ def _make_view_class():
                 t,
                 u_car=(x, y),
                 u_rot=(math.cos(a), math.sin(a)),
+                u_ppm=lay.px_per_m,
                 u_anchor=lay.to_window(0.0, st.rear_axle_y),
                 u_size=(float(self.width), float(self.height)),
                 u_fade=self.track_fade,

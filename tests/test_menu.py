@@ -121,6 +121,21 @@ def test_light_eases_and_fades():
     assert (a.x, a.y, a.power) == pytest.approx((b.x, b.y, b.power))
 
 
+def test_wheel_sets_light_level_within_range():
+    lo, hi = menu.LIGHT_LEVEL_RANGE
+    light = menu.Light()
+    light.scroll(1)
+    assert light.level == pytest.approx(1.0 + menu.LIGHT_LEVEL_STEP)
+    light.scroll(100)
+    assert light.level == hi == pytest.approx(1.10)  # 10% brighter at most
+    light.scroll(-1000)
+    assert light.level == lo == pytest.approx(0.25)  # 75% dimmer at least
+    light.aim(0.0, 0.0)
+    for _ in range(120):
+        light.update(1 / 60)
+    assert light.power == pytest.approx(lo, abs=1e-3)  # the power eases to the level
+
+
 # ------------------------------------------------------------------------- car maps
 
 

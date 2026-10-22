@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-22 (performance tiers, D27). This section summarises
+*Last updated: 2026-10-22 (menu fixes, D28). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
@@ -31,7 +31,9 @@ exists, but the new package replaces it.
   lines: photographed diffuse light from a Blender light stage, live GGX reflections, and
   the cars' shadows cast away from the cursor (D25). Without the driving set the menu falls
   back to the still light stage, then relit maps, then the car drawn in code.
-  `python scripts/dev_menu.py` relaunches the app whenever the source or the renders change.
+  The mouse wheel dims or brightens the cursor light (0.25–1.10 of the default, D28).
+  `python scripts/dev_menu.py` relaunches the app whenever the source or the renders change;
+  `scripts\run_latest.bat` pulls the latest version first, then opens it.
 - **Viewers:** the drive and replay screens use the dark single-red-accent UI, with kerbs and
   pixel-art cars. Every corner has an apex and an exit kerb (D18). Motion is smooth: Hermite
   poses, interpolated drive physics, and a 120 Hz tick with vsync (D15).
@@ -41,7 +43,7 @@ exists, but the new package replaces it.
   before D16/D17 the best was 100.7 s. The policy sees the racing line (observation spec v2).
   `--init random` (`configs/train_scratch.toml`) still trains from scratch. The same seed
   reproduces `metrics.csv` exactly.
-- **Tests:** 586 pass offline. `ruff check` is clean.
+- **Tests:** 587 pass offline. `ruff check` is clean.
 
 **Open problems, most important first:**
 1. **Training needs a racing line.** Spec v2 observes a TUM raceline, or the centre line where
@@ -545,6 +547,18 @@ queries per pass, cProfile per frame, startup), then fixed the largest costs:
 - **Not tried:** a lower draw rate on 60 Hz displays (D15 found a 1/60 s timer hitches
   here).
 
+**D28 · Menu: track lines back, a wheel-set light level, 30% more lamps** (2026-10-22)
+- **Track lines and kerbs had vanished (D27 regression):** D27 stopped calling
+  `_floor_uniforms` on the track program, the only place that set its `u_ppm`. At 0 every
+  vertex collapsed onto the hero's axle, so nothing drew. `_draw_drive` now sets `u_ppm`
+  itself. Checked in rendered frames: `u_ppm` 0.0 before, 73 px/m after, edges visible.
+- **The mouse wheel sets the cursor light's level** (`Light.level`, `Light.scroll`): 5% of
+  the default per click, from 0.25 to 1.10 of it (the user asked for "10% more" up and
+  "75% less" down). The power eases to the level, so a click fades rather than jumps.
+  Rejected: a ×1.1 step per click with no ceiling (the light blows out the car's finish).
+- **Lamps:** `LAMP_GAP_M` 30–140 → 23–108 m, 51 → 66 units on Marina Bay (+29%). The
+  8-lamp shader cap doesn't bind: 2–3 heads are near the window at a time.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -578,4 +592,6 @@ queries per pass, cProfile per frame, startup), then fixed the largest costs:
 | 2026-10-22 | `8e73dcb` | Round-2 driving-hero plan approved and saved to docs |
 | 2026-10-22 | `2334f4f` | Driving hero round 2: bigger car, live light model, traffic, trackside lamps, sharp text (D25) |
 | 2026-10-22 | `5bc7d70` | Sharp text across the app at any display scale (D26) |
-| 2026-10-22 | (this commit) | Lighter on slow machines: GL checks off, batched text, quality tiers, faster start (D27) |
+| 2026-10-22 | `0753e60` | Lighter on slow machines: GL checks off, batched text, quality tiers, faster start (D27) |
+| 2026-10-22 | `f06eb28` | `scripts/run_latest.bat`: pull the latest version and open the app |
+| 2026-10-22 | (this commit) | Menu: track lines back, wheel-set light level, 30% more lamps (D28) |

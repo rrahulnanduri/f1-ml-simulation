@@ -657,7 +657,7 @@ def load_stage(directory: Path | None = None) -> DriveStage | None:
 
 # ------------------------------------------------------------------- trackside lamps
 
-LAMP_GAP_M = (30.0, 140.0)
+LAMP_GAP_M = (23.0, 108.0)
 LAMP_OUTSIDE_M = (0.6, 4.5)
 """Lamp units are scattered: each a random gap after the last along the line, on a random
 side, a random distance outside the track limit."""
