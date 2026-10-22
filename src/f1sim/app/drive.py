@@ -1,12 +1,14 @@
 """Minimal keyboard drive viewer (M2): feel the car model on a built track.
 
 ``run(track_id)`` opens a resizable arcade window. The game logic lives in :class:`DriveSession`
-(no arcade, testable offline); :class:`DriveWindow` only maps input to it and draws.
+(no arcade, testable offline); :class:`DriveView` (a screen of the app window,
+:mod:`f1sim.app.shell`) only maps input to it and draws.
 
 Controls: Up = throttle, Down = brake (both ramped over ``PEDAL_RAMP_S``), Left/Right = steer
 (ramped over ``STEER_RAMP_S``), ``R`` reset to the start line, ``F`` toggle the follow camera,
 ``Tab`` next card page, mouse wheel = zoom at the cursor (pages the card when over it), click
-the card = next page, right-drag = pan (turns follow off), ``Esc`` = quit.
+the card = next page, right-drag = pan (turns follow off), ``Esc`` = back to the menu (quit
+when opened on its own with ``f1sim drive``).
 
 Rendering: the track is cached once in world metres
 (:class:`~f1sim.app.render_track.TrackRenderer`: asphalt, kerbs, run-off, chequered strip,
@@ -41,7 +43,9 @@ from pathlib import Path
 import arcade
 import numpy as np
 
+from f1sim.app import shell
 from f1sim.app.camera import Camera
+from f1sim.app.shell import Screen
 from f1sim.app.ui import theme
 from f1sim.app.ui import timing as tm
 from f1sim.sim.car_model import CarParams, CarState, StepInfo, step
@@ -49,8 +53,6 @@ from f1sim.track.track import Track
 
 DT = 1.0 / 60.0
 """Fixed physics step, s."""
-FRAME_INTERVAL_S = 1.0 / 120.0
-"""Window tick interval, s (see ``replay.FRAME_INTERVAL_S``)."""
 MAX_FRAME_S = 0.25
 """Longest frame time fed to the accumulator (avoids a spiral of death after a stall)."""
 PEDAL_RAMP_S = 0.15
@@ -71,6 +73,12 @@ FOLLOW_PIXELS_PER_METRE = 4.0
 """Initial zoom of the follow camera."""
 ZOOM_STEP = 1.15
 """Zoom factor per mouse-wheel notch."""
+
+
+def controls(on_back) -> list[str]:
+    """The footer's controls; Esc goes back to the menu, or quits when on its own."""
+    return [*CONTROLS[:-1], "Esc back" if on_back is not None else "Esc quit"]
+
 
 CONTROLS = [
     "↑ throttle",
@@ -333,30 +341,15 @@ def drive_tower(session: DriveSession, ghost: DriveGhost | None) -> list[tm.Towe
     return rows
 
 
-class DriveWindow(arcade.Window):
-    """Resizable window driving one :class:`DriveSession`, with the HUD."""
+class DriveView(Screen):
+    """The drive screen (an arcade View in the app window): one :class:`DriveSession`, with
+    the HUD. Esc goes back (``on_back``), or quits when the screen is on its own."""
 
-    def __init__(
-        self,
-        track: Track,
-        width: int = 1280,
-        height: int = 800,
-        ghost_path=None,
-        glass: bool = True,
-        visible: bool = True,
-    ):
-        # Read the ghost before opening the window, so a bad file opens nothing.
+    def __init__(self, track: Track, ghost_path=None, glass: bool = True, on_back=None):
+        # Read the ghost before building anything, so a bad file shows nothing.
         ghost = DriveGhost.load(ghost_path, track) if ghost_path is not None else None
-        super().__init__(
-            width,
-            height,
-            f"f1sim drive - {track.data.name}",
-            resizable=True,
-            update_rate=FRAME_INTERVAL_S,
-            draw_rate=FRAME_INTERVAL_S,
-            vsync=True,
-            visible=visible,
-        )
+        super().__init__(on_back)
+        self.title = f"f1sim drive - {track.data.name}"
         from f1sim.app.render_track import TrackRenderer
         from f1sim.app.ui.glass import GlassRenderer
         from f1sim.app.ui.hud import Hud
@@ -379,8 +372,8 @@ class DriveWindow(arcade.Window):
         self.track_view = TrackRenderer(track, self.ctx)  # uploaded to the GPU once
 
         theme.load_fonts()
-        self.glass = GlassRenderer(self, enabled=glass)
-        self.hud = Hud(self.glass, 4, track.length, CONTROLS)
+        self.glass = GlassRenderer(self.window, enabled=glass)
+        self.hud = Hud(self.glass, 4, track.length, controls(on_back))
         self.track_title = self.track.data.id.replace("_", " ").upper()
         self.hud.headline.set([self.track_title, "Drive"])
         ghost_name = None if self.ghost is None else self.ghost.label
@@ -546,8 +539,8 @@ def run(track_id: str, ghost: Path | None = None) -> None:
         )
         return
     try:
-        DriveWindow(track, ghost_path=ghost)
+        DriveGhost.load(ghost, track) if ghost is not None else None
     except (ValueError, OSError) as exc:
         print(f"Can't read the ghost: {exc}")
         return
-    arcade.run()
+    shell.run(lambda window: DriveView(track, ghost_path=ghost))

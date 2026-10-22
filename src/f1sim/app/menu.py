@@ -19,11 +19,15 @@ The car doesn't move; the cursor is the light. It also lights the floor around i
 Away from the light the car is only just visible. The light fades in after the spotlight
 beam, and out when the cursor leaves the window.
 
-The menu opens the existing tools for the selected built track, each as its own process:
-- **Drive:** ``f1sim drive``, with the newest ghost of the track if there is one.
-- **Replay:** ``f1sim replay``, the newest run of the track plus that ghost.
-- **Train:** ``f1sim train``, in a new console window.
+The menu is the home screen of the app window (:mod:`f1sim.app.shell`). For the selected
+built track:
+- **Drive:** switches the window to the drive screen, with the newest ghost of the track if
+  there is one.
+- **Replay:** switches to the replay screen: the newest run of the track plus that ghost.
+- **Train:** ``f1sim train`` in a new console window (a long headless job).
 - **Quit.**
+
+Esc on the drive or replay screen comes back here.
 
 Controls: mouse (hover, click), Up/Down to pick, Enter to open, Left/Right or the arrows to
 change track, Esc to quit.
@@ -32,16 +36,13 @@ The testable logic (track and run discovery, the commands, the hero layout and t
 screen-to-car mapping, the light's easing) is pure Python/numpy. :class:`MenuWindow` only
 draws and maps input.
 
-**Live reload.** ``scripts/dev_menu.py`` restarts this window whenever a source file changes.
-With ``F1SIM_MENU_STATE`` set to a file, the window saves its position and size there and
-restores them on start, so each restart opens where the last one was.
+**Live reload.** ``scripts/dev_menu.py`` restarts the app whenever a source file changes;
+the window keeps its place (:class:`f1sim.app.shell.AppWindow`).
 """
 
 from __future__ import annotations
 
-import json
 import math
-import os
 import subprocess
 import sys
 import time
@@ -52,7 +53,6 @@ import numpy as np
 
 from f1sim.app.ui import car_top, hero_maps, light_stage, theme
 
-STATE_ENV = "F1SIM_MENU_STATE"
 CARD_BG = theme.hex_colour("#0A0A0B")
 """The card: near-black, like the original's ``bg-black/[0.96]``."""
 HEADLINE_TOP = theme.hex_colour("#FAFAFA")
@@ -397,25 +397,6 @@ def _rgb(c: theme.Colour) -> tuple[float, float, float]:
     return (c[0] / 255.0, c[1] / 255.0, c[2] / 255.0)
 
 
-def _load_state() -> dict | None:
-    path = os.environ.get(STATE_ENV)
-    if not path:
-        return None
-    try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-
-
-def _save_state(state: dict) -> None:
-    path = os.environ.get(STATE_ENV)
-    if path:
-        try:
-            Path(path).write_text(json.dumps(state), encoding="utf-8")
-        except OSError:
-            pass
-
-
 @dataclass
 class Button:
     item: str
@@ -441,26 +422,18 @@ def _texture_bytes(maps: hero_maps.HeroMaps) -> dict[str, bytes]:
     }
 
 
-def _make_window_class():
+def _make_view_class():
     import arcade
     from arcade.gl import BufferDescription, geometry
 
-    class MenuWindow(arcade.Window):
-        """The main menu; see the module docstring."""
+    from f1sim.app.shell import Screen
 
-        def __init__(self, width: int = 1280, height: int = 760, runs_root: Path = Path("runs")):
-            state = _load_state() or {}
-            super().__init__(
-                int(state.get("w", width)),
-                int(state.get("h", height)),
-                "f1sim",
-                resizable=True,
-                update_rate=1 / 120,
-                draw_rate=1 / 120,
-                vsync=True,
-            )
-            if "x" in state and "y" in state:
-                self.set_location(int(state["x"]), int(state["y"]))
+    class MenuView(Screen):
+        """The main menu screen; see the module docstring."""
+
+        def __init__(self, runs_root: Path = Path("runs")):
+            super().__init__(on_back=None)  # Esc on the menu quits
+            self.title = "f1sim"
             theme.load_fonts()
             self.background_color = CARD_BG
             self.runs_root = runs_root
@@ -546,7 +519,6 @@ def _make_window_class():
             p["u_ambient_level"] = STAGE_AMBIENT
 
         def _init_text(self) -> None:
-            import arcade
 
             f = theme.FACES
             self.t_kicker = theme.micro("F1SIM  ·  NEUROEVOLUTION", theme.ACCENT)
@@ -677,7 +649,6 @@ def _make_window_class():
                     self.change_track(1)
 
         def on_key_press(self, symbol: int, modifiers: int) -> None:
-            import arcade
 
             k = arcade.key
             if symbol == k.ESCAPE:
@@ -702,6 +673,9 @@ def _make_window_class():
                 self.close()
                 return
             tid, name = self.tracks[self.track_i]
+            if item in ("Drive", "Replay"):
+                self._open_screen(item, tid, name)
+                return
             argv = command(item, tid, run=self.run, ghost=self.ghost)
             if argv is None:
                 self._say(f"No runs on {name} yet: train first")
@@ -716,23 +690,45 @@ def _make_window_class():
                 return
             self._say(f"Opening {item.lower()} on {name}")
 
+        def _open_screen(self, item: str, tid: str, name: str) -> None:
+            """Switch the window to the drive or replay screen; Esc there comes back here."""
+            from f1sim.data.track_pipeline import load_track
+
+            if item == "Replay" and self.run is None:
+                self._say(f"No runs on {name} yet: train first")
+                return
+            try:
+                track = load_track(tid)
+            except FileNotFoundError:
+                self._say(f"{name} isn't built: f1sim build-track {tid}")
+                return
+            try:
+                if item == "Drive":
+                    from f1sim.app.drive import DriveView
+
+                    screen = DriveView(track, ghost_path=self.ghost, on_back=self.come_back)
+                else:
+                    from f1sim.app.replay import ReplayView, load_trace
+
+                    traces = [load_trace(self.run / "best_lap.npz")]
+                    if self.ghost is not None:
+                        traces.append(load_trace(self.ghost))
+                    screen = ReplayView(track, traces, on_back=self.come_back)
+            except (ValueError, OSError) as exc:
+                self._say(f"Couldn't open {item.lower()}: {exc}")
+                return
+            self.light.off()
+            self.window.show_view(screen)
+
+        def come_back(self) -> None:
+            """Back to the menu (this same view: its textures stay loaded)."""
+            self._refresh_track()  # a new run or ghost may have appeared meanwhile
+            self.window.show_view(self)
+
         def _say(self, text: str) -> None:
             self.status = text
             self.t_status.text = text
             self.status_t = time.perf_counter()
-
-        # ----------------------------------------------------------- persistence
-
-        def on_move(self, x: int, y: int) -> None:
-            self._persist()
-
-        def _persist(self) -> None:
-            x, y = self.get_location()
-            _save_state({"x": x, "y": y, "w": self.width, "h": self.height})
-
-        def on_close(self) -> None:
-            self._persist()
-            super().on_close()
 
         # ---------------------------------------------------------------- frame
 
@@ -780,7 +776,6 @@ def _make_window_class():
             ctx.blend_func = ctx.BLEND_DEFAULT
 
         def on_draw(self) -> None:
-            import arcade
 
             now = time.perf_counter() - self.t0
             self.clear()
@@ -831,23 +826,22 @@ def _make_window_class():
                 self.t_status.draw()
             self.t_footer.draw()
 
-    return MenuWindow
+    return MenuView
 
 
-_WINDOW_CLASS = None
+_VIEW_CLASS = None
 
 
-def MenuWindow(*args, **kwargs):  # noqa: N802 - a class, built on first use (arcade import)
-    """The menu window class (created lazily so importing this module needs no display)."""
-    global _WINDOW_CLASS
-    if _WINDOW_CLASS is None:
-        _WINDOW_CLASS = _make_window_class()
-    return _WINDOW_CLASS(*args, **kwargs)
+def MenuView(*args, **kwargs):  # noqa: N802 - a class, built on first use (arcade import)
+    """The menu screen (the class is created lazily, so importing this module needs no GL)."""
+    global _VIEW_CLASS
+    if _VIEW_CLASS is None:
+        _VIEW_CLASS = _make_view_class()
+    return _VIEW_CLASS(*args, **kwargs)
 
 
 def run() -> None:
-    """Open the main menu; returns when it closes."""
-    import arcade
+    """Open the app window on the menu; returns when it closes."""
+    from f1sim.app import shell
 
-    MenuWindow()
-    arcade.run()
+    shell.run(lambda window: MenuView())

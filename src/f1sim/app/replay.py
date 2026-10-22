@@ -42,7 +42,8 @@ sectors, speed vs the reference and the gap bar, and a footer with the controls.
 Controls: Space pause, Left/Right seek -/+2 s, Up/Down playback speed (0.25x to 8x), ``R``
 restart, ``F`` cycle the followed car (then free camera), ``Tab`` next card page, mouse wheel
 zoom at the cursor (pages the card when over it), click the card for the next page, click the
-gap card for the next reference, right-drag pan (turns follow off), ``Esc`` quit.
+gap card for the next reference, right-drag pan (turns follow off), ``Esc`` back to the
+menu (quit when opened on its own with ``f1sim replay``).
 """
 
 from __future__ import annotations
@@ -56,19 +57,14 @@ from pathlib import Path
 import arcade
 import numpy as np
 
+from f1sim.app import shell
 from f1sim.app.camera import Camera
 from f1sim.app.drive import format_lap_time
+from f1sim.app.shell import Screen
 from f1sim.app.ui import theme
 from f1sim.app.ui import timing as tm
 from f1sim.track.track import Track
 
-FRAME_INTERVAL_S = 1.0 / 120.0
-"""Window tick interval, s. Where the driver honours vsync, ``flip`` waits for the display and
-frames follow its refresh. Where it doesn't (windowed OpenGL on the dual-GPU dev laptop), a
-1/60 s timer drifts against a 59-60 Hz display: 10-12% of frames took over 20 ms, a visible
-hitch. A 1/120 s tick gave none (measured). Playback advances by the measured frame time, so the
-rate doesn't change its speed.
-Playback advances by the measured frame time, so the rate doesn't change its speed."""
 MAX_FRAME_S = 0.25
 """Longest frame time fed to the playback clock (a stall doesn't jump the replay)."""
 SPEED_STEPS = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0)
@@ -589,6 +585,12 @@ class ReplayTiming:
 
 # --------------------------------------------------------------------------- window
 
+
+def controls(on_back) -> list[str]:
+    """The footer's controls; Esc goes back to the menu, or quits when on its own."""
+    return [*CONTROLS[:-1], "Esc back" if on_back is not None else "Esc quit"]
+
+
 CONTROLS = [
     "Space pause",
     "←→ seek",
@@ -609,28 +611,19 @@ def ticker_mode(clock: PlaybackClock) -> str:
     return f"REPLAY {clock.speed:g}×"
 
 
-class ReplayWindow(arcade.Window):
-    """Resizable window playing a :class:`ReplaySession` on a track, with the HUD."""
+class ReplayView(Screen):
+    """The replay screen (an arcade View in the app window): a :class:`ReplaySession` on a
+    track, with the HUD. Esc goes back (``on_back``), or quits when it's on its own."""
 
     def __init__(
         self,
         track: Track,
         traces: list[Trace],
-        width: int = 1280,
-        height: int = 800,
         glass: bool = True,
-        visible: bool = True,
+        on_back=None,
     ):
-        super().__init__(
-            width,
-            height,
-            f"f1sim replay - {track.data.name}",
-            resizable=True,
-            update_rate=FRAME_INTERVAL_S,
-            draw_rate=FRAME_INTERVAL_S,
-            vsync=True,
-            visible=visible,
-        )
+        super().__init__(on_back)
+        self.title = f"f1sim replay - {track.data.name}"
         from f1sim.app.render_track import TrackRenderer
         from f1sim.app.ui.glass import GlassRenderer
         from f1sim.app.ui.hud import Hud
@@ -659,8 +652,8 @@ class ReplayWindow(arcade.Window):
         self.track_view = TrackRenderer(track, self.ctx)  # uploaded to the GPU once
 
         theme.load_fonts()
-        self.glass = GlassRenderer(self, enabled=glass)
-        self.hud = Hud(self.glass, len(prepared), track.length, CONTROLS)
+        self.glass = GlassRenderer(self.window, enabled=glass)
+        self.hud = Hud(self.glass, len(prepared), track.length, controls(on_back))
         self.track_title = self.track.data.id.replace("_", " ").upper()
         self.hud.headline.set([self.track_title, "Replay"])
         self.cars = CarLayer(
@@ -848,5 +841,4 @@ def run(track_id: str, traces: list[Path], labels: list[str] | None = None) -> N
     except (ValueError, OSError) as exc:
         print(f"Can't read trace: {exc}")
         return
-    ReplayWindow(track, loaded)
-    arcade.run()
+    shell.run(lambda window: ReplayView(track, loaded))

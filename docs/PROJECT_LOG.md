@@ -19,8 +19,9 @@ exists, but the new package replaces it.
   2024 pole of 85.819 s.
 - **Simulation:** 64 cars at about 64× real time with numba.
 - **Ghosts:** `f1sim ghost <track> <year>` builds a smoothed real-driver ghost.
-- **Main menu:** `f1sim menu` (D19, D20). A dark hero card with the menu on the left (track
-  picker; Drive, Replay, Train, Quit open the existing tools). On the right third is a
+- **Main menu:** `f1sim menu` (D19–D22). The app is one window. The menu is its home
+  screen; Drive and Replay switch the window to those screens, and Esc comes back. Train
+  opens a console. The menu is a dark hero card: track picker and buttons on the left. On the right third is a
   metallic-black Ferrari SF-26 seen from above, with no logos. It's photographic: 45
   path-traced Blender photos with a softbox at different spots, blended by the cursor
   position (D21). Without them it falls back to relit maps, then to the car drawn in code. `python scripts/dev_menu.py` relaunches the menu
@@ -34,7 +35,7 @@ exists, but the new package replaces it.
   before D16/D17 the best was 100.7 s. The policy sees the racing line (observation spec v2).
   `--init random` (`configs/train_scratch.toml`) still trains from scratch. The same seed
   reproduces `metrics.csv` exactly.
-- **Tests:** 542 pass offline. `ruff` is clean.
+- **Tests:** 547 pass offline. `ruff` is clean.
 
 **Open problems, most important first:**
 1. **Training needs a racing line.** Spec v2 observes a TUM raceline, or the centre line where
@@ -335,6 +336,21 @@ light that reads naturally; a finer grid costs memory (each photo is 2.8 MB).
 **Rejected:** more shader tricks on the relit maps, which can't produce soft shadows or the
 reflection of a real light.
 
+**D22 · One app window: menu, drive and replay are arcade Views** (2026-10-22)
+Choosing Drive or Replay used to start `f1sim drive` or `f1sim replay` as a new process, so a
+second window opened. Each viewer was written as its own `arcade.Window`.
+- **`app/shell.py`:** one `AppWindow` holds the frame pacing (the 1/120 s tick and vsync,
+  moved there from replay.py) and the remembered place and size.
+- **`Screen`:** an `arcade.View` that provides `ctx`, `get_pixel_ratio` and `close`. So
+  `DriveView`, `ReplayView` and `MenuView` are the old windows with their drawing code
+  unchanged.
+- **Navigation:** the menu shows the drive or replay screen in the same window, and Esc
+  there calls back to the same menu view. Its 128 MB of light-stage textures stay loaded,
+  and a newly finished run shows up on return.
+- **`f1sim drive` / `f1sim replay`** open the same screens on their own, where Esc quits.
+  The footer says "Esc back" or "Esc quit" to match.
+- **Train stays a console process:** it's a long headless job.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -358,4 +374,5 @@ reflection of a real light.
 | 2026-10-21 | `c6f1d33` | Apex and exit kerbs at every corner (D18) |
 | 2026-10-21 | `893d94d` | Main menu with the cursor-lit top-down car, live-reload script (D19) |
 | 2026-10-22 | `386dbb6` | Hero from a real model: SF-26 rendered top-down, blacked out (D20) |
-| 2026-10-22 | (this commit) | Photographic light-stage hero, metallic black (D21) |
+| 2026-10-22 | `e8c39be` | Photographic light-stage hero, metallic black (D21) |
+| 2026-10-22 | (this commit) | One app window: menu, drive and replay as Views (D22) |
