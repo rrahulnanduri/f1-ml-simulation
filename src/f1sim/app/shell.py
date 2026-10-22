@@ -53,6 +53,31 @@ def save_state(state: dict) -> None:
             pass
 
 
+MIN_VISIBLE_PX = 120
+"""A restored window must show at least this much of its title-bar area on some screen."""
+PARKED = -10000
+"""Windows parks a minimised window at (-32000, -32000); never save positions below this."""
+
+
+def on_a_screen(x: int, y: int, w: int, screens) -> bool:
+    """Whether a window whose top-left corner is at ``(x, y)`` (``w`` wide) would have
+    ``MIN_VISIBLE_PX`` of its top strip on one of ``screens`` (``(x, y, width, height)``)."""
+    for sx, sy, sw, sh in screens:
+        overlap = min(x + w, sx + sw) - max(x, sx)
+        if overlap >= min(MIN_VISIBLE_PX, w) and sy <= y < sy + sh - 40:
+            return True
+    return False
+
+
+def _screens() -> list[tuple[int, int, int, int]]:
+    import pyglet
+
+    try:
+        return [(s.x, s.y, s.width, s.height) for s in pyglet.display.get_display().get_screens()]
+    except Exception:  # noqa: BLE001 - no screen info: don't restore a position
+        return []
+
+
 class AppWindow(arcade.Window):
     """The one window of the app; see the module docstring."""
 
@@ -68,7 +93,11 @@ class AppWindow(arcade.Window):
             vsync=True,
         )
         if "x" in state and "y" in state:
-            self.set_location(int(state["x"]), int(state["y"]))
+            x, y = int(state["x"]), int(state["y"])
+            # Only where it's visible: a screen may be unplugged, or the window was saved
+            # minimised (Windows parks those at -32000 and the app opened invisibly)
+            if on_a_screen(x, y, self.width, _screens()):
+                self.set_location(x, y)
         self.menu = None  # the menu view, kept while other screens are shown
 
     def on_move(self, x: int, y: int) -> None:
@@ -80,6 +109,8 @@ class AppWindow(arcade.Window):
 
     def _persist(self) -> None:
         x, y = self.get_location()
+        if x <= PARKED or y <= PARKED or self.width < 50 or self.height < 50:
+            return  # minimised: keep the last real place
         save_state({"x": x, "y": y, "w": self.width, "h": self.height})
 
     def on_close(self) -> None:

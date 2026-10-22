@@ -350,6 +350,10 @@ second window opened. Each viewer was written as its own `arcade.Window`.
 - **`f1sim drive` / `f1sim replay`** open the same screens on their own, where Esc quits.
   The footer says "Esc back" or "Esc quit" to match.
 - **Train stays a console process:** it's a long headless job.
+- **Fix the same day:** the app opened invisibly at (−32000, −32000). That's where Windows
+  parks a minimised window, and the app had saved it as the window's place. It now never
+  saves a parked position, and only restores a place where at least 120 px of the title
+  strip lands on a connected screen.
 
 ## Change log
 
@@ -375,4 +379,5 @@ second window opened. Each viewer was written as its own `arcade.Window`.
 | 2026-10-21 | `893d94d` | Main menu with the cursor-lit top-down car, live-reload script (D19) |
 | 2026-10-22 | `386dbb6` | Hero from a real model: SF-26 rendered top-down, blacked out (D20) |
 | 2026-10-22 | `e8c39be` | Photographic light-stage hero, metallic black (D21) |
-| 2026-10-22 | (this commit) | One app window: menu, drive and replay as Views (D22) |
+| 2026-10-22 | `df83489` | One app window: menu, drive and replay as Views (D22) |
+| 2026-10-22 | (this commit) | Fix: window restored off-screen after being minimised |
