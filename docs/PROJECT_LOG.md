@@ -368,8 +368,12 @@ The user wanted the Blender render permanently in the app, not only on this mach
 - **`light_stage`** loads the bundled photos by default (`F1SIM_HERO_DIR` overrides). Its
   decoded cache now lives in the user cache folder, never in the repo.
 - **Removed `docs/hero-finish-compare.png` and `docs/kerb-audit-silverstone.png`** at the
-  user's request: no screenshots or comparison images in the repo. They stay in git
-  history unless it's rewritten. `images/screen.png` is the user's own README screenshot.
+  user's request: no screenshots or comparison images in the repo. `images/screen.png` is
+  the user's own README screenshot.
+- **History rewritten the same day,** with the user's go-ahead: `git filter-branch` removed
+  both images from every commit on `main` from the kerbs commit on, and `main` was
+  force-pushed. The final files didn't change. The commit hashes in this log are the new
+  ones.
 
 ## Change log
 
@@ -390,12 +394,13 @@ The user wanted the Blender render permanently in the app, not only on this mach
 | 2026-10-21 | `c7fa0f7` | GA success-rule step size, `sigma_min`, new training defaults (D14) |
 | 2026-10-21 | `7294c93` | Smooth viewers: Hermite poses, drive render interpolation, 120 Hz tick (D15) |
 | 2026-10-21 | `1b10432` | Behaviour cloning module, experiment scripts and results (D16) |
-| 2026-10-21 | (this commit) | Observation spec v2 (racing line), clone-then-GA `f1sim train` (D17) |
-| 2026-10-21 | `c6f1d33` | Apex and exit kerbs at every corner (D18) |
-| 2026-10-21 | `893d94d` | Main menu with the cursor-lit top-down car, live-reload script (D19) |
-| 2026-10-22 | `386dbb6` | Hero from a real model: SF-26 rendered top-down, blacked out (D20) |
-| 2026-10-22 | `e8c39be` | Photographic light-stage hero, metallic black (D21) |
-| 2026-10-22 | `df83489` | One app window: menu, drive and replay as Views (D22) |
-| 2026-10-22 | `a7b8848` | Fix: window restored off-screen after being minimised |
-| 2026-10-22 | `fe054f5` | Project log brought up to date; finish comparison image |
-| 2026-10-22 | (this commit) | Hero photos bundled with the app; comparison and audit images removed (D23) |
+| 2026-10-21 | `888f482` | Observation spec v2 (racing line), clone-then-GA `f1sim train` (D17) |
+| 2026-10-21 | `cd733ab` | Apex and exit kerbs at every corner (D18) |
+| 2026-10-21 | `3c71f22` | Main menu with the cursor-lit top-down car, live-reload script (D19) |
+| 2026-10-22 | `3a7863f` | Hero from a real model: SF-26 rendered top-down, blacked out (D20) |
+| 2026-10-22 | `00a0201` | Photographic light-stage hero, metallic black (D21) |
+| 2026-10-22 | `01cc87a` | One app window: menu, drive and replay as Views (D22) |
+| 2026-10-22 | `6666cd2` | Fix: window restored off-screen after being minimised |
+| 2026-10-22 | `0986f22` | Project log brought up to date; finish comparison image |
+| 2026-10-22 | `d6dc3a7` | Hero photos bundled with the app; comparison and audit images removed (D23) |
+| 2026-10-22 | (this commit) | History rewritten without the two images; log hashes updated |
