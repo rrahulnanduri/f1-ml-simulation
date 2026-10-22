@@ -4,9 +4,15 @@
 a soft spotlight beam fading in from the top-left, a headline, paragraph and menu on the left,
 and the hero on the right third.
 
-**The hero.** An F1 car seen from above, nose up, filling the right third from the nose to
-just behind the driver; the rest runs off the bottom of the window. Best first:
+**The hero.** An F1 car seen from above, nose up. Best first:
 
+0. **Driving** (:mod:`f1sim.app.ui.hero_drive`): the photographed car laps Marina Bay at a
+   real pole lap's speed, forever. It stays fixed on screen (whole, about half the window
+   high, ``DRIVE_X`` across) while the circuit, drawn as track-limit lines and kerbs, moves
+   and turns underneath it; its front wheels steer through the corners. Behind the menu
+   column the track is drawn faintly. The car is lit like the light stage below, in three
+   layers: the soft ground shadow, the front wheels (turned by the steering angle) and the
+   body.
 1. **Light stage** (:mod:`f1sim.app.ui.light_stage`): path-traced photos of the blacked-out
    SF-26, one per softbox position on a grid; the cursor blends the four photos around it.
    Photographic: real soft shadows, softbox reflections in the clear coat, occlusion.
@@ -51,7 +57,7 @@ from pathlib import Path
 
 import numpy as np
 
-from f1sim.app.ui import car_top, hero_maps, light_stage, theme
+from f1sim.app.ui import car_top, hero_drive, hero_maps, light_stage, theme
 
 CARD_BG = theme.hex_colour("#0A0A0B")
 """The card: near-black, like the original's ``bg-black/[0.96]``."""
@@ -85,6 +91,27 @@ STAGE_AMBIENT = 0.35
 """How much of the light stage's ambient photo (the car at rest) shows."""
 STAGE_FADE_OUT_M = 0.9
 """The stage light fades out this far outside its grid (over the menu, say)."""
+DRIVE_CAR_HEIGHT = 0.40
+"""The driving car's length as a share of the window height."""
+DRIVE_X = 0.72
+"""The driving car's centre, as a share of the window width."""
+TRACK_LINE_HALF_M = 0.07
+"""Half the width of a drawn track-limit line, metres."""
+TRACK_LINE = (1.0, 1.0, 1.0, 0.40)
+KERB_RED = (0.92, 0.05, 0.25, 0.55)
+KERB_WHITE = (0.92, 0.92, 0.94, 0.40)
+TRACK_FADE_PX = 70.0
+"""The track rises to full strength over this many pixels right of the menu column..."""
+TRACK_UNDER_MENU = 0.22
+"""... from this strength behind the menu column, so its lines sweep the whole page."""
+DRIVE_AMBIENT = 0.55
+"""The driving car at rest (smaller on screen than the static hero, so a little brighter)."""
+SHADOW_EDGE_M = 0.45
+"""The ground shadow fades out over this distance from the photo's edges (the broad light's
+shadow reaches them and would otherwise end in a visible rectangle)."""
+WHEEL_GAIN = 2.6
+"""The front tyres are drawn this much brighter (a dark rubber grey rather than the
+blacked-out body's near-black): otherwise their steering is invisible against the dark."""
 FLOOR_GLOW = 0.05
 """Brightness the cursor light adds to the floor (the card) at its centre."""
 
@@ -207,6 +234,18 @@ def hero_layout(width: float, height: float, size_m: tuple[float, float]) -> Her
     )
 
 
+def drive_layout(
+    width: float, height: float, size_m: tuple[float, float], rear_axle_y: float
+) -> HeroLayout:
+    """The driving car whole, ``DRIVE_CAR_HEIGHT`` of the window high, centred vertically at
+    ``DRIVE_X`` across. ``size_m`` is the photo's (width, length)."""
+    width_m, length_m = size_m
+    ppm = DRIVE_CAR_HEIGHT * height / length_m
+    left = DRIVE_X * width - 0.5 * width_m * ppm
+    top = 0.5 * height + 0.5 * length_m * ppm
+    return HeroLayout(left=left, top=top, px_per_m=ppm, width_m=width_m, length_m=length_m)
+
+
 @dataclass
 class Light:
     """The cursor light: plan position (car metres) easing towards a target, and a power
@@ -313,6 +352,105 @@ void main() {
     // Photos are display-encoded: add the light in (approximately) linear space
     vec3 c = sqrt(amb.rgb * amb.rgb * u_ambient_level + lit * lit * u_power);
     frag = vec4(c * amb.a, amb.a);  // premultiplied
+}
+"""
+
+_TRACK_VS = """
+#version 330
+uniform vec2 u_car;     // the rear axle, world metres
+uniform vec2 u_rot;     // cos, sin of the rotation that puts the car's heading up
+uniform float u_ppm;
+uniform vec2 u_anchor;  // the rear axle on screen, window pixels
+uniform vec2 u_size;
+in vec2 in_pos;
+in vec4 in_col;
+out vec4 v_col;
+out float v_x;
+void main() {
+    vec2 d = in_pos - u_car;
+    vec2 r = vec2(u_rot.x * d.x - u_rot.y * d.y, u_rot.y * d.x + u_rot.x * d.y);
+    vec2 px = u_anchor + r * u_ppm;
+    v_col = in_col;
+    v_x = px.x;
+    gl_Position = vec4(px / u_size * 2.0 - 1.0, 0.0, 1.0);
+}
+"""
+
+_TRACK_FS = """
+#version 330
+uniform vec2 u_fade;  // the track is at u_under left of x0, full right of x1 (pixels)
+uniform float u_under;
+in vec4 v_col;
+in float v_x;
+out vec4 frag;
+void main() {
+    float a = v_col.a * mix(u_under, 1.0, smoothstep(u_fade.x, u_fade.y, v_x));
+    frag = vec4(v_col.rgb * a, a);  // premultiplied
+}
+"""
+
+_DRIVE_FS = """
+#version 330
+uniform sampler2DArray u_body;   // the car without its front wheels, one photo per softbox
+uniform sampler2DArray u_wheels; // only the front wheels: a strip of rows
+uniform sampler2D u_body_amb;    // at rest; alpha = car coverage + soft ground shadow
+uniform sampler2D u_wheel_amb;
+uniform vec4 u_layers;
+uniform vec4 u_weights;
+uniform float u_power;
+uniform float u_ambient_level;
+uniform vec2 u_size_m;           // the full photo, metres
+uniform vec4 u_wheels_m;         // wheel centres (x0, y0, x1, y1), map metres
+uniform float u_wheel_r;
+uniform vec2 u_strip;            // wheel strip: top row and height, map metres
+uniform float u_steer;           // rad, + = left
+uniform float u_shadow_edge;     // metres
+uniform float u_wheel_gain;      // brighter rubber, so the steering reads
+in vec2 v_uv;
+out vec4 frag;
+
+vec4 lit(sampler2DArray tex, vec2 uv) {
+    return u_weights.x * texture(tex, vec3(uv, u_layers.x))
+        + u_weights.y * texture(tex, vec3(uv, u_layers.y))
+        + u_weights.z * texture(tex, vec3(uv, u_layers.z))
+        + u_weights.w * texture(tex, vec3(uv, u_layers.w));
+}
+
+vec3 shade(vec3 amb, vec3 light) {
+    // photos are display-encoded: add the light in (approximately) linear space
+    return sqrt(amb * amb * u_ambient_level + light * light * u_power);
+}
+
+void main() {
+    vec2 pos = vec2((v_uv.x - 0.5) * u_size_m.x, (1.0 - v_uv.y) * u_size_m.y);
+    // Body: car coverage from the softbox photos (no ground); the ambient alpha adds the shadow
+    vec4 ba = texture(u_body_amb, v_uv);
+    vec4 bl = lit(u_body, v_uv);
+    float car_a = bl.a;
+    vec3 body = shade(ba.rgb, bl.rgb / max(bl.a, 1e-4));
+    float shadow_a = clamp((ba.a - car_a) / max(1.0 - car_a, 1e-4), 0.0, 1.0);
+    float to_edge = min(min(0.5 * u_size_m.x - abs(pos.x), pos.y), u_size_m.y - pos.y);
+    shadow_a *= smoothstep(0.0, u_shadow_edge, to_edge);
+    // Front wheel: sample the straight wheel rotated about its centre by the steering angle
+    vec2 c = pos.x < 0.0 ? u_wheels_m.xy : u_wheels_m.zw;
+    vec2 d = pos - c;
+    vec4 wheel = vec4(0.0);
+    if (dot(d, d) < u_wheel_r * u_wheel_r) {
+        float cs = cos(u_steer), sn = sin(u_steer);
+        // Map y points down, so turning the wheel anticlockwise on screen (a left steer) is
+        // a rotation by -steer here: sample the straight photo rotated back by +steer
+        vec2 q = c + vec2(cs * d.x - sn * d.y, sn * d.x + cs * d.y);
+        vec2 wuv = vec2(q.x / u_size_m.x + 0.5, 1.0 - (q.y - u_strip.x) / u_strip.y);
+        if (all(greaterThan(wuv, vec2(0.0))) && all(lessThan(wuv, vec2(1.0)))) {
+            vec4 wa = texture(u_wheel_amb, wuv);
+            vec4 wl = lit(u_wheels, wuv);
+            vec3 w = shade(wa.rgb, wl.rgb / max(wl.a, 1e-4)) * u_wheel_gain;
+            wheel = vec4(w * wl.a, wl.a);
+        }
+    }
+    // Bottom to top: ground shadow, front wheels, body (premultiplied)
+    vec4 under = wheel + (1.0 - wheel.a) * vec4(0.0, 0.0, 0.0, shadow_a);
+    frag = vec4(body * car_a, car_a) + (1.0 - car_a) * under;
 }
 """
 
@@ -446,8 +584,14 @@ def _make_view_class():
             self.t0 = time.perf_counter()
             self.status = ""
             self.status_t = -10.0
-            self.stage = light_stage.load()
-            self.maps = None if self.stage is not None else hero_maps.load()
+            circuit = hero_drive.load_circuit()
+            self.dstage = hero_drive.load_stage() if circuit is not None else None
+            self.drive = None
+            if self.dstage is not None:
+                self.drive = hero_drive.Drive(circuit, wheelbase_m=self.dstage.wheelbase)
+            self.stage = light_stage.load() if self.drive is None else None
+            no_photos = self.stage is None and self.drive is None
+            self.maps = hero_maps.load() if no_photos else None
             self._init_gl()
             self._init_text()
             self._refresh_track()
@@ -464,6 +608,9 @@ def _make_view_class():
                 [BufferDescription(ctx.buffer(data=unit.tobytes()), "2f 2f", ["in_vert", "in_uv"])],
                 mode=ctx.TRIANGLE_STRIP,
             )
+            if self.drive is not None:
+                self._init_drive()
+                return
             if self.stage is not None:
                 self._init_stage()
                 return
@@ -490,6 +637,70 @@ def _make_view_class():
             p["u_reach"] = car_top.LIGHT_REACH_M
             p["u_ambient"] = car_top.AMBIENT
             p["u_coat_rough"] = COAT_ROUGHNESS
+
+        def _init_drive(self) -> None:
+            ctx = self.ctx
+            st, c = self.dstage, self.drive.circuit
+            # Track: kerb blocks and the two track-limit lines, world metres, per-vertex colour
+            tris = [c.kerb]
+            cols = [np.where(c.kerb_red[:, None], [KERB_RED], [KERB_WHITE])]
+            for edge in (c.left, c.right):
+                q = hero_drive.edge_quads(edge, TRACK_LINE_HALF_M)
+                tris.append(q)
+                cols.append(np.tile([TRACK_LINE], (q.shape[0], 1)))
+            pos = np.concatenate(tris).reshape(-1, 2)
+            col = np.repeat(np.concatenate(cols), 3, axis=0)
+            data = np.hstack([pos, col]).astype("f4")
+            self._track = ctx.geometry(
+                [BufferDescription(ctx.buffer(data=data.tobytes()), "2f 4f", ["in_pos", "in_col"])],
+                mode=ctx.TRIANGLES,
+            )
+            self._p_track = ctx.program(vertex_shader=_TRACK_VS, fragment_shader=_TRACK_FS)
+            self._p_drive = ctx.program(vertex_shader=_HERO_VS, fragment_shader=_DRIVE_FS)
+            mip = (ctx.LINEAR_MIPMAP_LINEAR, ctx.LINEAR)
+            clamp = ctx.CLAMP_TO_EDGE
+
+            def array(images):
+                n, h, w, _ = images.shape
+                t = ctx.texture_array(
+                    (w, h, n),
+                    components=4,
+                    data=np.ascontiguousarray(images[:, ::-1]).tobytes(),
+                    filter=mip,
+                    wrap_x=clamp,
+                    wrap_y=clamp,
+                )
+                t.build_mipmaps()
+                return t
+
+            def single(image):
+                h, w, _ = image.shape
+                t = ctx.texture(
+                    (w, h),
+                    components=4,
+                    data=np.ascontiguousarray(image[::-1]).tobytes(),
+                    filter=mip,
+                    wrap_x=clamp,
+                    wrap_y=clamp,
+                )
+                t.build_mipmaps()
+                return t
+
+            self._tex_body = array(st.body)
+            self._tex_wheels = array(st.wheels)
+            self._tex_body_amb = single(st.body_ambient)
+            self._tex_wheel_amb = single(st.wheels_ambient)
+            p = self._p_drive
+            p["u_body"], p["u_wheels"], p["u_body_amb"], p["u_wheel_amb"] = 0, 1, 2, 3
+            p["u_ambient_level"] = DRIVE_AMBIENT
+            p["u_shadow_edge"] = SHADOW_EDGE_M
+            p["u_wheel_gain"] = WHEEL_GAIN
+            p["u_size_m"] = st.size_m
+            (x0, y0), (x1, y1) = sorted(st.wheel_centres)
+            p["u_wheels_m"] = (x0, y0, x1, y1)
+            p["u_wheel_r"] = st.wheel_radius + 0.08
+            row0, rows = st.wheel_rows
+            p["u_strip"] = (row0 / st.px_per_m, rows / st.px_per_m)
 
         def _init_stage(self) -> None:
             ctx = self.ctx
@@ -611,8 +822,15 @@ def _make_view_class():
                 y -= 48.0
             self.t_footer.position = (self.left, 28.0)
             self.t_status.position = (self.left, 52.0)
-            size_m = (self.stage or self.maps).size_m
-            self.hero = hero_layout(w, h, size_m)
+            if self.drive is not None:
+                self.hero = drive_layout(w, h, self.dstage.size_m, self.dstage.rear_axle_y)
+                self.track_fade = (
+                    self.left + col_w + 10.0,
+                    self.left + col_w + 10.0 + TRACK_FADE_PX,
+                )
+            else:
+                size_m = (self.stage or self.maps).size_m
+                self.hero = hero_layout(w, h, size_m)
 
         # ---------------------------------------------------------------- input
 
@@ -735,6 +953,8 @@ def _make_view_class():
         def on_update(self, delta_time: float) -> None:
             now = time.perf_counter() - self.t0
             self.light.update(delta_time, ready=now > SPOTLIGHT_DELAY_S + 0.5)
+            if self.drive is not None:
+                self.drive.update(min(delta_time, 0.1))
 
         def _draw_stage(self) -> None:
             ctx = self.ctx
@@ -756,7 +976,43 @@ def _make_view_class():
             self._unit_quad.render(p)
             ctx.blend_func = ctx.BLEND_DEFAULT
 
+        def _draw_drive(self) -> None:
+            ctx = self.ctx
+            st, light = self.dstage, self.light
+            x, y, heading = self.drive.pose()
+            a = math.pi / 2 - heading
+            ctx.enable(ctx.BLEND)
+            ctx.blend_func = ctx.BLEND_PREMULTIPLIED_ALPHA
+            t = self._p_track
+            t["u_car"] = (x, y)
+            t["u_rot"] = (math.cos(a), math.sin(a))
+            t["u_ppm"] = self.hero.px_per_m
+            t["u_anchor"] = self.hero.to_window(0.0, st.rear_axle_y)
+            t["u_size"] = (float(self.width), float(self.height))
+            t["u_fade"] = self.track_fade
+            t["u_under"] = TRACK_UNDER_MENU
+            self._track.render(t)
+            cells, outside = light_stage.blend_weights(st.xs, st.ys, light.x, light.y)
+            fade = 1.0 - min(outside / STAGE_FADE_OUT_M, 1.0)
+            fade = fade * fade * (3.0 - 2.0 * fade)
+            p = self._p_drive
+            p["u_rect"] = self.hero.rect
+            p["u_size"] = (float(self.width), float(self.height))
+            p["u_layers"] = tuple(float(iy * len(st.xs) + ix) for iy, ix, _ in cells)
+            p["u_weights"] = tuple(float(wt) for _, _, wt in cells)
+            p["u_power"] = light.power * fade
+            p["u_steer"] = self.drive.steer
+            self._tex_body.use(0)
+            self._tex_wheels.use(1)
+            self._tex_body_amb.use(2)
+            self._tex_wheel_amb.use(3)
+            self._unit_quad.render(p)
+            ctx.blend_func = ctx.BLEND_DEFAULT
+
         def _draw_hero(self) -> None:
+            if self.drive is not None:
+                self._draw_drive()
+                return
             if self.stage is not None:
                 self._draw_stage()
                 return

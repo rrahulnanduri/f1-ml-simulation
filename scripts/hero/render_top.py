@@ -2,6 +2,7 @@
 
     blender -b --factory-startup -P scripts/hero/render_top.py -- model.glb out_dir \
         [--preview] [--blackout [--finish gloss|metallic|matte]] [--stage [--stage-test]]
+        [--drive [--stage-test]]
 
 Imports the model, puts its nose towards the top of the image, and renders orthographic
 top-down images with Cycles:
@@ -39,6 +40,18 @@ softbox in the clear coat and occlusion. ``stage.json`` records the grid (positi
 metres: x right of the centre line, y down from the top edge). ``--stage-test`` renders three
 positions only, for tuning.
 
+**Driving stage** (``--drive``): the light stage for the driving hero
+(:mod:`f1sim.app.ui.hero_drive`). The whole car, at ``DRIVE_PX_PER_M``, on a softbox grid
+``STAGE_XS`` x ``DRIVE_YS`` over its full length, in two layers so the front wheels can
+steer: ``drive_stage/body_<row>_<col>.png`` (everything but the front wheels) and
+``wheel_<row>_<col>.png`` (only the front wheels), plus ``body_ambient`` and
+``wheel_ambient``. The front wheels are found by material (tyres, rims, discs) at the axle
+nearer the nose; then every face inside their volume (rim covers, brake ducts, upright)
+goes with them. In ``body_ambient`` a shadow-catcher ground plane
+puts the car's soft contact shadow (not the front wheels') into the alpha, so it falls on the
+track drawn below; the softbox photos have no ground.
+``stage.json`` adds the wheel centres and both axles, in map metres.
+
 ``meta.json`` records the scale, the image size and the model's bounds.
 """
 
@@ -57,6 +70,7 @@ BLACKOUT = "--blackout" in argv
 FINISH = argv[argv.index("--finish") + 1] if "--finish" in argv else "metallic"
 STAGE = "--stage" in argv
 STAGE_TEST = "--stage-test" in argv
+DRIVE = "--drive" in argv
 OUT.mkdir(parents=True, exist_ok=True)
 
 PX_PER_M = 700
@@ -134,6 +148,14 @@ STAGE_SIZE_M = 0.7
 STAGE_POWER_W = 300.0
 STAGE_AMBIENT_POWER_W = 60.0
 SAMPLES_STAGE = 96
+DRIVE_PX_PER_M = 240
+DRIVE_YS = tuple(round(0.55 * i, 2) for i in range(11))
+"""Driving-stage softbox rows over the full car, metres down from the image top."""
+WHEEL_MATS = ("tyre_tread", "tyre_sides", "sf25_wheel_hub", "discs")
+WHEEL_HALF_WIDTH_M = 0.16
+WHEEL_GRAB_M = 0.04
+"""Faces within a front wheel's box (half its tread width and its radius, plus this) go with
+the wheel, whatever their material."""
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=MODEL)
@@ -539,12 +561,155 @@ def light_stage() -> dict:
     }
 
 
+def split_front_wheels():
+    """Move the front wheels (tyre, rim and disc faces at the axle nearer the nose) into
+    their own object. Returns it, the wheel centres and both axles (world x, y)."""
+    import bmesh
+
+    body = meshes[0]
+    mats = [s.material.name.split(".")[0] if s.material else "" for s in body.material_slots]
+    wheel_slots = {i for i, m in enumerate(mats) if m in WHEEL_MATS}
+    bm = bmesh.new()
+    bm.from_mesh(body.data)
+    mw = body.matrix_world
+    faces = [f for f in bm.faces if f.material_index in wheel_slots]
+    ys = [(mw @ f.calc_center_median()).y for f in faces]
+    mid = (min(ys) + max(ys)) / 2  # front axle: y > mid (the nose is at y = 0)
+    front = [f for f, y in zip(faces, ys, strict=True) if y > mid]
+    rear = [f for f, y in zip(faces, ys, strict=True) if y <= mid]
+
+    def centres(group):
+        out = []
+        for side in (-1.0, 1.0):
+            pts = [mw @ v.co for f in group for v in f.verts if (mw @ v.co).x * side > 0]
+            xs_ = [q.x for q in pts]
+            ys_ = [q.y for q in pts]
+            out.append(
+                {
+                    "x": (min(xs_) + max(xs_)) / 2,
+                    "y": (min(ys_) + max(ys_)) / 2,
+                    "r": max(max(xs_) - min(xs_), max(ys_) - min(ys_)) / 2,
+                }
+            )
+        return out
+
+    front_c, rear_c = centres(front), centres(rear)
+    # Everything inside each front wheel's volume turns with it: the tyre and rim found by
+    # material above, plus the rim covers, brake ducts and upright (other materials)
+    for f in bm.faces:
+        f.select = False
+    for f in bm.faces:
+        p = mw @ f.calc_center_median()
+        for c in front_c:
+            if (
+                abs(p.x - c["x"]) <= WHEEL_HALF_WIDTH_M + WHEEL_GRAB_M
+                and abs(p.y - c["y"]) <= c["r"] + WHEEL_GRAB_M
+                and p.z <= 2 * c["r"] + WHEEL_GRAB_M
+            ):
+                f.select = True
+                break
+    front = [f for f in bm.faces if f.select]
+    bm.to_mesh(body.data)
+    bm.free()
+    bpy.context.view_layer.objects.active = body
+    body.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.separate(type="SELECTED")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    wheels = next(o for o in scene.objects if o.type == "MESH" and o is not body)
+    wheels.name = "front_wheels"
+    print("FRONT_WHEELS", len(front), "faces", flush=True)
+    return body, wheels, front_c, rear_c
+
+
+def drive_stage() -> dict:
+    """The driving stage (``--drive``); returns ``stage.json``'s content."""
+    out_dir = OUT / "drive_stage"
+    out_dir.mkdir(exist_ok=True)
+    body, wheels, front_c, rear_c = split_front_wheels()
+    top, bottom = MARGIN_M, -(length_m + MARGIN_M)
+    w_m, h_m = img_w_m, top - bottom
+    cam_data.ortho_scale = max(w_m, h_m)
+    cam.location = (0.0, (top + bottom) / 2, hi.z + 5.0)
+    r.resolution_x = int(round(w_m * DRIVE_PX_PER_M))
+    r.resolution_y = int(round(h_m * DRIVE_PX_PER_M))
+    r.image_settings.color_depth = "8"
+    photographic()
+    cyc.use_denoising = True
+    for o in [o for o in scene.objects if o.type == "LIGHT"]:
+        bpy.data.objects.remove(o)
+    world = bpy.data.worlds.new("drive")
+    world.use_nodes = True
+    world.node_tree.nodes["Background"].inputs["Color"].default_value = (0, 0, 0, 1)
+    scene.world = world
+    bpy.ops.mesh.primitive_plane_add(size=40.0, location=(0.0, (top + bottom) / 2, 0.0))
+    ground = bpy.context.active_object
+    ground.is_shadow_catcher = True
+
+    def softbox(name, size, power):
+        ld = bpy.data.lights.new(name, "AREA")
+        ld.shape = "DISK"
+        ld.size = size
+        ld.energy = power
+        ob = bpy.data.objects.new(name, ld)
+        scene.collection.objects.link(ob)
+        return ob
+
+    amb = softbox("ambient", 7.0, STAGE_AMBIENT_POWER_W)
+    amb.location = (0.0, (top + bottom) / 2, 4.0)
+    box = softbox("softbox", STAGE_SIZE_M, STAGE_POWER_W)
+    cells = [(iy, ix) for iy in range(len(DRIVE_YS)) for ix in range(len(STAGE_XS))]
+    if STAGE_TEST:
+        cells = [(2, 2), (5, 1), (8, 3)]
+    for layer in ("body", "wheel"):
+        # Body: the wheels only cast shadows; wheels: the body only casts shadows, no ground
+        body.visible_camera = layer == "body"
+        wheels.visible_camera = layer == "wheel"
+        # The ground shadow comes from the broad ambient light only (a soft contact shadow):
+        # under the low softbox it was huge and swung with the cursor. The front wheels cast
+        # none, as theirs would stay straight while they steer.
+        wheels.visible_shadow = layer == "wheel"
+        ground.hide_render = layer == "wheel"
+        amb.hide_render, box.hide_render = False, True
+        render(f"drive_stage/{layer}_ambient", SAMPLES_STAGE)
+        ground.hide_render = True
+        amb.hide_render, box.hide_render = True, False
+        for iy, ix in cells:
+            box.location = (STAGE_XS[ix], MARGIN_M - DRIVE_YS[iy], STAGE_LIGHT_Z_M)
+            render(f"drive_stage/{layer}_{iy}_{ix}", SAMPLES_STAGE)
+
+    def to_map(c):
+        return {"x": c["x"], "y": MARGIN_M - c["y"], "r": c["r"]}
+
+    return {
+        "px_per_m": DRIVE_PX_PER_M,
+        "margin_m": MARGIN_M,
+        "image_px": [r.resolution_x, r.resolution_y],
+        "xs": list(STAGE_XS),
+        "ys": list(DRIVE_YS),
+        "light_z_m": STAGE_LIGHT_Z_M,
+        "softbox_m": STAGE_SIZE_M,
+        "power_w": STAGE_POWER_W,
+        "finish": FINISH if BLACKOUT else None,
+        "wheels": [to_map(c) for c in front_c],
+        "front_axle_y": MARGIN_M - sum(c["y"] for c in front_c) / 2,
+        "rear_axle_y": MARGIN_M - sum(c["y"] for c in rear_c) / 2,
+        "length_m": length_m,
+        "complete": not STAGE_TEST,
+    }
+
+
 recolour()
 delete_decals()
 set_surfaces()
 if BLACKOUT:
     blackout()
     apply_finish(FINISH)
+if DRIVE:
+    info = drive_stage()
+    (OUT / "drive_stage" / "stage.json").write_text(json.dumps(info, indent=1), encoding="utf-8")
+    print("DRIVE_STAGE", json.dumps(info), flush=True)
+    bpy.ops.wm.quit_blender()
 if STAGE:
     info = light_stage()
     (OUT / "stage" / "stage.json").write_text(json.dumps(info, indent=1), encoding="utf-8")

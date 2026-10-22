@@ -43,6 +43,9 @@ include = ["f1sim*"]
     "assets/fonts/*/OFL.txt",
     "assets/hero/stage/*.webp",
     "assets/hero/stage/*.json",
+    "assets/hero/drive/*.webp",
+    "assets/hero/drive/*.json",
+    "assets/hero/*.npz",
 ]
 
 [tool.ruff]
