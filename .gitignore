@@ -27,3 +27,6 @@ Thumbs.db
 
 # Claude Code agent worktrees
 .claude/worktrees/
+
+# Source 3D models and their renders (large; see docs/PROJECT_LOG.md)
+assets_src/

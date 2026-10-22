@@ -4,13 +4,15 @@
 a soft spotlight beam fading in from the top-left, a headline, paragraph and menu on the left,
 and the hero on the right third.
 
-**The hero.** A generic, unbranded F1 car seen from above (:mod:`f1sim.app.ui.car_top`), nose
-up, filling the right third from the nose to just behind the driver; the rest runs off the
-bottom of the window. The car doesn't move. The cursor is a light: a point light above the
-cursor shades the car per pixel from its normal map (diffuse plus a glossy highlight, so
-reflections slide over the bodywork as you move), and lights the floor around it faintly.
-Away from the light the car is only just visible. The light fades in after the spotlight
-beam, and out when the cursor leaves the window.
+**The hero.** An F1 car seen from above, nose up, filling the right third from the nose to
+just behind the driver; the rest runs off the bottom of the window. The car is the SF-26
+model rendered by ``scripts/hero/render_top.py`` when its renders exist (logos removed), else
+the generic car drawn in code (:mod:`f1sim.app.ui.hero_maps`). It doesn't move. The cursor is a
+light: a point light above the cursor shades the car per pixel, physically based (GGX
+highlights from each material's roughness and metal, a clear coat on the paint, ambient
+occlusion in the crevices), so reflections slide over the bodywork as you move. It also lights
+the floor around it faintly. Away from the light the car is only just visible. The light
+fades in after the spotlight beam, and out when the cursor leaves the window.
 
 The menu opens the existing tools for the selected built track, each as its own process:
 - **Drive:** ``f1sim drive``, with the newest ghost of the track if there is one.
@@ -43,7 +45,7 @@ from pathlib import Path
 
 import numpy as np
 
-from f1sim.app.ui import car_top, theme
+from f1sim.app.ui import car_top, hero_maps, theme
 
 STATE_ENV = "F1SIM_MENU_STATE"
 CARD_BG = theme.hex_colour("#0A0A0B")
@@ -66,8 +68,14 @@ LIGHT_TAU_S = 0.08
 """How quickly the light follows the cursor (frame-rate independent)."""
 POWER_TAU_S = 0.35
 """How quickly the light fades in and out."""
-INTRO_LIGHT = (0.35, 1.9)
-"""Where the light sits (car metres) before the cursor first moves: over the cockpit."""
+INTRO_LIGHT = (0.35, 2.0)
+"""Where the light sits (metres right of the centre line, back from the top of the maps)
+before the cursor first moves: over the cockpit."""
+LIGHT_INTENSITY = 7.0
+"""Point-light strength (diffuse white directly under it is about this / pi)."""
+COAT_ROUGHNESS = 0.07
+"""The clear coat's roughness: a little broader than real lacquer, so a point light's
+highlight reads as a streak rather than a pinprick."""
 FLOOR_GLOW = 0.05
 """Brightness the cursor light adds to the floor (the card) at its centre."""
 
@@ -172,13 +180,14 @@ class HeroLayout:
 
 
 def hero_layout(width: float, height: float, size_m: tuple[float, float]) -> HeroLayout:
-    """The car in the right third, nose up: ``HERO_VISIBLE_M`` of it fills the height below a
-    small margin (the rest is cut by the window's bottom edge), unless that would make it
-    wider than ``HERO_MAX_WIDTH`` of the window; centred on the right third."""
+    """The maps (``size_m`` = width, length) in the right third, nose up: ``HERO_VISIBLE_M``
+    of them fills the height below a small margin (the rest is cut by the window's bottom
+    edge), unless that would make them wider than ``HERO_MAX_WIDTH`` of the window; centred on
+    the right third."""
     width_m, length_m = size_m
     margin = HERO_TOP_MARGIN * height
     ppm = (height - margin) / HERO_VISIBLE_M
-    ppm = min(ppm, HERO_MAX_WIDTH * width / (2.0 * car_top.HALF_WIDTH_M))
+    ppm = min(ppm, HERO_MAX_WIDTH * width / width_m)
     centre_x = width * 5.0 / 6.0
     return HeroLayout(
         left=centre_x - 0.5 * width_m * ppm,
@@ -279,36 +288,71 @@ _HERO_FS = """
 #version 330
 uniform sampler2D u_albedo;
 uniform sampler2D u_normal;
-uniform sampler2D u_material;  // r: specular, g: gloss, b: height / u_height_scale
+uniform sampler2D u_surface;   // r roughness, g metallic, b height / u_height_scale, a AO
+uniform sampler2D u_coat;      // r clear-coat weight
 uniform vec2 u_size_m;         // map width and length, metres
-uniform float u_half_width_m;
 uniform float u_height_scale;
-uniform vec3 u_light;          // light position, car metres (x right, y back, z up)
+uniform vec3 u_light;          // light position, map metres (x right of centre, y down, z up)
 uniform float u_power;
+uniform float u_intensity;
 uniform float u_core;
 uniform float u_reach;
 uniform float u_ambient;
-uniform float u_diffuse;
+uniform float u_coat_rough;
 in vec2 v_uv;
 out vec4 frag;
+const float PI = 3.14159265;
+
+float ggx(float ndh, float rough) {
+    float a = rough * rough;
+    float a2 = a * a;
+    float d = ndh * ndh * (a2 - 1.0) + 1.0;
+    return a2 / (PI * d * d);
+}
+
+float smith(float ndl, float ndv, float rough) {
+    float k = (rough + 1.0) * (rough + 1.0) / 8.0;
+    return ndl / (ndl * (1.0 - k) + k) * ndv / (ndv * (1.0 - k) + k);
+}
+
 void main() {
     vec4 alb = texture(u_albedo, v_uv);
     if (alb.a <= 0.0) discard;
+    vec3 base = alb.rgb * alb.rgb;  // sRGB-ish to linear
     vec3 n = normalize(texture(u_normal, v_uv).xyz * 2.0 - 1.0);
-    vec3 m = texture(u_material, v_uv).rgb;
-    // This pixel in car metres (row 0 of the maps, the nose, is at the top: v = 1)
-    vec2 pos = vec2(v_uv.x * u_size_m.x - u_half_width_m, (1.0 - v_uv.y) * u_size_m.y);
-    float h = m.b * u_height_scale;
-    // Light vector in the normal map's frame: x right, y towards the nose, z up
+    vec4 s = texture(u_surface, v_uv);
+    float rough = clamp(s.r, 0.04, 1.0);
+    float metal = s.g;
+    float h = s.b * u_height_scale;
+    float ao = s.a;
+    float coat = texture(u_coat, v_uv).r;
+    // This pixel in map metres (row 0, the nose end, is at the top: v = 1)
+    vec2 pos = vec2((v_uv.x - 0.5) * u_size_m.x, (1.0 - v_uv.y) * u_size_m.y);
+    // Vectors in the normal map's frame: x right, y towards the nose, z up (to the viewer)
     vec3 Lv = vec3(u_light.x - pos.x, -(u_light.y - pos.y), u_light.z - h);
     vec3 L = normalize(Lv);
+    vec3 V = vec3(0.0, 0.0, 1.0);
+    vec3 H = normalize(L + V);
     float ndl = max(dot(n, L), 0.0);
-    vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));
-    float spec = m.r * pow(max(dot(n, H), 0.0), 8.0 + 120.0 * m.g);
+    float ndv = max(n.z, 1e-3);
+    float ndh = max(dot(n, H), 0.0);
+    float vdh = max(dot(V, H), 0.0);
+    float fres = pow(1.0 - vdh, 5.0);
+    vec3 F0 = mix(vec3(0.04), base, metal);
+    vec3 F = F0 + (1.0 - F0) * fres;
+    vec3 spec = ggx(ndh, rough) * smith(ndl, ndv, rough) * F / (4.0 * ndl * ndv + 1e-3);
+    float Fc = 0.04 + 0.96 * fres;
+    float specC = coat * ggx(ndh, u_coat_rough) * smith(ndl, ndv, u_coat_rough) * Fc
+        / (4.0 * ndl * ndv + 1e-3);
+    vec3 diff = (1.0 - metal) * base / PI * (1.0 - coat * Fc);
     float r = length(u_light.xy - pos);
-    float att = u_power / (1.0 + (r / u_core) * (r / u_core)) * (1.0 - smoothstep(0.0, u_reach, r));
-    vec3 c = alb.rgb * (u_ambient + u_diffuse * ndl * att) + vec3(spec * att);
-    c = c / (1.0 + 0.2 * c);  // soft shoulder on the highlights
+    float att = u_power * u_intensity / (1.0 + (r / u_core) * (r / u_core))
+        * (1.0 - smoothstep(0.0, u_reach, r));
+    vec3 c = (diff + spec + vec3(specC)) * ndl * att;
+    // A dim, soft ambient so the unlit car is just visible (occluded in the crevices)
+    c += ao * (base * (1.0 - metal) + F0 * 0.5) * u_ambient;
+    c = c * (2.51 * c + 0.03) / (c * (2.43 * c + 0.59) + 0.14);  // filmic curve
+    c = sqrt(max(c, 0.0));  // back to display
     frag = vec4(c * alb.a, alb.a);  // premultiplied
 }
 """
@@ -346,22 +390,23 @@ class Button:
     rect: tuple[float, float, float, float]  # left, bottom, width, height
 
 
-HEIGHT_SCALE_M = 1.2
-"""Heights are stored as ``height / HEIGHT_SCALE_M`` in the material texture's blue channel."""
-
-
-def _texture_bytes(maps: car_top.CarMaps) -> dict[str, tuple[int, bytes]]:
+def _texture_bytes(maps: hero_maps.HeroMaps) -> dict[str, bytes]:
     """The maps as RGBA8 texture data, rows flipped (GL's first row is the bottom)."""
 
     def rgba(a):
-        a = np.clip(a, 0.0, 1.0)
-        if a.shape[-1] == 3:
-            a = np.concatenate([a, np.ones((*a.shape[:2], 1), np.float32)], axis=-1)
-        return np.ascontiguousarray((np.flipud(a) * 255.0 + 0.5).astype(np.uint8)).tobytes()
+        if a.ndim == 2:
+            a = a[..., None]
+        if a.shape[-1] < 4:
+            pad = np.full((*a.shape[:2], 4 - a.shape[-1]), 255, np.uint8)
+            a = np.concatenate([a, pad], axis=-1)
+        return np.ascontiguousarray(np.flipud(a)).tobytes()
 
-    normal = 0.5 + 0.5 * maps.normal
-    material = np.concatenate([maps.material, (maps.height / HEIGHT_SCALE_M)[..., None]], axis=-1)
-    return {"albedo": rgba(maps.albedo), "normal": rgba(normal), "material": rgba(material)}
+    return {
+        "albedo": rgba(maps.albedo),
+        "normal": rgba(maps.normal),
+        "surface": rgba(maps.surface),
+        "coat": rgba(maps.coat),
+    }
 
 
 def _make_window_class():
@@ -396,7 +441,7 @@ def _make_window_class():
             self.t0 = time.perf_counter()
             self.status = ""
             self.status_t = -10.0
-            self.maps = car_top.build_maps()
+            self.maps = hero_maps.load()
             self._init_gl()
             self._init_text()
             self._refresh_track()
@@ -414,7 +459,7 @@ def _make_window_class():
                 [BufferDescription(ctx.buffer(data=unit.tobytes()), "2f 2f", ["in_vert", "in_uv"])],
                 mode=ctx.TRIANGLE_STRIP,
             )
-            h, w = self.maps.height.shape
+            h, w = self.maps.albedo.shape[:2]
             self._tex = {}
             for unit_i, (name, data) in enumerate(_texture_bytes(self.maps).items()):
                 tex = ctx.texture(
@@ -428,14 +473,14 @@ def _make_window_class():
                 tex.build_mipmaps()
                 self._tex[name] = (tex, unit_i)
             p = self._p_hero
-            p["u_albedo"], p["u_normal"], p["u_material"] = 0, 1, 2
+            p["u_albedo"], p["u_normal"], p["u_surface"], p["u_coat"] = 0, 1, 2, 3
             p["u_size_m"] = self.maps.size_m
-            p["u_half_width_m"] = car_top.HALF_WIDTH_M
-            p["u_height_scale"] = HEIGHT_SCALE_M
+            p["u_height_scale"] = self.maps.height_scale_m
+            p["u_intensity"] = LIGHT_INTENSITY
             p["u_core"] = car_top.LIGHT_CORE_M
             p["u_reach"] = car_top.LIGHT_REACH_M
             p["u_ambient"] = car_top.AMBIENT
-            p["u_diffuse"] = car_top.DIFFUSE_GAIN
+            p["u_coat_rough"] = COAT_ROUGHNESS
 
         def _init_text(self) -> None:
             import arcade

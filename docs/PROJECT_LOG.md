@@ -19,10 +19,12 @@ exists, but the new package replaces it.
   2024 pole of 85.819 s.
 - **Simulation:** 64 cars at about 64× real time with numba.
 - **Ghosts:** `f1sim ghost <track> <year>` builds a smoothed real-driver ghost.
-- **Main menu:** `f1sim menu` (D19). A dark hero card with the menu on the left (track
-  picker; Drive, Replay, Train, Quit open the existing tools) and, on the right third, an
-  unbranded top-down F1 car drawn in code, lit per pixel by a light at the cursor.
-  `python scripts/dev_menu.py` relaunches it on every source change.
+- **Main menu:** `f1sim menu` (D19, D20). A dark hero card with the menu on the left (track
+  picker; Drive, Replay, Train, Quit open the existing tools). On the right third is a
+  blacked-out Ferrari SF-26 seen from above, with no logos, rendered in Blender from a real
+  model and lit per pixel by a light at the cursor. Without the renders on disk, the menu
+  falls back to the car drawn in code. `python scripts/dev_menu.py` relaunches the menu
+  whenever the source or the renders change.
 - **Viewers:** `f1sim replay` and `f1sim drive` use the dark single-red-accent UI, with kerbs and
   pixel-art cars. Every corner has an apex and an exit kerb (D18). Motion is smooth: Hermite poses, interpolated drive physics, and a 120 Hz tick
   with vsync (D15).
@@ -32,7 +34,7 @@ exists, but the new package replaces it.
   before D16/D17 the best was 100.7 s. The policy sees the racing line (observation spec v2).
   `--init random` (`configs/train_scratch.toml`) still trains from scratch. The same seed
   reproduces `metrics.csv` exactly.
-- **Tests:** 540 pass offline. `ruff` is clean.
+- **Tests:** 542 pass offline. `ruff` is clean.
 
 **Open problems, most important first:**
 1. **Training needs a racing line.** Spec v2 observes a TUM raceline, or the centre line where
@@ -57,6 +59,11 @@ exists, but the new package replaces it.
 circuits without TUM data).
 
 **Gotchas:**
+- **The hero renders aren't in git.** The SF-26 model (the user's download) and its renders
+  live in `assets_src/` (git-ignored). On a fresh checkout the menu shows the drawn car until
+  you run:
+  `blender -b --factory-startup -P scripts/hero/render_top.py -- assets_src/sf26/extracted/source/f1_2026_sf26.glb assets_src/sf26/render --blackout`
+  (Blender 5.2 on this machine; about 45 s on the GPU).
 - **Cache redirection.** On this Windows machine, Claude Desktop's tool processes run inside an
   app package. Writes under `%LOCALAPPDATA%` are redirected to
   `%LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Local`. Tracks built by agents don't
@@ -270,6 +277,36 @@ replaced by an unbranded F1 car.
 - **Live reload:** `scripts/dev_menu.py` polls `src/f1sim` and relaunches the menu on a
   change. `F1SIM_MENU_STATE` keeps the window's place across restarts.
 
+**D20 · Hero from a real model: the SF-26, blacked out, rendered top-down in Blender** (2026-10-22)
+The code-drawn car looked fake, so the hero now uses a real model, the user's choice.
+- **The model:** a Ferrari SF-26 in glTF from the user's downloads, 214k vertices, 5.53 m.
+  Its texture names (`AC_*`, `.dds`) suggest an Assetto Corsa conversion. When asked, the
+  user confirmed it's legitimate for this use. It isn't committed.
+- **`scripts/hero/inspect_model.py`** reports the model's objects, materials and textures.
+- **`scripts/hero/render_top.py`** puts the nose up and renders orthographic top-down
+  images with Cycles at 700 px/m. Each data image comes from an emission shader per
+  material, so no compositor is needed:
+  - colour, sRGB-encoded;
+  - surface direction (the model's normal maps included);
+  - roughness, metallic and height;
+  - ambient occlusion and clear coat.
+
+  The data images are written raw. The first renders were display-encoded by mistake, which
+  turned roughness 0.14 into about 0.41 and tilted every surface direction.
+- **Logo geometry is deleted**, not hidden: hidden overlays still blacked out the occlusion
+  under them. The harness texture's printed text is painted over.
+- **The game conversion's flat materials are replaced** with realistic roughness, metal and
+  clear coat (`SURFACES`).
+- **`--blackout`**, the user's request: paint solid gloss black (roughness 0.14 under a
+  clear coat), everything else greyscale ×0.22 (tyres ×0.18). No colour survives: the most
+  saturated pixel is 0.008.
+- **`app/ui/hero_maps.py`** crops the renders to 4.05 m behind the nose, fades the cut, and
+  caches the result as `hero_maps.npz` (loads in 0.05 s).
+- **The menu's shader is now physically based:** GGX highlights, a clear-coat lobe of
+  roughness 0.07, occlusion-weighted ambient light of 1.2 %, and a filmic curve.
+- **Rejected:** BlendSwap 18333 (1988 car, livery, rFactor conversion) and FetchCFD 1636
+  (its NoAI clause).
+
 ## Change log
 
 | Date | Commit | Change |
@@ -291,4 +328,5 @@ replaced by an unbranded F1 car.
 | 2026-10-21 | `1b10432` | Behaviour cloning module, experiment scripts and results (D16) |
 | 2026-10-21 | (this commit) | Observation spec v2 (racing line), clone-then-GA `f1sim train` (D17) |
 | 2026-10-21 | `c6f1d33` | Apex and exit kerbs at every corner (D18) |
-| 2026-10-21 | (this commit) | Main menu with the cursor-lit top-down car, live-reload script (D19) |
+| 2026-10-21 | `893d94d` | Main menu with the cursor-lit top-down car, live-reload script (D19) |
+| 2026-10-22 | (this commit) | Hero from a real model: SF-26 rendered top-down, blacked out (D20) |

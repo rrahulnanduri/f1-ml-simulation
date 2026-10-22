@@ -53,12 +53,12 @@ RUBBER = (0.16, 0.12)
 MATTE = (0.10, 0.25)
 GLASS = (0.95, 0.95)
 
-LIGHT_CORE_M = 0.6
+LIGHT_CORE_M = 0.75
 """The cursor light: intensity ``1 / (1 + (r / core)^2)`` with distance ``r`` in plan..."""
 LIGHT_REACH_M = 1.8
 """... faded to nothing at this distance."""
 LIGHT_HEIGHT_M = 1.6
-AMBIENT = 0.05
+AMBIENT = 0.012
 """Light everywhere, so the unlit car is just visible."""
 DIFFUSE_GAIN = 1.1
 TWILL_PERIOD_M = 0.012

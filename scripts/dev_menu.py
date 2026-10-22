@@ -2,7 +2,8 @@
 
     python scripts/dev_menu.py            (Ctrl+C to stop)
 
-Watches ``src/f1sim`` (Python files and the bundled assets) by polling modification times
+Watches ``src/f1sim`` (Python files and the bundled assets) and the hero renders in
+``assets_src`` by polling modification times
 (no extra dependency). When something changes it waits ``SETTLE_S`` for the save to finish,
 closes the running menu and opens a new one. The window keeps its place and size across
 restarts: the menu stores them in the file named by ``F1SIM_MENU_STATE``, which this script
@@ -24,16 +25,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WATCH = ROOT / "src" / "f1sim"
+RENDERS = ROOT / "assets_src"
+"""The hero's renders (scripts/hero/render_top.py): a re-render reloads the menu too."""
 SUFFIXES = {".py", ".ttf", ".png", ".glsl", ".json"}
 POLL_S = 0.4
 SETTLE_S = 0.3
 STATE_FILE = Path(tempfile.gettempdir()) / "f1sim_menu_state.json"
 
 
-def snapshot(root: Path = WATCH) -> dict[Path, float]:
-    """Modification time of every watched file under ``root``."""
+def snapshot(roots=(WATCH, RENDERS)) -> dict[Path, float]:
+    """Modification time of every watched file under ``roots``."""
     out = {}
-    for p in root.rglob("*"):
+    for p in (p for root in roots if root.is_dir() for p in root.rglob("*")):
         if p.suffix in SUFFIXES and "__pycache__" not in p.parts:
             try:
                 out[p] = p.stat().st_mtime
@@ -80,7 +83,7 @@ def main() -> int:
                 continue
             time.sleep(SETTLE_S)  # let the editor finish writing
             seen = snapshot()
-            names = ", ".join(p.relative_to(WATCH).as_posix() for p in diff[:3])
+            names = ", ".join(p.relative_to(ROOT).as_posix() for p in diff[:3])
             more = f" (+{len(diff) - 3})" if len(diff) > 3 else ""
             print(f"{time.strftime('%H:%M:%S')}  changed {names}{more} - reloading", flush=True)
             if proc is not None:

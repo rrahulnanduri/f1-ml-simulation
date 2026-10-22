@@ -1,5 +1,6 @@
 """Main menu logic (f1sim.app.menu) and the top-down car maps: offline, no window."""
 
+import json
 import os
 import sys
 import time
@@ -8,7 +9,7 @@ import numpy as np
 import pytest
 
 from f1sim.app import menu
-from f1sim.app.ui import car_top
+from f1sim.app.ui import car_top, hero_maps
 
 # -------------------------------------------------------------------------- discovery
 
@@ -168,9 +169,64 @@ def test_shading_is_brightest_under_the_light(maps):
 
 
 def test_texture_bytes_are_rgba8_and_flipped(maps):
-    data = menu._texture_bytes(maps)
+    hm = hero_maps.from_drawn(maps)
+    data = menu._texture_bytes(hm)
+    assert set(data) == {"albedo", "normal", "surface", "coat"}
     h, w = maps.height.shape
     for b in data.values():
         assert len(b) == h * w * 4
     first_row_alpha = np.frombuffer(data["albedo"], np.uint8).reshape(h, w, 4)[0, :, 3]
     assert first_row_alpha.max() < 20  # GL's first row is the faded back of the car
+
+
+# ------------------------------------------------------------------- rendered maps
+
+
+def _write_renders(d, w=40, h=200, ppm=20.0, margin=0.1):
+    """A fake render folder: a car-shaped block, its passes and meta.json."""
+    from PIL import Image
+
+    d.mkdir()
+    alpha = np.zeros((h, w), np.uint16)
+    alpha[5:, 8:32] = 65535  # the car, nose 5 rows (0.25 m) below the top
+
+    def save(name, rgb):
+        a = np.dstack([rgb, alpha]).astype(np.uint16)
+        # Pillow can't write 16-bit RGBA: store 8-bit, which load_rendered also reads
+        Image.fromarray((a >> 8).astype(np.uint8)).save(d / f"{name}.png")
+
+    full = np.full((h, w), 65535, np.uint16)
+    half = np.full((h, w), 32768, np.uint16)
+    zero = np.zeros((h, w), np.uint16)
+    save("albedo", np.dstack([full, zero, zero]))  # red
+    save("normal", np.dstack([half, half, full]))  # facing up
+    save("surface", np.dstack([half, zero, half]))  # roughness 0.5, height 0.75 m
+    save("ao", np.dstack([full, full, zero]))  # no occlusion, full clear coat
+    meta = {"px_per_m": ppm, "margin_m": margin, "height_scale_m": 1.5}
+    (d / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+
+def test_load_rendered_crops_fades_and_caches(tmp_path):
+    d = tmp_path / "render"
+    _write_renders(d)
+    m = hero_maps.load_rendered(d)
+    assert m is not None and m.source == "render"
+    rows = round((0.1 + hero_maps.FRONT_LENGTH_M) * 20.0)
+    assert m.albedo.shape == (rows, 40, 4)  # cropped behind the driver
+    assert m.size_m == pytest.approx((2.0, rows / 20.0))
+    assert m.albedo[rows // 3, 20].tolist() == [255, 0, 0, 255]
+    assert m.albedo[-1, 20, 3] < 20  # faded at the cut
+    assert m.albedo[0, 20, 3] == 0  # the margin above the nose is empty
+    assert m.surface[rows // 3, 20, 3] == 255 and m.coat[rows // 3, 20] == 255
+    assert (d / hero_maps.CACHE_NAME).is_file()
+    again = hero_maps.load_rendered(d)  # from the cache
+    assert np.array_equal(again.albedo, m.albedo) and again.front_m == m.front_m
+    (d / "ao.png").unlink()
+    assert hero_maps.load_rendered(d) is None  # a pass missing: no renders
+
+
+def test_load_falls_back_to_the_drawn_car(tmp_path, monkeypatch):
+    monkeypatch.setenv(hero_maps.RENDER_DIR_ENV, str(tmp_path / "nothing"))
+    m = hero_maps.load()
+    assert m.source == "drawn" and m.front_m == 0.0
+    assert m.albedo.dtype == np.uint8 and m.albedo.shape[2] == 4
