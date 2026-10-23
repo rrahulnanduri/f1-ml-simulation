@@ -46,6 +46,7 @@ include = ["f1sim*"]
     "assets/hero/drive/*.webp",
     "assets/hero/drive/*.json",
     "assets/hero/*.npz",
+    "assets/hero/*.webp",
 ]
 
 [tool.ruff]

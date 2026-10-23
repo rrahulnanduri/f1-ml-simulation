@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-22 (menu fixes, D28). This section summarises
+*Last updated: 2026-10-23 (hero backdrop, D29). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
@@ -31,6 +31,7 @@ exists, but the new package replaces it.
   lines: photographed diffuse light from a Blender light stage, live GGX reflections, and
   the cars' shadows cast away from the cursor (D25). Without the driving set the menu falls
   back to the still light stage, then relit maps, then the car drawn in code.
+  A faint red and blue backdrop sits behind the cars (D29).
   The mouse wheel dims or brightens the cursor light (0.25–1.10 of the default, D28).
   `python scripts/dev_menu.py` relaunches the app whenever the source or the renders change;
   `scripts\run_latest.bat` pulls the latest version first, then opens it.
@@ -559,6 +560,13 @@ queries per pass, cProfile per frame, startup), then fixed the largest costs:
 - **Lamps:** `LAMP_GAP_M` 30–140 → 23–108 m, 51 → 66 units on Marina Bay (+29%). The
   8-lamp shader cap doesn't bind: 2–3 heads are near the window at a time.
 
+**D29 · A faint red and blue backdrop behind the driving cars** (2026-10-23)
+The user supplied a red and blue streak image and asked for it behind the hero, much more
+transparent. It ships as `assets/hero/backdrop.webp` (480 × 360, 54 kB). `_BACKDROP_FS`
+draws it over the floor and under the track at `BACKDROP_ALPHA` = 0.14, covering the area
+right of the menu column (aspect kept) and fading in there like the track. Kept off the menu
+column so the text stays clean. The strength is one constant if it needs tuning.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -594,4 +602,5 @@ queries per pass, cProfile per frame, startup), then fixed the largest costs:
 | 2026-10-22 | `5bc7d70` | Sharp text across the app at any display scale (D26) |
 | 2026-10-22 | `0753e60` | Lighter on slow machines: GL checks off, batched text, quality tiers, faster start (D27) |
 | 2026-10-22 | `f06eb28` | `scripts/run_latest.bat`: pull the latest version and open the app |
-| 2026-10-22 | (this commit) | Menu: track lines back, wheel-set light level, 30% more lamps (D28) |
+| 2026-10-22 | `cd7d7ff` | Menu: track lines back, wheel-set light level, 30% more lamps (D28) |
+| 2026-10-23 | (this commit) | Faint red and blue backdrop behind the driving cars (D29) |

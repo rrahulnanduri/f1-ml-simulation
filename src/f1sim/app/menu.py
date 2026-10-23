@@ -146,6 +146,10 @@ LAMP_RADIUS_M = 0.35
 LAMP_REACH_M = 14.0
 """Lamps farther than this outside the window are left out (at most ``MAX_LAMPS``)."""
 LAMP_GLOW_M = 0.18
+BACKDROP_ALPHA = 0.14
+"""The red and blue backdrop behind the driving cars (``assets/hero/backdrop.webp``): faint,
+so it reads as texture on the floor, not a picture. It covers the area right of the menu
+column and fades in there like the track."""
 MAX_LAMPS = 8
 MAX_SHADOW_CARS = 6
 """The shaders' array sizes; the quality tier lights and shadows fewer."""
@@ -381,6 +385,26 @@ in vec2 in_vert;
 in vec2 in_uv;
 out vec2 v_uv;
 void main() { v_uv = in_uv; gl_Position = vec4(in_vert, 0.0, 1.0); }
+"""
+
+_BACKDROP_FS = """
+#version 330
+uniform sampler2D u_image;
+uniform vec2 u_size;
+uniform vec2 u_fade;   // hidden left of x0, full right of x1 (pixels)
+uniform float u_alpha;
+in vec2 v_uv;
+out vec4 frag;
+void main() {
+    // Cover the area right of the menu column, keeping the image's aspect ratio
+    vec2 p = v_uv * u_size;
+    vec2 area = vec2(u_size.x - u_fade.x, u_size.y);
+    vec2 im = vec2(textureSize(u_image, 0));
+    float s = max(area.x / im.x, area.y / im.y);
+    vec2 uv = (p - vec2(u_fade.x, 0.0) - 0.5 * (area - im * s)) / (im * s);
+    float a = u_alpha * smoothstep(u_fade.x, u_fade.y, p.x);
+    frag = vec4(texture(u_image, uv).rgb * a, a);  // premultiplied
+}
 """
 
 _SPOT_FS = """
@@ -693,6 +717,15 @@ def _make_view_class():
                 )
                 t.build_mipmaps()
                 return t
+
+            self._p_backdrop = None
+            backdrop = hero_drive.ASSETS / "backdrop.webp"
+            if backdrop.exists():
+                from PIL import Image
+
+                image = np.asarray(Image.open(backdrop).convert("RGBA"))
+                self._backdrop_tex = single(image)
+                self._p_backdrop = ctx.program(vertex_shader=_FS_VS, fragment_shader=_BACKDROP_FS)
 
             # Texture units: the softbox photos, then each layer's ambient photo and maps
             self._drive_tex = [array(st.body["light"]), array(st.wheels["light"])]
@@ -1206,6 +1239,23 @@ def _make_view_class():
             self._unit_quad.render(p)
             ctx.blend_func = ctx.BLEND_DEFAULT
 
+        def _draw_backdrop(self) -> None:
+            """The faint red and blue backdrop, over the floor and under the track."""
+            p = self._p_backdrop
+            if p is None:
+                return
+            self._backdrop_tex.use(0)
+            set_uniforms(
+                p,
+                u_image=0,
+                u_size=(float(self.width), float(self.height)),
+                u_fade=self.track_fade,
+                u_alpha=BACKDROP_ALPHA,
+            )
+            self.ctx.blend_func = self.ctx.BLEND_PREMULTIPLIED_ALPHA
+            self._fs_quad.render(p)
+            self.ctx.blend_func = self.ctx.BLEND_DEFAULT
+
         def on_draw(self) -> None:
 
             now = time.perf_counter() - self.t0
@@ -1215,6 +1265,7 @@ def _make_view_class():
             if self.drive is not None:
                 self._draw_floor(now)
                 ctx.enable(ctx.BLEND)
+                self._draw_backdrop()
                 self._draw_hero()
                 self._draw_text()
                 return
