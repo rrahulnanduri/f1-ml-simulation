@@ -146,10 +146,9 @@ LAMP_RADIUS_M = 0.35
 LAMP_REACH_M = 14.0
 """Lamps farther than this outside the window are left out (at most ``MAX_LAMPS``)."""
 LAMP_GLOW_M = 0.18
-BACKDROP_ALPHA = 0.14
-"""The red and blue backdrop behind the driving cars (``assets/hero/backdrop.webp``): faint,
-so it reads as texture on the floor, not a picture. It covers the area right of the menu
-column and fades in there like the track."""
+BACKDROP_ALPHA = 0.44
+"""The red and blue backdrop behind the menu and the driving cars
+(``assets/hero/backdrop.webp``): it covers the window from its left edge, under the text."""
 MAX_LAMPS = 8
 MAX_SHADOW_CARS = 6
 """The shaders' array sizes; the quality tier lights and shadows fewer."""
@@ -391,19 +390,17 @@ _BACKDROP_FS = """
 #version 330
 uniform sampler2D u_image;
 uniform vec2 u_size;
-uniform vec2 u_fade;   // hidden left of x0, full right of x1 (pixels)
 uniform float u_alpha;
 in vec2 v_uv;
 out vec4 frag;
 void main() {
-    // Cover the area right of the menu column, keeping the image's aspect ratio
+    // Cover the window, keeping the image's aspect ratio: its left edge on the window's
+    // left edge, centred vertically (any spare width is cut off on the right)
     vec2 p = v_uv * u_size;
-    vec2 area = vec2(u_size.x - u_fade.x, u_size.y);
     vec2 im = vec2(textureSize(u_image, 0));
-    float s = max(area.x / im.x, area.y / im.y);
-    vec2 uv = (p - vec2(u_fade.x, 0.0) - 0.5 * (area - im * s)) / (im * s);
-    float a = u_alpha * smoothstep(u_fade.x, u_fade.y, p.x);
-    frag = vec4(texture(u_image, uv).rgb * a, a);  // premultiplied
+    float s = max(u_size.x / im.x, u_size.y / im.y);
+    vec2 uv = (p - vec2(0.0, 0.5 * (u_size.y - im.y * s))) / (im * s);
+    frag = vec4(texture(u_image, uv).rgb * u_alpha, u_alpha);  // premultiplied
 }
 """
 
@@ -1249,7 +1246,6 @@ def _make_view_class():
                 p,
                 u_image=0,
                 u_size=(float(self.width), float(self.height)),
-                u_fade=self.track_fade,
                 u_alpha=BACKDROP_ALPHA,
             )
             self.ctx.blend_func = self.ctx.BLEND_PREMULTIPLIED_ALPHA
