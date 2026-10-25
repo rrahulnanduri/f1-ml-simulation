@@ -32,10 +32,12 @@ built track:
 - **Drive:** switches the window to the drive screen, with the newest ghost of the track if
   there is one.
 - **Replay:** switches to the replay screen: the newest run of the track plus that ghost.
-- **Train:** ``f1sim train`` in a new console window (a long headless job).
+- **Train:** starts ``f1sim train`` on the track in the background and switches to the
+  training screen (:mod:`f1sim.app.training`), which shows each new generation driving.
 - **Quit.**
 
-Esc on the drive or replay screen comes back here.
+Esc on the drive, replay or training screen comes back here (leaving the training screen
+stops the training).
 
 Controls: mouse (hover, click), Up/Down to pick, Enter to open, Left/Right or the arrows to
 change track, Esc to quit.
@@ -51,7 +53,6 @@ the window keeps its place (:class:`f1sim.app.shell.AppWindow`).
 from __future__ import annotations
 
 import math
-import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -858,7 +859,7 @@ def _make_view_class():
             notes = {
                 "Drive": f"vs ghost {self.ghost.stem.split('_')[-1]}" if self.ghost else "solo",
                 "Replay": self.run.name if self.run else "no runs yet",
-                "Train": "opens a console",
+                "Train": "watch it learn",
                 "Quit": "",
             }
             for t, item in zip(self.t_notes, ITEMS, strict=True):
@@ -976,25 +977,11 @@ def _make_view_class():
                 self.close()
                 return
             tid, name = self.tracks[self.track_i]
-            if item in ("Drive", "Replay"):
-                self._open_screen(item, tid, name)
-                return
-            argv = command(item, tid, run=self.run, ghost=self.ghost)
-            if argv is None:
-                self._say(f"No runs on {name} yet: train first")
-                return
-            flags = 0
-            if item == "Train" and sys.platform == "win32":
-                flags = subprocess.CREATE_NEW_CONSOLE
-            try:
-                subprocess.Popen(argv, creationflags=flags)
-            except OSError as exc:
-                self._say(f"Couldn't start {item.lower()}: {exc}")
-                return
-            self._say(f"Opening {item.lower()} on {name}")
+            self._open_screen(item, tid, name)
 
         def _open_screen(self, item: str, tid: str, name: str) -> None:
-            """Switch the window to the drive or replay screen; Esc there comes back here."""
+            """Switch the window to the drive, replay or training screen; Esc there comes
+            back here."""
             from f1sim.data.track_pipeline import load_track
 
             if item == "Replay" and self.run is None:
@@ -1010,6 +997,13 @@ def _make_view_class():
                     from f1sim.app.drive import DriveView
 
                     screen = DriveView(track, ghost_path=self.ghost, on_back=self.come_back)
+                elif item == "Train":
+                    from f1sim.app.training import TrainingProcess, TrainingView, new_run_dir
+
+                    process = TrainingProcess(tid, new_run_dir(tid, self.runs_root))
+                    screen = TrainingView(
+                        track, process.run_dir, process=process, on_back=self.come_back
+                    )
                 else:
                     from f1sim.app.replay import ReplayView, load_trace
 

@@ -97,7 +97,7 @@ f1-ml-simulation/
 
 **Dependency direction:** `app → train → agents → sim → track ← data`. `sim` and `track` never import `arcade` or `fastf1`, and `data` is the only module that touches the network.
 
-**Training and viewing are separate processes.** `f1sim train` runs headless and writes checkpoints and metrics into `runs/<run_id>/`. The app's "Watch training" mode tails that folder and replays the latest best agent, so the UI frame rate never limits training.
+**Training and viewing are separate processes.** `f1sim train` runs headless and writes checkpoints and metrics into `runs/<run_id>/`. The app's training view tails that folder and re-drives the newest generation (every genome, from `generation.npz`, D30), so the UI frame rate never limits training.
 
 ### Old → new mapping
 

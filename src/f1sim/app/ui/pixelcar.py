@@ -210,11 +210,14 @@ class CarSprites:
 
 class CarLayer:
     """The cars of a viewer with their micro labels, drawn in screen space (under the pixel
-    camera) at the sprite size :func:`sprite_scale` picks for the zoom."""
+    camera) at the sprite size :func:`sprite_scale` picks for the zoom. With
+    ``only_highlight_label`` only the highlighted car is labelled (a whole field of labels
+    would bury the track)."""
 
     def __init__(self, labels: list[str], liveries: list[theme.Livery], outlined: list[bool]):
         self.sprites = CarSprites(liveries, outlined)
         self.labels = [theme.micro(label, theme.CAR_LABEL) for label in labels]
+        self.only_highlight_label = False
 
     def draw(self, camera, poses, highlight: int | None, pixel_ratio: float) -> None:
         """``poses``: ``(x, y, heading)`` per car in world metres; the ``highlight`` car is
@@ -231,16 +234,26 @@ class CarLayer:
         for i, (_, _, heading) in enumerate(poses):
             self.sprites.place(i, float(xs[i]), float(ys[i]), heading, k, pixel_ratio)
         self.sprites.draw()
+        labelled = range(n)
+        if self.only_highlight_label:
+            labelled = order = [] if highlight is None else [highlight]
         # Labels right of each car, caps centred on it; overlapping ones stack downwards
         # (the highlighted car's label keeps its place).
-        boxes = []
-        for i in range(n):
+        boxes: dict[int, Rect] = {}
+        for i in labelled:
             dx = label_offset(poses[i][2], length, width) + 6.0
             x, y = float(xs[i]) + dx, float(ys[i]) - 3.5
-            boxes.append(Rect(x, y - 2.0, self.labels[i].content_width, LABEL_H))
+            boxes[i] = Rect(x, y - 2.0, self.labels[i].content_width, LABEL_H)
         first = [highlight] if highlight is not None else []
-        rest = sorted((i for i in range(n) if i != highlight), key=lambda i: -boxes[i].y)
-        stacked = stack_labels(boxes, first + rest, LABEL_H)
+        rest = sorted((i for i in boxes if i != highlight), key=lambda i: -boxes[i].y)
+        placing = first + rest
+        stacked = dict(
+            zip(
+                placing,
+                stack_labels([boxes[i] for i in placing], list(range(len(placing))), LABEL_H),
+                strict=True,
+            )
+        )
         for i in order:
             text = self.labels[i]
             colour = theme.ACCENT if i == highlight else theme.CAR_LABEL

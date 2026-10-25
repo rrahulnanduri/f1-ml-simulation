@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-23 (hero backdrop, D29). This section summarises
+*Last updated: 2026-10-25 (training view, D30). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
@@ -22,6 +22,7 @@ exists, but the new package replaces it.
 - **The app is one window** (`f1sim menu`, D19–D22). The menu is its home screen; Drive and
   Replay switch the window to those screens, and Esc comes back. Train opens a console. The
   window remembers its place, but only restores it if it lands on a connected screen.
+  Train starts `f1sim train` in the background and switches to the training screen.
 - **The menu** is a dark hero card: track picker and buttons on the left. On the right is a
   metallic-black Ferrari SF-26 seen from above (55% of the window high, no logos), driving
   endless laps of Marina Bay at Russell's 2025 pole-lap speed. It keeps overtaking five
@@ -44,7 +45,13 @@ exists, but the new package replaces it.
   before D16/D17 the best was 100.7 s. The policy sees the racing line (observation spec v2).
   `--init random` (`configs/train_scratch.toml`) still trains from scratch. The same seed
   reproduces `metrics.csv` exactly.
-- **Tests:** 587 pass offline. `ruff check` is clean.
+- **Training view** (D30): the trainer replaces `generation.npz` every generation; the app
+  re-drives the newest one with every genome on track (exactly the trainer's episodes; a
+  test checks lap times match). Opens fitted to the circuit; wheel zoom, right-drag pan,
+  `Z` fit, `F` follow the best genome, Up/Down 0.5–16×, `N` newest. Leaving the screen
+  stops the training. `f1sim watch <run>` opens it on any run folder. Checked in the real
+  window on a live Silverstone run.
+- **Tests:** 598 pass offline. `ruff check` is clean.
 
 **Open problems, most important first:**
 1. **Training needs a racing line.** Spec v2 observes a TUM raceline, or the centre line where
@@ -65,13 +72,13 @@ exists, but the new package replaces it.
 6. **Drive mode's off-track rule still uses the white line**, not the track limits
    (`app/drive.py`).
 
-**Next step:** the user is reviewing the round-2 hero in the live-reload app
-(`python scripts/dev_menu.py`). Their notes so far went into D25: a solid-looking car,
-lingering lamp light, random lamp positions. Likely next tweaks are taste: the constants at
-the top of `app/menu.py` (`DRIVE_*`, `LAMP_*`, `CAST_SHADOW_*`) and the finishes in
-`hero_drive.RIVAL_FINISHES`. Then M4 (the full app: settings, a training view instead of
-the console) and M5 (breadth, including a computed racing line for circuits without TUM
-data).
+**Next step:** the user tries the training view (menu → Train). Likely tweaks: the
+default playback speed (`training.DEFAULT_SPEED`), the episode cut-off
+(`LEADER_GRACE_S`), and whether leaving the screen should keep training running. In stage 2
+the cloned field drives as one tight pack, so the full-track view shows a single clump; a
+"spread" option (stagger the starts) would be visual only and break the exact match. Then
+the rest of M4 (settings) and M5 (breadth, including a computed racing line for circuits
+without TUM data). The menu's `BACKDROP_ALPHA` 0.30 is the user's own uncommitted tweak.
 
 **Gotchas:**
 - **The hero photos ship with the app** in `src/f1sim/app/assets/hero/stage` (45 WebP photos,
@@ -568,6 +575,34 @@ the user then raised `BACKDROP_ALPHA` to 0.44 and asked for it at the far left. 
 the whole window, its left edge on the window's left edge (aspect kept, the right side cut
 off), so its brightest streaks sit behind the menu text.
 
+**D30 · Training view: the newest generation re-driven on screen** (2026-10-25)
+The user asked to watch generations train in real time. Train in the menu now starts
+`f1sim train` in the background (no console; output in the run's `train.log`) and switches
+to the training screen (`app/training.py`, `app/ui/train_hud.py`); `f1sim watch <run>`
+opens it on any run folder.
+- **The trainer writes, the app re-drives.** After every generation the trainer replaces
+  `generation.npz` (genomes, fitnesses, each genome's start, the episode cap). The screen
+  loads the newest one into a World built like the trainer's (one car per genome, same `dt`,
+  `action_repeat`, car and track limits) and drives it with the policy. The physics is
+  deterministic: a test checks that the re-driven lap times and progress equal the
+  trainer's stage-2 scores exactly. Stage 1 shows each genome's first episode.
+- **Rejected:** drawing the trainer's own World (would hold training to 1×, ~64× slower);
+  streaming poses over a pipe (more moving parts, and the trainer only evaluates in bursts);
+  the old plan's "replay the latest best agent" (one car shows no population).
+- **Cadence:** an episode ends when every car is out or finished, or 3 s after the first
+  finish; then the newest generation loads. At the default 2× a Silverstone generation
+  shows for about 45 s while dozens more train. Up/Down sets 0.5–16×, `N` skips ahead.
+- **Only the latest generation is kept** (~100 kB with the default policy): a history of
+  every generation would grow to hundreds of MB in a 30-minute run.
+- **View:** opens fitted to the whole circuit (`Z` refits); wheel zoom at the cursor, right
+  drag pan, `F` follows the generation's best genome (by the trainer's fitness, in the AI
+  livery with the only label). Other cars are grey and fade once out. The HUD has the live
+  order, the generation and stage, cars still running with the episode clock, and the best
+  lap per generation as a chart.
+- **Leaving the screen stops the training** (`TrainingProcess.stop`, also at exit), so no
+  invisible process keeps a core busy; checkpoints and `best_lap.npz` are already on disk.
+- `CarLayer.only_highlight_label`: 64 labels would bury the track.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -605,4 +640,5 @@ off), so its brightest streaks sit behind the menu text.
 | 2026-10-22 | `f06eb28` | `scripts/run_latest.bat`: pull the latest version and open the app |
 | 2026-10-22 | `cd7d7ff` | Menu: track lines back, wheel-set light level, 30% more lamps (D28) |
 | 2026-10-23 | `f49555c` | Faint red and blue backdrop behind the driving cars (D29) |
-| 2026-10-23 | (this commit) | Backdrop from the window's left edge, at 0.44 (D29) |
+| 2026-10-23 | `c568d56` | Backdrop from the window's left edge, at 0.44 (D29) |
+| 2026-10-25 | (this commit) | Training view: the newest generation re-driven live, `f1sim watch` (D30) |

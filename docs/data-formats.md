@@ -93,6 +93,8 @@ When loading, the code checks that `obs_spec_version` and `policy` match the cur
 | `metrics.csv` | `gen, wall_s, best_fitness, mean_fitness, completion_rate, best_lap_s, best_progress_m, sigma` |
 | `best_lap.npz` | Trace of the best lap (same columns as the ghost) for replay and overlays |
 | `checkpoints/` | Agent checkpoints (section 4) |
+| `generation.npz` | The latest generation, replaced atomically after each one (`write_generations`, default on) for the app's training view: `gen`, `stage`, `params` (P, n_params) float32, `fitness`, `start_s` and `start_v` (P,) (each genome's first episode start), `episode_s`, `lap_time_s` (nan = no lap), `progress_m` |
+| `train.log` | Console output, when the app started the run |
 
 ## 6. Observation spec v2 (`sim/sensors.py`)
 

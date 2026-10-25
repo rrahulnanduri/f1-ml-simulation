@@ -45,6 +45,11 @@ the run folder (:mod:`f1sim.train.metrics`) gets a metrics row, checkpoints and 
 
 The world stops stepping as soon as every car is done (or finished, in stage 2).
 
+**Watching.** After every generation the run folder's ``generation.npz`` is replaced with that
+generation's genomes, fitnesses and starts (:meth:`RunWriter.write_generation`). The app's
+training view (:mod:`f1sim.app.training`) re-drives them on screen: the physics is
+deterministic, so the cars it shows drive what the trainer evaluated.
+
 **T_ref** is the lap time of :func:`scripted.drive_reference_lap` along the circuit's TUM
 raceline (catalogue entry + :mod:`f1sim.data.tum_source`; downloaded once into the cache),
 computed once. If the track isn't in the catalogue, has no TUM raceline, the raceline can't be
@@ -124,6 +129,7 @@ class TrainConfig:
     max_generations: int = 1000
     max_wall_s: float = 1800.0
     checkpoint_every: int = 10
+    write_generations: bool = True  # generation.npz every generation, for the training view
     # curriculum
     stage1_episode_s: float = 30.0  # random starts, fitness = progress
     stage1_promote_progress_m: float = 0.0  # 0 = auto: 0.8 * (stage1_episode_s * 40 m/s)
@@ -419,8 +425,9 @@ class Trainer:
 
         ``stats``: ``progress_m`` (P,) mean raw progress, ``lap_time_s`` (P,) nan where no lap
         (stage 2 only), ``best_progress_m``, ``completion_rate`` (share of episodes with a
-        completed lap), ``best_lap_s`` (nan if none; stage 2 only), ``crash_rate`` and
-        ``sim_s`` (simulated seconds until every car was done).
+        completed lap), ``best_lap_s`` (nan if none; stage 2 only), ``crash_rate``,
+        ``sim_s`` (simulated seconds until every car was done), and ``start_s`` and
+        ``start_v`` (P,): where each genome's first episode started.
         """
         params = np.asarray(params, dtype=np.float32)
         if params.ndim != 2 or params.shape[0] != self.population:
@@ -474,6 +481,9 @@ class Trainer:
             "best_lap_s": math.nan,
             "crash_rate": float(crashed.mean()),
             "sim_s": sim_s,
+            # each genome's first episode, which the training view replays
+            "start_s": start_s[::k].copy(),
+            "start_v": start_v[::k].copy(),
         }
         return fit, stats
 
@@ -505,6 +515,8 @@ class Trainer:
             "best_lap_s": float(np.nanmin(lap_time)) if finished.any() else math.nan,
             "crash_rate": float(crashed.mean()),
             "sim_s": sim_s,
+            "start_s": np.full(p, self.stage2_start_s),
+            "start_v": np.full(p, self.stage2_start_v),
         }
         return fit, stats
 
@@ -708,7 +720,8 @@ class Trainer:
         """Train until ``max_generations`` or ``max_wall_s``; see the module docstring.
 
         Each generation appends a ``metrics.csv`` row (per-generation values; ``best_lap_s``
-        is the generation's fastest lap) and calls ``on_generation`` with that row as a dict.
+        is the generation's fastest lap), replaces ``generation.npz`` (unless
+        ``write_generations`` is off) and calls ``on_generation`` with that row as a dict.
         Checkpoints hold the best genome of the current stage: every ``checkpoint_every``
         generations, whenever it improves, and after the last generation.
         """
@@ -758,6 +771,18 @@ class Trainer:
                 "sigma": float(self.optimiser.sigma),
             }
             self.writer.append_metrics(row)
+            if cfg.write_generations:
+                self.writer.write_generation(
+                    gen=gen,
+                    stage=stage,
+                    params=params,
+                    fitness=fitness,
+                    start_s=stats["start_s"],
+                    start_v=stats["start_v"],
+                    episode_s=(cfg.stage1_episode_s if stage == 1 else self.stage2_cap_s),
+                    lap_time_s=stats["lap_time_s"],
+                    progress_m=stats["progress_m"],
+                )
             if improved or (cfg.checkpoint_every > 0 and gen % cfg.checkpoint_every == 0):
                 self._save_checkpoint(gen)
                 saved_gen = gen

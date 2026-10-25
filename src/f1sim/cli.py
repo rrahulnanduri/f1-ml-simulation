@@ -212,6 +212,25 @@ def _cmd_replay(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_watch(args: argparse.Namespace) -> int:
+    import tomllib
+
+    from f1sim.app.training import run
+
+    run_dir = Path(args.run_dir)
+    track_id = args.track
+    if track_id is None:
+        try:
+            track_id = tomllib.loads((run_dir / "config.toml").read_text(encoding="utf-8"))[
+                "track_id"
+            ]
+        except (OSError, ValueError, KeyError):
+            print(f"{run_dir} has no config.toml yet; pass --track")
+            return 1
+    run(track_id, run_dir)
+    return 0
+
+
 def _cmd_ghost(args: argparse.Namespace) -> int:
     from f1sim.data.ghost_builder import build_ghost, ghost_path, save_ghost
 
@@ -372,6 +391,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--run-dir", help="output folder (default: runs/<track>-<timestamp>)")
     p.set_defaults(func=_cmd_train)
+
+    p = sub.add_parser("watch", help="watch a training run's generations drive (live)")
+    p.add_argument("run_dir", help="the run folder (f1sim train --run-dir)")
+    p.add_argument("--track", help="track id (default: from the run's config.toml)")
+    p.set_defaults(func=_cmd_watch)
 
     p = sub.add_parser("ghost", help="build a smoothed ghost of a real driver's fastest lap")
     p.add_argument("track_id")

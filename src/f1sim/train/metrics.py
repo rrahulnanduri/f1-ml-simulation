@@ -10,6 +10,8 @@ A run folder holds:
 - ``checkpoints/<gen:05d>.npz`` (+ ``.json``), through ``f1sim.agents.checkpoint``.
 - ``best_lap.npz``: the best lap's trace, columns :data:`TRACE_COLUMNS` (the ghost columns,
   data-formats section 3), written atomically.
+- ``generation.npz``: the latest generation, :data:`GENERATION_KEYS`, replaced atomically
+  every generation for the app's training view (:func:`read_generation`).
 """
 
 from __future__ import annotations
@@ -39,6 +41,18 @@ METRICS_COLUMNS = (
 )
 TRACE_COLUMNS = ("t", "x", "y", "s", "speed", "throttle", "brake", "gear")
 CHECKPOINT_DIR = "checkpoints"
+GENERATION_FILE = "generation.npz"
+GENERATION_KEYS = (
+    "gen",  # () int
+    "stage",  # () int
+    "params",  # (P, n_params) float32, one genome per row
+    "fitness",  # (P,)
+    "start_s",  # (P,) where each genome's (first) episode started, m along the centre line
+    "start_v",  # (P,) its start speed, m/s
+    "episode_s",  # () the episode's time cap, s
+    "lap_time_s",  # (P,) nan where no lap
+    "progress_m",  # (P,)
+)
 
 
 # ----------------------------------------------------------------------------- TOML writer
@@ -137,6 +151,7 @@ class RunWriter:
         self.config_path = self.run_dir / "config.toml"
         self.metrics_path = self.run_dir / "metrics.csv"
         self.best_lap_path = self.run_dir / "best_lap.npz"
+        self.generation_path = self.run_dir / GENERATION_FILE
         with self.metrics_path.open("w", newline="", encoding="utf-8") as f:
             csv.writer(f, lineterminator="\n").writerow(METRICS_COLUMNS)
 
@@ -182,3 +197,36 @@ class RunWriter:
         np.savez(buf, **{c: np.asarray(trace[c]) for c in TRACE_COLUMNS})
         _atomic_write_bytes(self.best_lap_path, buf.getvalue())
         return self.best_lap_path
+
+    def write_generation(self, **values) -> Path:
+        """Replace ``generation.npz`` with one generation: every key of
+        :data:`GENERATION_KEYS`, nothing else."""
+        keys = set(values)
+        if keys != set(GENERATION_KEYS):
+            raise KeyError(
+                f"generation needs exactly {', '.join(GENERATION_KEYS)}; "
+                f"got {', '.join(sorted(keys))}"
+            )
+        arrays = {k: np.asarray(values[k]) for k in GENERATION_KEYS}
+        arrays["params"] = arrays["params"].astype(np.float32)
+        p = arrays["params"].shape[0]
+        for k in ("fitness", "start_s", "start_v", "lap_time_s", "progress_m"):
+            if arrays[k].shape != (p,):
+                raise ValueError(f"generation {k} must be ({p},), got {arrays[k].shape}")
+        buf = io.BytesIO()
+        np.savez(buf, **arrays)
+        _atomic_write_bytes(self.generation_path, buf.getvalue())
+        return self.generation_path
+
+
+def read_generation(path: Path) -> dict[str, np.ndarray] | None:
+    """A ``generation.npz`` as a dict of arrays, or None if it's missing, unreadable or
+    lacks a key (the writer replaces it atomically, but a reader may still lose a race with
+    the rename on Windows)."""
+    try:
+        with np.load(Path(path)) as z:
+            if not all(k in z.files for k in GENERATION_KEYS):
+                return None
+            return {k: z[k] for k in GENERATION_KEYS}
+    except (OSError, ValueError, EOFError):
+        return None
