@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-25 (training view, D30). This section summarises
+*Last updated: 2026-10-25 (2026 sprite, fixed-size coloured field, D31). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
@@ -47,11 +47,12 @@ exists, but the new package replaces it.
   reproduces `metrics.csv` exactly.
 - **Training view** (D30): the trainer replaces `generation.npz` every generation; the app
   re-drives the newest one with every genome on track (exactly the trainer's episodes; a
-  test checks lap times match). Opens fitted to the circuit; wheel zoom, right-drag pan,
+  test checks lap times match). Cars keep one size at every zoom, each in its own colour,
+  in the 2026 sprite (D31). Opens fitted to the circuit; wheel zoom, right-drag pan,
   `Z` fit, `F` follow the best genome, Up/Down 0.5–16×, `N` newest. Leaving the screen
   stops the training. `f1sim watch <run>` opens it on any run folder. Checked in the real
   window on a live Silverstone run.
-- **Tests:** 598 pass offline. `ruff check` is clean.
+- **Tests:** 602 pass offline. `ruff check` is clean.
 
 **Open problems, most important first:**
 1. **Training needs a racing line.** Spec v2 observes a TUM raceline, or the centre line where
@@ -75,8 +76,10 @@ exists, but the new package replaces it.
 **Next step:** the user tries the training view (menu → Train). Likely tweaks: the
 default playback speed (`training.DEFAULT_SPEED`), the episode cut-off
 (`LEADER_GRACE_S`), and whether leaving the screen should keep training running. In stage 2
-the cloned field drives as one tight pack, so the full-track view shows a single clump; a
-"spread" option (stagger the starts) would be visual only and break the exact match. Then
+the cloned field drives as one tight pack, so even with distinct colours it shows as a
+single clump; a "spread" option (staggered starts) would be only for show and break the
+exact match (D31). The new 2026 sprite (D31) is also in drive and replay; worth a look
+there. Then
 the rest of M4 (settings) and M5 (breadth, including a computed racing line for circuits
 without TUM data). The menu's `BACKDROP_ALPHA` 0.30 is the user's own uncommitted tweak.
 
@@ -603,6 +606,28 @@ opens it on any run folder.
   invisible process keeps a core busy; checkpoints and `best_lap.npz` are already on disk.
 - `CarLayer.only_highlight_label`: 64 labels would bury the track.
 
+**D31 · A 2026 car sprite; fixed-size, one-colour-per-car training field** (2026-10-25)
+The user found the cars changed size with the zoom, looked alike, and that the sprite
+should look more like a 2026 car (they shared a pixel-art reference).
+- **Sprite:** `CAR_ART` is now 16 × 40 (was 12 × 30), drawn as left halves and mirrored.
+  2026 traits: a narrow nose on a three-element front wing, narrow front tyres, wide rear
+  tyres, Pirelli-yellow sidewalls, the halo round a 2-px cockpit, undercut sidepods into a
+  coke-bottle floor, the airbox, a diffuser, a two-element rear wing with no beam wing, and
+  the rain light. Used by every viewer. At 40 rows the minimum on-screen length is now 40 px
+  (one art pixel per screen pixel), up from 30.
+- **Fixed size** in the training view only (`CarLayer(fixed_length_px=40)`,
+  `pixelcar.fixed_scale`): one physical pixel per art pixel at 1×, two at 2×. Drive and
+  replay keep the real 5.6 m when zoomed in, where a fixed size would make the car shrink
+  against the track.
+- **Colours:** `theme.field_liveries(n)` gives each car its own primary: hues a golden turn
+  apart, cycling vivid, pastel and deep shades, so consecutive cars are far apart in colour.
+  The tower sliver is the car's colour. The best car keeps its colour and gets the light
+  outline plus the `BEST` label (it used to be the only car in the AI livery).
+- **Seen, not changed:** in stage 2 the field drives one line (the GA's small mutations of
+  one clone), so the cars overlap as a single clump at any zoom. Spreading them out
+  (staggered starts) would only be for show, and the replay would no longer match the
+  trainer's episodes.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -641,4 +666,5 @@ opens it on any run folder.
 | 2026-10-22 | `cd7d7ff` | Menu: track lines back, wheel-set light level, 30% more lamps (D28) |
 | 2026-10-23 | `f49555c` | Faint red and blue backdrop behind the driving cars (D29) |
 | 2026-10-23 | `c568d56` | Backdrop from the window's left edge, at 0.44 (D29) |
-| 2026-10-25 | (this commit) | Training view: the newest generation re-driven live, `f1sim watch` (D30) |
+| 2026-10-25 | `1c28454` | Training view: the newest generation re-driven live, `f1sim watch` (D30) |
+| 2026-10-25 | (this commit) | 2026 car sprite; fixed-size, one-colour-per-car training field (D31) |

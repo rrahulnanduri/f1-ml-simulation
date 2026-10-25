@@ -135,6 +135,32 @@ LIVERIES: dict[str, Livery] = {
 NEUTRAL_LIVERY = Livery(hex_colour("#8E929A"), hex_colour("#1A1B1E"), hex_colour("#D9DBDE"))
 """A ghost without a known team."""
 
+FIELD_SHADES = ((0.80, 0.95), (0.45, 1.00), (0.90, 0.72))
+"""``(saturation, value)`` levels :func:`field_liveries` cycles through: vivid, pastel, deep."""
+GOLDEN_TURN = 0.6180339887498949
+"""Hue step between consecutive field cars (a golden-ratio turn: every hue lands as far as
+possible from all the earlier ones)."""
+
+
+def _hsv(h: float, s: float, v: float) -> Colour:
+    import colorsys
+
+    r, g, b = colorsys.hsv_to_rgb(h % 1.0, s, v)
+    return (int(round(r * 255)), int(round(g * 255)), int(round(b * 255)), 255)
+
+
+def field_liveries(n: int) -> list[Livery]:
+    """``n`` liveries told apart by colour (the training view's population): hues a golden
+    turn apart, cycling through :data:`FIELD_SHADES` so neighbours in hue differ in shade
+    too. Wings are near-black carbon, endplates and stripes the opposite hue."""
+    out = []
+    for i in range(int(n)):
+        hue = 0.03 + i * GOLDEN_TURN
+        sat, val = FIELD_SHADES[i % len(FIELD_SHADES)]
+        out.append(Livery(_hsv(hue, sat, val), hex_colour("#141518"), _hsv(hue + 0.5, 0.55, 1.0)))
+    return out
+
+
 # ------------------------------------------------------------------------------- text
 
 TEXT_PRIMARY = white(1.0)

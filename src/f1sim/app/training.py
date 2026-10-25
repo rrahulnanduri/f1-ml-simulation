@@ -26,11 +26,12 @@ The testable logic is pure Python/numpy, without arcade objects:
 
 **Window.** The track is the cached :class:`~f1sim.app.render_track.TrackRenderer` under an
 ``arcade.Camera2D`` synced from :class:`~f1sim.app.camera.Camera`, as in the replay viewer.
-It opens fitted to the whole circuit. All cars are pixel-art sprites; the generation's best
-genome (by the trainer's fitness) is in the AI livery with a ``BEST`` label and the rest are
-grey, faded once they are out. The HUD (:mod:`f1sim.app.ui.train_hud`) has the live order,
-the generation, the cars still running with the episode clock, and the best lap per
-generation.
+It opens fitted to the whole circuit. All cars are pixel-art sprites of one size at every
+zoom (:data:`CAR_LENGTH_PX`), each in its own colour (``theme.field_liveries``, also its
+sliver in the tower), faded once out; the generation's best genome (by the trainer's
+fitness) has a light outline and the only label, ``BEST``. The HUD
+(:mod:`f1sim.app.ui.train_hud`) has the live order, the generation, the cars still running
+with the episode clock, and the best lap per generation.
 
 Controls: mouse wheel zoom at the cursor, right-drag pan, ``Z`` fit the whole track, ``F``
 follow the generation's best car, Space pause, Up/Down playback speed, ``N`` jump to the
@@ -82,6 +83,8 @@ FIT_PADDING_PX = 60
 OUT_ALPHA = 70
 """Opacity (0-255) of cars that are out of the episode."""
 TOWER_ROWS = 10
+CAR_LENGTH_PX = 40.0
+"""On-screen length of every car, at any zoom (one physical pixel per art pixel at 1x)."""
 
 
 # ------------------------------------------------------------------------------- the run
@@ -534,10 +537,10 @@ def default_make_act(setup: RunSetup):
 # ------------------------------------------------------------------------ the HUD data
 
 
-def tower_rows(order: list[CarRow], best: int, colours: dict[str, tuple]) -> list[tm.TowerRow]:
+def tower_rows(order: list[CarRow], best: int, colours: list[tuple]) -> list[tm.TowerRow]:
     """The first :data:`TOWER_ROWS` of the live order: the leader's lap time or distance,
     the others' gap to it (``+0.123`` behind a lap time), their distance, ``OUT`` or
-    ``TIME``."""
+    ``TIME``. Each row's sliver is its car's colour (``colours[index]``)."""
     rows = []
     leader_lap = order[0].lap_time if order and order[0].state == "lap" else None
     for k, r in enumerate(order[:TOWER_ROWS]):
@@ -554,7 +557,7 @@ def tower_rows(order: list[CarRow], best: int, colours: dict[str, tuple]) -> lis
         else:
             value = f"{max(r.progress, 0.0):,.0f} m"
         name = "Best" if r.index == best else f"Car {r.index + 1}"
-        rows.append(tm.TowerRow(str(k + 1), name, value, colours[r.state], r.index == best))
+        rows.append(tm.TowerRow(str(k + 1), name, value, colours[r.index], r.index == best))
     return rows
 
 
@@ -603,12 +606,7 @@ class TrainingView(Screen):
         self.hud.headline.set([self.track_title, "Training"])
         self.cars = None
         self._painted_best: int | None = None
-        self._tower_colours = {
-            "lap": theme.ACCENT,
-            "run": theme.TEXT_SECONDARY,
-            "out": theme.TEXT_TERTIARY,
-            "time": theme.TEXT_TERTIARY,
-        }
+        self._car_colours: list[tuple] = []
         self._metrics_len = -1
         self.hud.layout(self.width, self.height)
         self.fit_track()
@@ -646,16 +644,24 @@ class TrainingView(Screen):
         pb = self.watch.playback
         n = pb.n_cars
         if self.cars is None or len(self.cars.labels) != n:
-            # Only the highlighted (best) car's label is drawn, so every label says so
-            self.cars = CarLayer(["Best"] * n, [theme.NEUTRAL_LIVERY] * n, [False] * n)
+            # A colour per car; only the highlighted (best) car's label is drawn, so every
+            # label says so
+            self._liveries = theme.field_liveries(n)
+            self._car_colours = [lv.primary for lv in self._liveries]
+            self.cars = CarLayer(
+                ["Best"] * n, self._liveries, [False] * n, fixed_length_px=CAR_LENGTH_PX
+            )
             self.cars.only_highlight_label = True
             self._painted_best = None
         if self._painted_best != pb.best:
             from f1sim.app.ui.pixelcar import car_texture
 
-            for i, sp in enumerate(self.cars.sprites.sprites):
-                lv = theme.SELF_LIVERY if i == pb.best else theme.NEUTRAL_LIVERY
-                sp.texture = car_texture(lv, False)
+            # The best car keeps its colour and gets the light outline
+            sprites = self.cars.sprites.sprites
+            if self._painted_best is not None:
+                old = self._painted_best
+                sprites[old].texture = car_texture(self._liveries[old], False)
+            sprites[pb.best].texture = car_texture(self._liveries[pb.best], True)
             self._painted_best = pb.best
 
     # ------------------------------------------------------------------------- events
@@ -752,7 +758,7 @@ class TrainingView(Screen):
             self.hud.tower.set(
                 f"Generation {pb.gen}",
                 "Live order",
-                tower_rows(order, pb.best, self._tower_colours),
+                tower_rows(order, pb.best, self._car_colours),
             )
             lap = pb.lap_time[pb.best]
             best_txt = (

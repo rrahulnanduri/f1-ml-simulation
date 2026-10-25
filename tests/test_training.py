@@ -19,7 +19,7 @@ from f1sim.train.metrics import GENERATION_KEYS, RunWriter, read_generation
 from f1sim.train.trainer import Trainer
 from test_trainer import T_REF, agents, controller_genome, small_config, track  # noqa: F401
 
-COLOURS = {"lap": (1,), "run": (2,), "out": (3,), "time": (4,)}
+COLOURS = [(i,) for i in range(5)]
 
 
 def _generation(p: int = 3, n: int = 5, **kw) -> dict:
@@ -190,7 +190,7 @@ def test_tower_rows():
     rows = tr.tower_rows(order, best=0, colours=COLOURS)
     assert [r.value for r in rows] == ["1:20.000", "+0.500", "734 m", "OUT", "TIME"]
     assert [r.name for r in rows][:2] == ["Car 3", "Best"]
-    assert rows[1].is_self and rows[2].colour == (2,)
+    assert rows[1].is_self and rows[0].colour == (2,) and rows[2].colour == (1,)
     no_lap = tr.tower_rows([tr.CarRow(0, "run", math.nan, 1234.0)], best=0, colours=COLOURS)
     assert no_lap[0].value == "1,234 m"
 

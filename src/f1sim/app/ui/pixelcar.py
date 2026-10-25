@@ -1,11 +1,15 @@
 """Top-down pixel-art F1 cars, generated at runtime from a livery.
 
-:data:`CAR_ART` is the car as a 12 x 30 character map, nose up, mirror-symmetric: front wing,
-nose, front tyres, cockpit and halo, sidepods, engine cover, rear tyres and rear wing, with
-one-pixel highlight (spine) and shadow (flanks) lines for shape. :func:`car_pixels` paints it
-in a :class:`~f1sim.app.ui.theme.Livery` (pure numpy), optionally with a 1 px light outline
-(ghosts), and :func:`sprite_scale` picks the on-screen size: the car's real 5.6 m, snapped to
-whole physical pixels per art pixel, with a minimum so it stays readable zoomed out.
+:data:`CAR_ART` is a 2026-rules car as a 16 x 40 character map, nose up, mirror-symmetric:
+a three-element front wing with the nose tip on it, narrow front tyres with yellow sidewalls,
+the halo round a small cockpit, undercut sidepods tapering into a coke-bottle floor, the
+airbox, wide rear tyres, the diffuser, a two-element rear wing with endplates and the rain
+light, with one-pixel highlight (spine) and shadow (flanks) lines for shape.
+:func:`car_pixels` paints it in a :class:`~f1sim.app.ui.theme.Livery` (pure numpy),
+optionally with a 1 px light outline (ghosts), and :func:`sprite_scale` picks the on-screen
+size: the car's real 5.6 m, snapped to whole physical pixels per art pixel, with a minimum so
+it stays readable zoomed out (:func:`fixed_scale` instead keeps one size at every zoom, for
+the training view).
 
 :class:`CarSprites` (arcade, created with a window) turns the pixels into cached textures
 and draws all cars as one ``SpriteList`` with nearest-neighbour sampling, so the pixels stay
@@ -24,41 +28,53 @@ from f1sim.app.ui.layout import Rect, stack_labels
 LABEL_H = 12.0
 """Height of a car label's box (10 px caps plus spacing) when stacking overlapping labels."""
 
-# Legend: . clear, T tyre, t tyre highlight, D carbon (floor, suspension), K cockpit,
-# H halo, P primary, h primary highlight, p primary shadow, W wing (secondary),
-# s secondary shadow, S secondary, E endplate (accent), A accent.
-CAR_ART: tuple[str, ...] = (
-    "EWWWWWWWWWWE",  # 0  front wing
-    "EssssPPssssE",  # 1  wing flap, nose tip
-    ".....PP.....",  # 2  nose
-    ".TT..PP..TT.",  # 3  front tyres
-    ".Tt..PP..tT.",  # 4
-    ".TTDDPPDDTT.",  # 5  front suspension
-    ".Tt..hh..tT.",  # 6
-    ".TT.phhp.TT.",  # 7
-    "....phhp....",  # 8
-    "....pAAp....",  # 9  nose stripe
-    "...pPhhPp...",  # 10
-    "...pPKKPp...",  # 11 cockpit
-    "...pHKKHp...",  # 12 halo
-    "..ppHKKHpp..",  # 13
-    ".SpPPHHPPpS.",  # 14 sidepods
-    ".SpPPhhPPpS.",  # 15
-    ".SpPPhhPPpS.",  # 16
-    ".SpPPhhPPpS.",  # 17
-    ".sSpPhhPpSs.",  # 18
-    "..sSpAApSs..",  # 19 engine cover stripe
-    "...SpPPpS...",  # 20
-    "TTT.pPPp.TTT",  # 21 rear tyres
-    "TTt.phhp.tTT",  # 22
-    "TTtDDPPDDtTT",  # 23 rear suspension
-    "TTt.phhp.tTT",  # 24
-    "TTT..PP..TTT",  # 25
-    "TTT..DD..TTT",  # 26 gearbox
-    ".EWWWWWWWWE.",  # 27 rear wing
-    ".EWWWWWWWWE.",  # 28
-    ".EssssssssE.",  # 29 flap
+# Legend: . clear, T tyre, t tyre highlight (tread), Y tyre sidewall (Pirelli yellow),
+# D carbon (suspension, gearbox), F floor, K cockpit, H halo, P primary, h primary highlight,
+# p primary shadow, W wing (secondary), s secondary shadow, S secondary, E endplate (accent),
+# A accent, L rain light. Each row is the left half; the right half is its mirror image.
+_CAR_HALF: tuple[str, ...] = (
+    "EWWWWWWP",  # 0  front wing: slats
+    "EsssssPP",  # 1
+    "EPPPPPPP",  # 2  main plane; nose tip
+    ".......P",  # 3  nose
+    ".TTT...P",  # 4  front tyre
+    ".YtT...h",  # 5  (yellow sidewall outside, tread highlight)
+    ".YtTDDDh",  # 6  front suspension
+    ".YtT..ph",  # 7
+    ".YtTDDph",  # 8
+    ".YtT..ph",  # 9
+    ".TTT..Ph",  # 10
+    ".....pPh",  # 11
+    ".....pPA",  # 12 number
+    "....pPPA",  # 13
+    "....pPPH",  # 14 halo pillar
+    "...pPPHH",  # 15
+    "...pPPHK",  # 16 cockpit
+    "..SpPPHK",  # 17 sidepod inlets
+    ".SSpPPHK",  # 18
+    "SSPPPPHH",  # 19 halo hoop
+    "SPPPPpPK",  # 20 airbox
+    "SPhPPpPh",  # 21 sidepods
+    "SPhPPpPh",  # 22
+    "SPhPPpPh",  # 23
+    "FsPPPpPh",  # 24 undercut, floor
+    "FFsPPpPh",  # 25
+    "FFFsPpPh",  # 26
+    "FFFFspPh",  # 27 coke bottle
+    ".FFF.pPA",  # 28
+    "TTTT.pPh",  # 29 rear tyre
+    "YttT.pPh",  # 30
+    "YttTDDPh",  # 31 rear suspension
+    "YttT.pph",  # 32
+    "YttTDDDD",  # 33 gearbox
+    "TTTT.FDD",  # 34
+    "...FFFFF",  # 35 diffuser
+    ".EWWWWWW",  # 36 rear wing
+    ".EPPPPPP",  # 37
+    ".Essssss",  # 38 flap
+    ".E.....L",  # 39 rain light
 )
+CAR_ART: tuple[str, ...] = tuple(h + h[::-1] for h in _CAR_HALF)
 ART_W = len(CAR_ART[0])
 ART_H = len(CAR_ART)
 
@@ -67,6 +83,9 @@ TYRE_HI = (58, 59, 64, 255)
 CARBON = (30, 31, 35, 255)
 COCKPIT = (6, 6, 8, 255)
 HALO = (44, 45, 50, 255)
+SIDEWALL = (232, 196, 40, 255)
+FLOOR = (22, 23, 26, 255)
+RAIN_LIGHT = (255, 40, 40, 255)
 
 
 def shade(colour, amount: float) -> tuple[int, int, int, int]:
@@ -84,7 +103,10 @@ def palette(livery: theme.Livery) -> dict[str, tuple[int, int, int, int]]:
         ".": (0, 0, 0, 0),
         "T": TYRE,
         "t": TYRE_HI,
+        "Y": SIDEWALL,
         "D": CARBON,
+        "F": FLOOR,
+        "L": RAIN_LIGHT,
         "K": COCKPIT,
         "H": HALO,
         "P": tuple(livery.primary),
@@ -145,6 +167,12 @@ def sprite_scale(
     return max(int(round(world)), k_min, 1)
 
 
+def fixed_scale(length_px: float, pixel_ratio: float = 1.0) -> int:
+    """Physical screen pixels per art pixel for a car about ``length_px`` logical pixels long
+    at any zoom (a whole multiple of the art, at least 1)."""
+    return max(int(round(length_px * pixel_ratio / ART_H)), 1)
+
+
 def label_offset(heading: float, length_px: float, width_px: float) -> float:
     """Half the screen-space width of the rotated car's bounding box: how far right of its
     centre a label can start without touching it."""
@@ -167,7 +195,8 @@ def car_texture(livery: theme.Livery, outlined: bool):
 
         px = car_pixels(livery, theme.CAR_OUTLINE if outlined else None)
         px = np.ascontiguousarray(np.rot90(px, k=-1))  # nose up -> nose right
-        name = "-".join(f"{c:02x}" for col in (livery.primary, livery.secondary) for c in col)
+        colours = (livery.primary, livery.secondary, livery.accent)
+        name = "-".join(f"{c:02x}" for col in colours for c in col)
         tex = arcade.Texture(Image.fromarray(px, "RGBA"), hash=f"f1sim-car-{name}-{outlined}")
         _textures[key] = tex
     return tex
@@ -212,17 +241,28 @@ class CarLayer:
     """The cars of a viewer with their micro labels, drawn in screen space (under the pixel
     camera) at the sprite size :func:`sprite_scale` picks for the zoom. With
     ``only_highlight_label`` only the highlighted car is labelled (a whole field of labels
-    would bury the track)."""
+    would bury the track); with ``fixed_length_px`` the cars keep that length on screen at
+    every zoom (:func:`fixed_scale`)."""
 
-    def __init__(self, labels: list[str], liveries: list[theme.Livery], outlined: list[bool]):
+    def __init__(
+        self,
+        labels: list[str],
+        liveries: list[theme.Livery],
+        outlined: list[bool],
+        fixed_length_px: float | None = None,
+    ):
         self.sprites = CarSprites(liveries, outlined)
         self.labels = [theme.micro(label, theme.CAR_LABEL) for label in labels]
         self.only_highlight_label = False
+        self.fixed_length_px = fixed_length_px
 
     def draw(self, camera, poses, highlight: int | None, pixel_ratio: float) -> None:
         """``poses``: ``(x, y, heading)`` per car in world metres; the ``highlight`` car is
         drawn on top with a red label."""
-        k = sprite_scale(camera.pixels_per_metre, pixel_ratio)
+        if self.fixed_length_px is None:
+            k = sprite_scale(camera.pixels_per_metre, pixel_ratio)
+        else:
+            k = fixed_scale(self.fixed_length_px, pixel_ratio)
         length = ART_H * k / pixel_ratio
         width = ART_W * k / pixel_ratio
         n = len(poses)
