@@ -441,10 +441,24 @@ def test_stage2_lap_fitness(track, agents, tmp_path):
     assert stats["completion_rate"] == 1.0
     cap = cfg.stage2_time_factor * T_REF
     expected = track.length + 1000.0 + 50.0 * (cap - stats["lap_time_s"])
+    assert np.all(stats["steer_change"] > 0.0)
+    expected -= cfg.steer_change_weight * stats["steer_change"]
     np.testing.assert_allclose(fit, expected, rtol=1e-12)
     assert stats["sim_s"] < cap  # stopped once every car finished its lap
     assert trainer.stage2_start_s == pytest.approx(track.length - 100.0)
     assert 20.0 < trainer.stage2_start_v <= 60.0
+
+
+def test_steer_change_weight_only_shifts_fitness(track, agents, tmp_path):
+    params = np.tile(controller_genome(agents), (small_config().population, 1))
+    fits = {}
+    for w in (0.0, 50.0):
+        cfg = small_config(steer_change_weight=w)
+        trainer = Trainer(track, cfg, tmp_path / f"run{w:g}", reference_lap_s=T_REF)
+        fits[w] = trainer.evaluate(params, stage=2)
+    (f0, s0), (f50, s50) = fits[0.0], fits[50.0]
+    np.testing.assert_array_equal(s0["lap_time_s"], s50["lap_time_s"])
+    np.testing.assert_allclose(f0 - f50, 50.0 * s0["steer_change"], rtol=1e-12)
 
 
 def test_reference_lap_falls_back_to_the_centre_line(track, agents, tmp_path):

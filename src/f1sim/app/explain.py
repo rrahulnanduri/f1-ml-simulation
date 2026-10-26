@@ -19,7 +19,7 @@ import math
 from dataclasses import dataclass, field
 
 from f1sim.sim.car_model import CarParams
-from f1sim.train.trainer import CRASH_PENALTY, LAP_BONUS, LAP_TIME_WEIGHT
+from f1sim.train.trainer import CRASH_PENALTY, LAP_BONUS, LAP_TIME_WEIGHT, TrainConfig
 
 REFERENCE_POLES: dict[str, tuple[float, str]] = {
     "silverstone": (85.819, "Russell, 2024 pole"),
@@ -72,6 +72,7 @@ class Facts:
     best_lap_s: float = math.nan  # the best car of the generation on screen
     best_progress_m: float = math.nan
     best_crashed: bool = False
+    best_fitness: float = math.nan  # the trainer's score, steering cost included
     episode_s: float = math.nan
     track_length_m: float = math.nan
     run_best_s: float = math.nan
@@ -157,6 +158,7 @@ def _score(f: Facts) -> Page:
         Row("Lap completed", f"length + {LAP_BONUS:,.0f} + {LAP_TIME_WEIGHT:g} per s saved"),
         Row("No lap", "metres driven"),
         Row("Crash", f"metres driven − {CRASH_PENALTY:.0%}"),
+        Row("Steering", f"− {TrainConfig.steer_change_weight:g} × each change², summed"),
         Para(
             "Any car that completes the lap beats every car that does not. After that, "
             f"each second saved is worth {LAP_TIME_WEIGHT:g} points."
@@ -167,12 +169,18 @@ def _score(f: Facts) -> Page:
         if math.isfinite(f.best_lap_s) and math.isfinite(f.episode_s):
             score = lap_score(f.track_length_m, f.episode_s, f.best_lap_s)
             saved = f.episode_s - f.best_lap_s
+            steering = score - f.best_fitness if math.isfinite(f.best_fitness) else 0.0
+            tail = (
+                f", less {steering:,.0f} for steering = {f.best_fitness:,.0f}"
+                if steering >= 0.5
+                else ""
+            )
             blocks.append(
                 Para(
                     f"This generation's best, {car}: {fmt_lap(f.best_lap_s)}, "
                     f"{saved:.1f} s under the {f.episode_s:.0f} s limit = "
                     f"{f.track_length_m:,.0f} + {LAP_BONUS:,.0f} + "
-                    f"{LAP_TIME_WEIGHT:g} × {saved:.1f} = {score:,.0f} points.",
+                    f"{LAP_TIME_WEIGHT:g} × {saved:.1f} = {score:,.0f} points{tail}.",
                     True,
                 )
             )
@@ -190,11 +198,14 @@ def _score(f: Facts) -> Page:
             "Off track: past the track limits, which come from real drivers' qualifying "
             "laps. Wrong way: backwards for a second. Stall: almost no progress for a while."
         ),
-        Heading("Not scored"),
+        Heading("Smooth steering"),
         Para(
-            "Smooth driving (so the steering wobbles a little), tyre wear, fuel and contact: "
-            "the cars drive through each other."
+            "Each change of the steering from one decision to the next costs a little, so "
+            "a car that saws at the wheel loses what a few tenths of a second would. Without it "
+            "the steering wobbles: wobbling costs no time."
         ),
+        Heading("Not scored"),
+        Para("Tyre wear, fuel and contact: the cars drive through each other."),
     ]
     return Page("What earns points", tuple(blocks))
 

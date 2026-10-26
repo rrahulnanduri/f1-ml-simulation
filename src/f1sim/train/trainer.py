@@ -38,6 +38,13 @@ the run folder (:mod:`f1sim.train.metrics`) gets a metrics row, checkpoints and 
   it driving harmlessly). Fitness is progress (with the crash penalty) for unfinished cars and
   ``L + 1000 + 50 * (stage2_time_factor * T_ref - lap_time)`` for finished ones.
 
+  *Smooth steering* (both stages, D36). Every car's fitness loses
+  ``steer_change_weight * sum(dsteer**2)``, summed over its decisions until it is done (or
+  finished, in stage 2): the change of the steering command from one decision to the next.
+  Without it the GA lets the steering chatter (it costs no lap time). At the default 200 a
+  typical lap's 0.1 costs 20 points, what 0.4 s would; in 200-generation Silverstone runs it
+  took the yaw-acceleration p99 from 3.3 to 2.7 rad/s^2 at no cost in lap time.
+
   Stage-2 starts have no randomness, so the ``episodes_per_genome`` copies of a genome would
   drive identical episodes. Stage 2 therefore runs a second World with one car per genome
   (car ``i`` = genome ``i``): the fitness is the same as the mean over identical copies, at
@@ -52,8 +59,9 @@ deterministic, so the cars it shows drive what the trainer evaluated.
 
 **T_ref** is the lap time of :func:`scripted.drive_reference_lap` along the circuit's TUM
 raceline (catalogue entry + :mod:`f1sim.data.tum_source`; downloaded once into the cache),
-computed once. If the track isn't in the catalogue, has no TUM raceline, the raceline can't be
-fetched, or the raceline lap doesn't complete cleanly, the centre line is used instead. The
+computed once. A catalogue circuit without a TUM raceline uses a computed minimum-curvature
+line instead (D37). If the track isn't in the catalogue or the lap doesn't complete
+cleanly, the centre line is used. The
 ``reference_lap_s`` argument overrides it. ``config.toml`` records which one was used.
 
 **Determinism.** A single ``numpy.random.Generator(seed)`` draws the optimiser seed first and
@@ -135,6 +143,7 @@ class TrainConfig:
     stage1_promote_progress_m: float = 0.0  # 0 = auto: 0.8 * (stage1_episode_s * 40 m/s)
     stage2_lead_in_m: float = 80.0  # start this far before the line at reference-profile speed
     stage2_time_factor: float = 3.0  # episode cap = factor * T_ref; generous so slow laps count
+    steer_change_weight: float = 200.0  # fitness cost per unit of sum(dsteer^2); 0 = off (D36)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "hidden", tuple(int(h) for h in self.hidden))
@@ -168,6 +177,8 @@ class TrainConfig:
             raise ValueError("stage2_lead_in_m must be >= 0")
         if not self.stage2_time_factor > 0:
             raise ValueError("stage2_time_factor must be > 0")
+        if not self.steer_change_weight >= 0:
+            raise ValueError("steer_change_weight must be >= 0 (0 = off)")
 
     @property
     def promote_progress_m(self) -> float:
@@ -269,20 +280,21 @@ def _git_commit() -> str:
 
 
 def reference_lap_time(track: Track, car: CarParams) -> tuple[float, str]:
-    """``(T_ref, source)``: the scripted lap on the TUM raceline, else on the centre line.
+    """``(T_ref, source)``: the scripted lap on :func:`raceline.raceline_for`'s line (TUM, or
+    minimum curvature for a catalogue circuit without one), else on the centre line.
 
-    ``source`` is ``"tum-raceline"`` or ``"centre-line"``. Raises ``ValueError`` if neither
-    lap completes cleanly.
+    ``source`` is ``"tum-raceline"``, ``"min-curvature"`` or ``"centre-line"``. Raises
+    ``ValueError`` if neither lap completes cleanly.
     """
-    from f1sim.sim.raceline import tum_raceline
+    from f1sim.sim.raceline import raceline_for
     from f1sim.sim.scripted import drive_reference_lap
 
-    raceline = tum_raceline(track.data.id)
+    raceline, source = raceline_for(track)
     if raceline is not None:
         lap = drive_reference_lap(track, car, raceline_xy=raceline)
         if lap.completed and math.isfinite(lap.lap_time_s):
-            return float(lap.lap_time_s), "tum-raceline"
-        log.warning("reference lap on the TUM raceline failed; using the centre line")
+            return float(lap.lap_time_s), source
+        log.warning("reference lap on the %s line failed; using the centre line", source)
     lap = drive_reference_lap(track, car)
     if not (lap.completed and math.isfinite(lap.lap_time_s)):
         raise ValueError(
@@ -427,7 +439,8 @@ class Trainer:
         (stage 2 only), ``best_progress_m``, ``completion_rate`` (share of episodes with a
         completed lap), ``best_lap_s`` (nan if none; stage 2 only), ``crash_rate``,
         ``sim_s`` (simulated seconds until every car was done), and ``start_s`` and
-        ``start_v`` (P,): where each genome's first episode started.
+        ``start_v`` (P,): where each genome's first episode started, and ``steer_change`` (P,):
+        the mean ``sum(dsteer**2)`` the smooth-steering term charged (D36).
         """
         params = np.asarray(params, dtype=np.float32)
         if params.ndim != 2 or params.shape[0] != self.population:
@@ -439,17 +452,27 @@ class Trainer:
         raise ValueError(f"stage must be 1 or 2, got {stage!r}")
 
     def _drive(self, world: World, params_per_car: np.ndarray, obs, finished=None):
-        """Step until every car is done (or finished, if a mask is given); returns sim time."""
+        """Step until every car is done (or finished, if a mask is given).
+
+        Returns sim time, the laps completed and each car's ``sum(dsteer**2)`` while it was
+        still driving its episode.
+        """
         n_steps = 0
         state = world.progress.state
         decision_dt = self._dt * self._action_repeat
         max_steps = int(math.ceil(world.config.episode_time_s / decision_dt)) + 2
         laps = []
+        steer_change = np.zeros(world.n_cars)
+        prev_steer = None
         while n_steps < max_steps:
             stop = state.done if finished is None else (state.done | finished)
             if stop.all():
                 break
             actions = self._policy.act(self.spec, params_per_car, obs)
+            steer = actions[:, 0].astype(np.float64)
+            if prev_steer is not None:
+                steer_change += np.where(stop, 0.0, (steer - prev_steer) ** 2)
+            prev_steer = steer
             res = world.step(actions)
             obs = res.obs
             n_steps += 1
@@ -458,7 +481,7 @@ class Trainer:
                 if newly.any():
                     laps.append((newly, res.lap_time.copy(), state.progress.copy()))
                     finished |= newly
-        return n_steps * decision_dt, laps
+        return n_steps * decision_dt, laps, steer_change
 
     def _evaluate_stage1(self, params: np.ndarray) -> tuple[np.ndarray, dict]:
         world = self._world1
@@ -467,13 +490,15 @@ class Trainer:
         start_v = self._rng.uniform(*STAGE1_V_RANGE, n)
         obs = world.reset(start_s=start_s, start_v=start_v)
         per_car = np.repeat(params, k, axis=0)  # car i drives genome i // k
-        sim_s, _ = self._drive(world, per_car, obs)
+        sim_s, _, steer_change = self._drive(world, per_car, obs)
         st = world.progress.state
         progress = st.progress.copy()
         crashed = _crash_mask(st.done_reason)
-        fit = _penalised(progress, crashed).reshape(p, k).mean(axis=1)
+        fit = _penalised(progress, crashed) - self.config.steer_change_weight * steer_change
+        fit = fit.reshape(p, k).mean(axis=1)
         prog_g = progress.reshape(p, k).mean(axis=1)
         stats = {
+            "steer_change": steer_change.reshape(p, k).mean(axis=1),
             "progress_m": prog_g,
             "lap_time_s": np.full(p, np.nan),
             "best_progress_m": float(prog_g.max()),
@@ -492,7 +517,7 @@ class Trainer:
         p = self.population
         obs = world.reset(start_s=self.stage2_start_s, start_v=self.stage2_start_v)
         finished = np.zeros(p, dtype=bool)
-        sim_s, laps = self._drive(world, params, obs, finished)
+        sim_s, laps, steer_change = self._drive(world, params, obs, finished)
         st = world.progress.state
         lap_time = np.full(p, np.nan)
         progress = st.progress.copy()
@@ -506,8 +531,9 @@ class Trainer:
             + LAP_BONUS
             + LAP_TIME_WEIGHT * (self.stage2_cap_s - np.where(finished, lap_time, 0.0))
         )
-        fit = np.where(finished, lap_fit, fit)
+        fit = np.where(finished, lap_fit, fit) - self.config.steer_change_weight * steer_change
         stats = {
+            "steer_change": steer_change,
             "progress_m": progress,
             "lap_time_s": lap_time,
             "best_progress_m": float(progress.max()),

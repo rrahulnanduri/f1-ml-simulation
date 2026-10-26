@@ -24,3 +24,4 @@ stage1_episode_s = 30.0           # stage 1: random starts, fitness = progress i
 stage1_promote_progress_m = 0.0   # promote when the best mean progress reaches this; 0 = auto (0.8 * stage1_episode_s * 40 m/s)
 stage2_lead_in_m = 80.0           # stage 2: start this far before the line, at min(60, profile speed)
 stage2_time_factor = 3.0          # stage-2 episode cap = factor * T_ref; generous so slow full laps count
+steer_change_weight = 200.0       # fitness cost per unit of sum(dsteer^2) over the episode; 0 = off (D36)

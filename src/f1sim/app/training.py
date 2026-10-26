@@ -75,6 +75,7 @@ from f1sim.sim.car_model import CarParams
 from f1sim.sim.progress import DoneReason
 from f1sim.track.track import Track
 from f1sim.train.metrics import GENERATION_FILE, read_generation
+from f1sim.train.trainer import CRASH_PENALTY
 
 MAX_FRAME_S = 0.25
 """Longest frame time fed to the playback (a stall doesn't jump the cars)."""
@@ -916,7 +917,9 @@ class TrainingView(Screen):
                 "best_index": b,
                 "best_lap_s": float(pb.recorded_lap_s[b]),
                 "best_progress_m": prog,
-                "best_crashed": bool(pb.fitness[b] < prog - 1e-6),
+                "best_fitness": float(pb.fitness[b]),
+                # The crash penalty is 10% of the distance; steering costs far less
+                "best_crashed": bool(pb.fitness[b] < prog - 0.5 * CRASH_PENALTY * max(prog, 0.0)),
                 "episode_s": pb.episode_s,
             }
         return ex.Facts(
