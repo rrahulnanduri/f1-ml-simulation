@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-26 (menu card grid D33; true-size cars, focus overlay D34). This section summarises
+*Last updated: 2026-10-26 (F1 Anatomy showcase D35). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
@@ -57,6 +57,8 @@ exists, but the new package replaces it.
   the circuit; wheel zoom, right-drag pan, `Z` fit, `F` follow the best genome, Up/Down
   0.5–16×, `N` newest. Leaving the screen stops the training. `f1sim watch <run>` opens it
   on any run folder. Checked in the real window on a Silverstone run.
+- **F1 Anatomy** (D35): `python f1_anatomy/launch.py` opens five interactive figures of how
+  the car works, a static site beside the package.
 - **Tests:** 624 pass offline. `ruff check` is clean.
 
 **Open problems, most important first:**
@@ -89,7 +91,7 @@ single clump; a "spread" option (staggered starts) would be only for show and br
 exact match (D31). The new 2026 sprite (D31) is also in drive and replay; worth a look
 there. Then
 the rest of M4 (settings) and M5 (breadth, including a computed racing line for circuits
-without TUM data). The menu's `BACKDROP_ALPHA` 0.30 is the user's own uncommitted tweak.
+without TUM data). The menu's `BACKDROP_ALPHA` is 0.30 (the user's tweak, committed).
 
 **Gotchas:**
 - **The hero photos ship with the app** in `src/f1sim/app/assets/hero/stage` (45 WebP photos,
@@ -705,6 +707,16 @@ the driver named on a pointer line and the sector times as three coloured lines.
   bars: those mean "fastest / personal best", and with two cars they'd say little; colours
   that name the sector link the cards to the track.
 
+**D35 · F1 Anatomy: a self-contained web showcase beside the package** (2026-10-26)
+Five interactive isometric figures explain how an F1 car works (chassis and safety, power
+unit, aerodynamics, transmission and steering, suspension, brakes and tyres), each with live
+controls, readouts from a small model and a guided walk-through. They live in `f1_anatomy/`
+as built static pages (`site/`), made with Node from the vendored Anatomy kit (MIT).
+Nothing in `f1sim` imports it; `f1_anatomy/launch.py` (standard library only) opens it and
+offers `open_showcase()` for a future menu hook. Its screenshots and scratch stay
+git-ignored. **Rejected:** drawing the figures in pyglet inside the app (far more work for
+diagrams that are better as vector pages) and a separate repo (it shares the project's story).
+
 ## Change log
 
 | Date | Commit | Change |
@@ -748,3 +760,4 @@ the driver named on a pointer line and the sector times as three coloured lines.
 | 2026-10-25 | `bf8f611` | "How it works" drawer in the training view (D32) |
 | 2026-10-25 | `bf8f611` | True-size cars; hold-Enter focus overlay with pole ghost and sectors (D34) |
 | 2026-10-25 | `2b7c453` | Menu rebuilt as a card grid in the left 40%, display font slot for HN Revline (D33) |
+| 2026-10-26 | `25bbabc` | F1 Anatomy: five interactive isometric figures of the car, `f1_anatomy/` (D35) |
