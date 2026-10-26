@@ -13,7 +13,8 @@ Every element is scaled by the fade level ``f`` (0..1), so the overlay eases in 
   card adds its gap to the pole in each sector, green when it's quicker.
 
 :func:`card_rect` places the cards (pure): the AI's above right of its car, the pole's below
-left, kept inside the window.
+left, kept inside the window. :func:`draw_card` is the card itself, which the "How it works"
+drawer (:mod:`f1sim.app.ui.drawer`) also uses, so the two read as one style.
 """
 
 from __future__ import annotations
@@ -78,6 +79,25 @@ def sector_polylines(track, marks: np.ndarray) -> list[np.ndarray]:
 def _alpha(colour, a: float) -> tuple[int, int, int, int]:
     base = colour[3] if len(colour) > 3 else 255
     return (colour[0], colour[1], colour[2], int(round(base * min(max(a, 0.0), 1.0))))
+
+
+CARD_FILL = (10, 10, 12, 235)
+CARD_OUTLINE = 0.14
+"""Alpha of the card's 1 px outline (primary text colour)."""
+STRIPE_W = 2.0
+
+
+def draw_card(rect: lay.Rect, colour, f: float = 1.0) -> None:
+    """A dark card with a faint 1 px outline and a ``colour`` stripe down its left edge,
+    faded by ``f``."""
+    fill = (*CARD_FILL[:3], int(CARD_FILL[3] * f))
+    arcade.draw_lrbt_rectangle_filled(rect.x, rect.right, rect.y, rect.top, fill)
+    arcade.draw_lrbt_rectangle_outline(
+        rect.x, rect.right, rect.y, rect.top, _alpha(theme.TEXT_PRIMARY, CARD_OUTLINE * f), 1.0
+    )
+    arcade.draw_lrbt_rectangle_filled(
+        rect.x, rect.x + STRIPE_W, rect.y, rect.top, _alpha(colour, f)
+    )
 
 
 class _Card:
@@ -156,16 +176,7 @@ class FocusLayer:
         arcade.draw_circle_filled(sx, sy, 2.5, _alpha(card.colour, f), 12)
         arcade.draw_line(sx, sy, ex, ey, line, 1.0)
         arcade.draw_line(ex, ey, edge_x, ey, line, 1.0)
-        # The card
-        arcade.draw_lrbt_rectangle_filled(
-            rect.x, rect.right, rect.y, rect.top, (10, 10, 12, int(235 * f))
-        )
-        arcade.draw_lrbt_rectangle_outline(
-            rect.x, rect.right, rect.y, rect.top, _alpha(theme.TEXT_PRIMARY, 0.14 * f), 1.0
-        )
-        arcade.draw_lrbt_rectangle_filled(
-            rect.x, rect.x + 2, rect.y, rect.top, _alpha(card.colour, f)
-        )
+        draw_card(rect, card.colour, f)
         pad = 12.0
         x0, x1 = rect.x + pad, rect.right - pad
         top = rect.top - pad

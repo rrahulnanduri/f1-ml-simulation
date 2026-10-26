@@ -1,12 +1,16 @@
 """A side drawer that slides in from the right edge: the training view's "How it works".
 
-Closed, only its handle shows: a small glass tab, ``? HOW IT WORKS``, on the window's right
-edge, half-way up. A click on it (or ``H``) slides the drawer out over the track, easing
+Closed, only its handle shows: a small tab, ``? HOW IT WORKS``, on the window's right edge,
+half-way up. A click on it (or ``H``) slides the drawer out over the track, easing
 over :data:`ANIM_S`; the same again, or Esc, slides it back. Inside: a row of tabs (one per
 page of :func:`f1sim.app.explain.pages`), the page title, and the page's blocks, which
 scroll with the mouse wheel when they don't fit. Paragraphs are wrapped here
 (:func:`wrap_words`), not by pyglet: at 2x, pyglet's word wrap split words whose glyphs sat
 in different atlas textures.
+
+It is drawn in the focus overlay's card style (:func:`f1sim.app.ui.focus_layer.draw_card`,
+D38): a dark card with a 1 px outline and a red stripe down its left edge, numbers in the
+mono face, and thin bars with a faint track, as on the sector bars.
 
 The geometry (:func:`drawer_rect`, :func:`handle_rect`, :func:`bar_fraction`) and the
 slide (:class:`Slide`) are pure functions and classes; :class:`Drawer` creates its
@@ -22,6 +26,7 @@ import arcade
 from f1sim.app import explain as ex
 from f1sim.app.ui import layout as lay
 from f1sim.app.ui import theme
+from f1sim.app.ui.focus_layer import draw_card
 from f1sim.app.ui.glass import GlassRenderer
 from f1sim.app.ui.hud import _hairline, _place, _set
 from f1sim.app.ui.paging import ease_out_cubic
@@ -38,7 +43,9 @@ TABS_H = 40.0
 """Height of the tab row at the top."""
 GAP = 10.0
 """Space between blocks."""
-BAR_H = 4.0
+BAR_H = 3.0
+BAR_TRACK_ALPHA = 0.22
+"""Alpha of a bar's unfilled track, as on the focus cards' sector bars."""
 SCROLL_STEP = 40.0
 """Pixels per wheel notch."""
 
@@ -141,6 +148,7 @@ class Drawer:
         self.handle_label = theme.micro("?  How it works", theme.TEXT_PRIMARY, anchor_x="center")
         self.tabs = [theme.micro(t, theme.TEXT_SECONDARY) for t in ex.PAGE_TABS]
         self.close = theme.micro("Esc ×", theme.TEXT_TERTIARY, anchor_x="right")
+        self.counter = theme.make_text("", 11, theme.TEXT_TERTIARY, face="mono")
         self.title = theme.make_text("", TITLE_PX, theme.TEXT_PRIMARY, face="display")
         self._pages: list[ex.Page] = []
         self._built: dict[int, tuple[ex.Page, float, list]] = {}
@@ -246,7 +254,9 @@ class Drawer:
                 y += t.content_height + GAP
             elif isinstance(b, ex.Row):
                 name = theme.make_text(b.name, 12, theme.TEXT_SECONDARY)
-                value = theme.make_text(b.value, 12, theme.TEXT_PRIMARY, anchor_x="right")
+                value = theme.make_text(
+                    b.value, 12, theme.TEXT_PRIMARY, face="mono", anchor_x="right"
+                )
                 y += 13.0
                 items.append(("row", y, (name, value)))
                 y += 9.0
@@ -280,13 +290,13 @@ class Drawer:
         frac = self.slide.frac(now)
         r = self.rect = drawer_rect(win_w, win_h, frac)
         h = handle_rect(r, win_w)
-        self.glass.panel(h, radius=HANDLE_H / 2)
-        _place(self.handle_label, h.x + h.w / 2, h.y + 11)
+        draw_card(h, theme.ACCENT)
+        _place(self.handle_label, h.x + h.w / 2 + 1, h.y + 11)
         with theme.text_batch():
             self.handle_label.draw()
         if frac <= 0.0 or not self._pages:
             return
-        self.glass.panel(r)
+        draw_card(r, theme.ACCENT)
         with theme.text_batch():
             self._draw_header(r)
         height, items = self._built_page()
@@ -323,8 +333,12 @@ class Drawer:
         _place(self.close, r.right - PAD, base)
         self.close.draw()
         _hairline(r.x + 1, r.right - 1, r.top - TABS_H, theme.SEPARATOR)
-        _place(self.title, r.x + PAD, r.top - TABS_H - 16.0 - TITLE_PX + 4)
+        title_y = r.top - TABS_H - 16.0 - TITLE_PX + 4
+        _place(self.title, r.x + PAD, title_y)
         self.title.draw()
+        _set(self.counter, f"{self.page + 1:02d} / {len(self.tabs):02d}")
+        _place(self.counter, r.right - PAD - self.counter.content_width, title_y + 2)
+        self.counter.draw()
 
     def _draw_items(self, r: lay.Rect, items: list, top: float) -> None:
         x0, x1 = r.x + PAD, r.right - PAD
@@ -357,6 +371,7 @@ class Drawer:
                 label.draw()
                 value.draw()
                 by = y - 8 - BAR_H
-                arcade.draw_lrbt_rectangle_filled(x0, x1, by, by + BAR_H, theme.SEPARATOR)
                 colour = theme.ACCENT if highlight else theme.TEXT_SECONDARY
+                track = (*colour[:3], int(255 * BAR_TRACK_ALPHA))
+                arcade.draw_lrbt_rectangle_filled(x0, x1, by, by + BAR_H, track)
                 arcade.draw_lrbt_rectangle_filled(x0, x0 + frac * (x1 - x0), by, by + BAR_H, colour)
