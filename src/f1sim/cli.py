@@ -1,4 +1,4 @@
-"""`f1sim` command line: list, build, plot and drive tracks. Train/replay arrive in M3-M4."""
+"""`f1sim` command line: the app, track building, training, ghosts, replays and driving."""
 
 from __future__ import annotations
 

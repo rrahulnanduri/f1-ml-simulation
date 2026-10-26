@@ -1,31 +1,32 @@
 # F1 ML Simulation
 
-AI cars learn to drive real Formula 1 circuits through neuroevolution. Track layouts and a
-ghost car replaying a real qualifying lap come from F1 timing data via
-[FastF1](https://docs.fastf1.dev/).
-
-![F1 ML Simulation](images/screen.png)
+AI cars learn to drive real Formula 1 circuits through neuroevolution, on real track geometry,
+racing ghosts of real drivers' qualifying laps (from [OpenF1](https://openf1.org) and
+[FastF1](https://docs.fastf1.dev/)).
 
 ## Status
 
-The project is mid-revamp; see [docs/revamp-plan.md](docs/revamp-plan.md).
+`f1sim` (`src/f1sim/`) is the whole app; the old prototype is gone (M4). See
+[docs/PROJECT_LOG.md](docs/PROJECT_LOG.md) for where things stand and
+[docs/revamp-plan.md](docs/revamp-plan.md) for the design.
 
-- **Legacy app (works today):** `main.py` and the modules directly under `src/`. 30 cars, each
-  driven by a small neural network, evolve on a track built from FastF1 telemetry while
-  Hamilton's lap plays as a ghost. Its known limitations are measured in section 1 of the plan.
-  The main one is that the "track" is one driver's racing line with fixed-width walls, not the
-  real circuit.
-- **New package `f1sim` (being built):** `src/f1sim/`, delivered milestone by milestone. It
-  will have real track geometry in metres, F1-like physics, headless training and a new app.
+- **Tracks:** real circuit geometry in metres from the TUM racetrack-database, aligned to a real
+  qualifying lap, with track limits from where real cars drive. Circuits TUM doesn't have
+  (Monaco, Baku, Singapore, ...) are rebuilt from every driver's qualifying laps on OpenF1.
+- **Physics:** an F1-like car in SI units; the scripted lap at Silverstone is within 0.7% of
+  the 2024 pole.
+- **Training:** the scripted driver is copied into a neural network, then evolved. After 20
+  minutes the best Silverstone laps beat the real pole.
+- **App:** one window: a menu with a 3D-lit hero car, Drive, Replay and a live training view.
 
 | Milestone | Scope | State |
 |---|---|---|
 | M0 | Repo cleanup, packaging, tooling | done |
-| M1 | Real track pipeline (TUM racetrack-database + FastF1 alignment) | done |
+| M1 | Real track pipeline (TUM racetrack-database + lap alignment) | done |
 | M2 | Vectorised simulation core in SI units | done |
-| M3 | Headless neuroevolution training | next |
-| M4 | New app; legacy code removed | planned |
-| M5 | More circuits, multi-track training, polish | planned |
+| M3 | Headless neuroevolution training | done |
+| M4 | New app; legacy code removed | done, settings to come |
+| M5 | More circuits, multi-track training, polish | in progress |
 
 ## Setup
 
@@ -38,19 +39,26 @@ python -m venv .venv
 Activate it (`.venv\Scripts\activate` on Windows, `source .venv/bin/activate` on macOS/Linux), then:
 
 ```bash
-pip install -e ".[dev,fast]"
+pip install -e ".[dev,fast,es]"
 ```
 
-The `fast` extra adds numba, which compiles the ray casts and track projection. With 64 cars,
+The `es` extra adds the CMA-ES optimiser. The `fast` extra adds numba, which compiles the ray casts and track projection. With 64 cars,
 the simulation runs at 64× real time with it and 17.6× without (`python scripts/bench.py`).
 
 **Always run the latest version (Windows):** double-click `scripts\run_latest.bat`, or a
 desktop shortcut to it. It pulls the latest commits, reinstalls only if the dependencies
 changed, then opens the menu. Arguments go to `f1sim`, e.g. `run_latest.bat drive silverstone`.
 
-## Build tracks (new package)
+## Run it
 
-List circuits, then build one from TUM data, aligned to a FastF1 qualifying lap:
+```bash
+f1sim menu
+```
+
+## Build tracks
+
+List circuits, then build one (TUM data aligned to a real qualifying lap, or real laps for
+circuits TUM doesn't have):
 
 ```bash
 f1sim tracks
@@ -84,21 +92,8 @@ f1sim reference-lap silverstone
   - Reference laps come from OpenF1 for 2023 onwards. Older seasons go through FastF1, which only works for sessions already in its cache, because F1's live-timing server now needs an F1 TV subscription.
   - Pick the source with `--source openf1|fastf1`.
   - Suzuka's figure-eight isn't supported yet.
-  - Circuits missing from TUM need the M5 fallback.
-
-## Run the legacy app
-
-Run it from the repo root, because it reads and writes `cache/` relative to the current folder:
-
-```bash
-python main.py
-```
-
-- **First run:** each new circuit downloads its session data from FastF1, which takes a while
-  and freezes the window until it finishes. Silverstone 2024 is the default.
-- **Sidebar:** pick a year and circuit, then press **Load Track**. The slider sets the sim
-  speed.
-- **Cache:** downloaded data goes to `cache/`, which git ignores.
+  - Circuits built from laps (`--from-laps`, automatic without TUM data) are approximate: the
+    edges are where cars drove plus a margin, and the road is widened to a typical width.
 
 ## Development
 
@@ -113,8 +108,8 @@ pytest
 ## Layout
 
 ```
-main.py, src/*.py      legacy app (deleted in M4)
-src/f1sim/             new package (see docs/revamp-plan.md, section 3)
+src/f1sim/             the package (see docs/revamp-plan.md, section 3)
+f1_anatomy/            interactive figures of how an F1 car works (static site)
 tests/                 pytest suite
 docs/revamp-plan.md    problems, target design, milestones
 docs/data-formats.md   file-format spec for tracks, ghosts, checkpoints, runs
@@ -124,6 +119,7 @@ docs/data-formats.md   file-format spec for tracks, ghosts, checkpoints, runs
 
 - Timing and telemetry data: [FastF1](https://github.com/theOehrly/Fast-F1). Formula 1 data is
   the property of Formula One World Championship Limited; this is an unofficial hobby project.
-- Planned from M1: track centre lines and widths from the
+- Track centre lines and widths: the
   [TUM racetrack-database](https://github.com/TUMFTM/racetrack-database) (LGPL-3.0),
   downloaded at build time and not redistributed.
+- Laps from 2023 onwards: [OpenF1](https://openf1.org) (CC BY-NC-SA 4.0).
