@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "f1-anatomy",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["f1_anatomy/serve.mjs", "5177"],
+      "port": 5177
+    }
+  ]
+}

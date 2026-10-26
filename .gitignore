@@ -30,3 +30,10 @@ Thumbs.db
 
 # Source 3D models and their renders (large; see docs/PROJECT_LOG.md)
 assets_src/
+
+# Commercial display font (HN Revline); drop it in locally, never commit it
+src/f1sim/app/assets/fonts/HNRevline/
+
+# F1 Anatomy working files: screenshots (no images in the repo) and scratch scripts
+f1_anatomy/shots/
+f1_anatomy/tmp/
