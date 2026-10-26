@@ -154,6 +154,7 @@ def _cmd_reference_lap(args: argparse.Namespace) -> int:
     from f1sim.data import catalog, tum_source
     from f1sim.data.track_pipeline import load_track
     from f1sim.sim.car_model import CarParams, load_car_params
+    from f1sim.sim.mincurv import min_curvature_line
     from f1sim.sim.scripted import drive_reference_lap
 
     try:
@@ -165,15 +166,6 @@ def _cmd_reference_lap(args: argparse.Namespace) -> int:
         )
         return 1
     params = load_car_params(args.car) if args.car else CarParams()
-    raceline = None
-    line = "centre line"
-    if not args.centre_line:
-        tum_name = catalog.get(args.track_id).tum_name
-        if tum_name is None:
-            print(f"error: no TUM raceline for {args.track_id}", file=sys.stderr)
-            return 1
-        raceline = tum_source.parse_tum_raceline(tum_source.fetch_tum_raceline(tum_name))
-        line = "TUM raceline"
     if args.white_line:
         edges = "white line"
     elif track.has_limits:
@@ -181,6 +173,16 @@ def _cmd_reference_lap(args: argparse.Namespace) -> int:
         track = track.sim_track()
     else:
         edges = "white line (no limits built; see build-track --limits)"
+    raceline = None
+    line = "centre line"
+    if not args.centre_line:
+        tum_name = catalog.get(args.track_id).tum_name
+        if tum_name is None:
+            raceline = min_curvature_line(track)
+            line = "minimum-curvature line (no TUM raceline)"
+        else:
+            raceline = tum_source.parse_tum_raceline(tum_source.fetch_tum_raceline(tum_name))
+            line = "TUM raceline"
     lap = drive_reference_lap(track, params, raceline_xy=raceline)
     if args.save:
         out = Path(args.save)
