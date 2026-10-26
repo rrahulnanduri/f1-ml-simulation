@@ -35,7 +35,7 @@ All generated data goes in the user cache folder (`paths.py`), not the repo. The
     "reference_driver": "RUS", "reference_lap_s": 85.819,
     "rotation_rad": 0.0, "tx_m": 0.0, "ty_m": 0.0, "scale": 1.0, "mirrored": false,
     "median_dist_m": 0.0, "inside_ratio": 0.0,
-    "inside_ratio_tol": 0.0, "edge_tolerance_m": 1.0
+    "inside_ratio_tol": 0.0, "edge_tolerance_m": 4.0
   },
   "built_with": {"f1sim": "0.1.0", "builder_version": 1}
 }
@@ -48,6 +48,7 @@ All generated data goes in the user cache folder (`paths.py`), not the repo. The
   - **Bounds:** they are never inside the white line (`w_left`/`w_right`), and never more than `max_extra_m` beyond it.
   - **Who uses them:** the simulation drives on the limits (`Track.sim_track()`, `WorldConfig.use_track_limits`). Drawing uses `w_*` for the white line, and the band between the white line and the limit is the kerb and run-off.
   - **Older files:** version 1 files load without limits.
+- **Tracks built from laps** (`f1sim.data.lap_geometry`, D40) have `source.geometry` `"openf1-laps"` and `source.widths` `"lap-envelope"`, plus `license`, `laps`, `years`, `min_width_m` and `approximate: true`. Their edges are where real cars drove plus a margin (no separate limits), and their `fastf1_alignment` is the identity, with `reference_year`.
 - `fastf1_alignment.lap_source` says which source served the reference lap ("openf1" or "fastf1"). Both use the same raw frame.
 - `fastf1_alignment` maps FastF1 metres (X/Y ÷ 10) into the track frame: `p' = scale · R(rotation_rad) · diag(1, −1 if mirrored else 1) · p + (tx_m, ty_m)` (`f1sim.data.alignment.apply_alignment`).
   - `inside_ratio` counts the reference lap's samples strictly inside the edges.

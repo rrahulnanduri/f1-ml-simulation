@@ -120,7 +120,7 @@ The old `src/` keeps running until M4 is done, then it gets deleted in one commi
 ### 4.1 Sources
 
 1. **Primary:** the [TUM racetrack-database](https://github.com/TUMFTM/racetrack-database). Each file `tracks/<Name>.csv` has a `# x_m,y_m,w_tr_right_m,w_tr_left_m` header line, then about 5 m spaced centre-line points with widths. The centre lines come from OpenStreetMap and the widths from satellite images, so the centre line isn't perfectly centred and accuracy varies. It's licensed LGPL-3.0, so the download is pinned to a specific commit hash. It also has a `racelines/` folder with min-curvature racing lines, which section 6 uses for physics calibration.
-2. **Fallback** for circuits TUM doesn't have: `width_estimator.py`.
+2. **Fallback** for circuits TUM doesn't have. Built as `lap_geometry.py` from OpenF1 qualifying laps (D40), since F1 live timing now needs a sign-in; the original plan was `width_estimator.py`:
    - Build a centre line from the median of every driver's qualifying and race laps (`session.pos_data`, about 4 Hz).
    - Take the 1st–99th percentile of each driver's sideways offset from that centre line, then add a 1.0 m margin to each side.
    - Smooth the result and tag the file `"widths": "fastf1-spread"` (lower quality, shown in the UI).
@@ -149,6 +149,7 @@ FastF1 X/Y is in 1/10 m, in its own frame. TUM uses local metres in a different 
 3. Refine with point-to-line ICP: rotation and translation, scale fixed at 1, with a ±2% scale check logged.
 4. **Acceptance:** median distance from telemetry to the centre line ≤ 6 m, and ≥ 98% of samples within 1 m of the track edges. If not, reject the TUM layout for that year and use the fallback.
    - These were relaxed from ≤ 4 m and 98% strictly inside after measuring real data in M1. TUM's own optimal racing line sits a median 5.1 m off Silverstone's centre line. Russell's and Hamilton's 2024 laps are 95.7–95.8% strictly inside, because they use the kerbs at corner exits, and 99.7% within 1 m. A lap from the wrong circuit scores ≤ 23% inside.
+   - Since D39 (project log): ≥ 99% within **4 m** of the edges. Real cars run up to 4 m past TUM's painted edge at a corner or two on some circuits (what track limits allow); changed layouts still score ≤ 96.4%.
 5. Store the transform in the track file ([data-formats.md](data-formats.md), section 1) so ghosts and laps from any driver line up for free.
 
 ## 5. Data formats

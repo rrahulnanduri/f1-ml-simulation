@@ -2,19 +2,24 @@
 
 ## Current state
 
-*Last updated: 2026-10-26 (F1 Anatomy showcase D35). This section summarises
+*Last updated: 2026-10-26 (leftovers: D36-D40, all circuits but Suzuka build, legacy gone). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
 **What it is.** AI cars learn to drive real F1 circuits by neuroevolution. The `f1sim` package
 (`src/f1sim/`) has real track geometry, F1-like physics, headless training, real-driver ghost
-laps, and arcade viewers for driving and replay. The legacy app (`main.py`, `src/*.py`) still
-exists, but the new package replaces it.
+laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
 
 **What works:**
-- **Tracks:** `f1sim build-track <id> --limits` builds a circuit from TUM's centre line and
-  widths, aligns it to a real qualifying lap, and adds track limits from 60 real laps.
-  Silverstone is complete; 7 TUM circuits pass the 2024 alignment check.
+- **Tracks:** every calendar circuit but Suzuka builds. `f1sim build-track <id> --limits`
+  builds from TUM's centre line and widths, aligned to a real qualifying lap, with track
+  limits from 60 real laps; 11 TUM circuits pass the alignment check (D39). Circuits TUM
+  lacks, and TUM layouts that are out of date (`--from-laps`), are built from 60-80 real
+  qualifying laps (D40): Monaco, Baku, Marina Bay, Jeddah, Miami, Imola, Las Vegas, Lusail,
+  Madrid, Yas Marina, Albert Park, Barcelona, Zandvoort. Their widths are approximate.
+- **Racing line** (observed by the policy, D37): TUM's where it is on TUM geometry and the
+  scripted driver can lap it, else a computed minimum-curvature line (within 0.1-1.1% of
+  TUM's where both exist).
 - **Physics:** the scripted reference lap at Silverstone is 86.433 s, +0.7% against Russell's
   2024 pole of 85.819 s.
 - **Simulation:** 64 cars at about 64× real time with numba.
@@ -45,6 +50,7 @@ exists, but the new package replaces it.
   then evolves it with the GA (D17). After 20 min the best Silverstone laps are 85.10, 85.45
   and 85.53 s (seeds 0–2). That beats the 86.43 s reference lap and Russell's 85.82 s pole;
   before D16/D17 the best was 100.7 s. The policy sees the racing line (observation spec v2).
+  Fitness charges for steering changes (D36), which roughly halved the chatter.
   `--init random` (`configs/train_scratch.toml`) still trains from scratch. The same seed
   reproduces `metrics.csv` exactly.
 - **Training view** (D30): the trainer replaces `generation.npz` every generation; the app
@@ -56,42 +62,35 @@ exists, but the new package replaces it.
   learning, scoring, realism and physics with this run's numbers (D32). Opens fitted to
   the circuit; wheel zoom, right-drag pan, `Z` fit, `F` follow the best genome, Up/Down
   0.5–16×, `N` newest. Leaving the screen stops the training. `f1sim watch <run>` opens it
-  on any run folder. Checked in the real window on a Silverstone run.
+  on any run folder. Checked in the real window on a Silverstone run. The drawer now uses
+  the focus cards' style (D38; checked offscreen only).
 - **F1 Anatomy** (D35): `python f1_anatomy/launch.py` opens five interactive figures of how
   the car works, a static site beside the package.
-- **Tests:** 624 pass offline. `ruff check` is clean.
+- **Tests:** 640 pass offline. `ruff check` is clean.
 
 **Open problems, most important first:**
-1. **Training needs a racing line.** Spec v2 observes a TUM raceline, or the centre line where
-   a circuit has none. The 9 circuits without TUM data (open problem 4) would train against
-   their centre line, a poor line. Computing a minimum-curvature line for them is the fix.
-2. **The 2× UI is checked in simulation only.** Text is sharp at any scale (D26), verified
-   in a simulated 192-dpi window. A look on the user's real 2× display is still worth doing.
-3. **Some circuits fail the 2024 alignment check.**
-   - Shanghai, Spa, Mexico City and the Red Bull Ring fail for no known reason.
-   - Yas Marina, Albert Park, Barcelona and Zandvoort fail because their layouts changed after
-     TUM's survey.
-   - Suzuka is rejected because its figure-eight centre line crosses itself.
-4. **Circuits not in TUM need a fallback** (M5): Monaco, Baku, Singapore, Jeddah, Miami, Imola,
-   Las Vegas, Lusail, Madrid.
-5. **The AI car's heading wiggles a little.** That's real: the policy's steering chatters (yaw
-   acceleration p99 6 rad/s², against 1.3 for a ghost). An action-change penalty in training
-   would fix it; the viewer shows it faithfully.
-6. **Drive mode's off-track rule still uses the white line**, not the track limits
-   (`app/drive.py`).
+1. **Suzuka's figure-eight isn't supported.** Its centre line crosses itself at the bridge.
+   Needs: crossover points in the track data, crossover-aware projection (about 20 unhinted
+   `Track.project` calls), rays that ignore the other level's walls, and drawing the bridge.
+   Proposed to the user as its own task.
+2. **Scripted laps against real poles are uneven on lap-built circuits.** Against the newest
+   pole: Miami -1.4%, Marina Bay -2.1%, Yas Marina +2.9%, Zandvoort +3.0%, Imola +3.1%,
+   Jeddah +3.5%, Shanghai +3.8% (min-curvature line), Lusail +7.8%. Several poles are no
+   fair yardstick: Las Vegas 2025 (-19%) and Spa 2024 (-8.6%) were wet, and 2026 poles
+   (Monaco, Baku, Melbourne, Barcelona, Madrid) come from slower cars than the physics is
+   tuned to. Monaco is -0.6% against the 2025 pole. Lusail is the real gap: maybe the 12 m
+   road is too narrow there, or the car is slow in long fast corners.
+3. **M4 settings** have no agreed scope yet: ask the user what belongs on a settings screen.
+4. **Checks only the user can do:** the training view's focus overlay and the restyled
+   drawer in the real window, and the 2× UI on their real 2× display (D26).
 
-**Next step:** the user tries the training view's focus overlay (hold Enter) and the
-true-size cars. The user found the drawer
-"alright, not premium"; the focus overlay's card style (`ui/focus_layer.py`) may be the
-direction to bring it towards. Likely tweaks: the
-default playback speed (`training.DEFAULT_SPEED`), the episode cut-off
-(`LEADER_GRACE_S`), and whether leaving the screen should keep training running. In stage 2
-the cloned field drives as one tight pack, so even with distinct colours it shows as a
-single clump; a "spread" option (staggered starts) would be only for show and break the
-exact match (D31). The new 2026 sprite (D31) is also in drive and replay; worth a look
-there. Then
-the rest of M4 (settings) and M5 (breadth, including a computed racing line for circuits
-without TUM data). The menu's `BACKDROP_ALPHA` is 0.30 (the user's tweak, committed).
+**Next step:** the user tries the focus overlay (hold Enter) and the restyled drawer, and
+says what a settings screen should hold. Likely tweaks in the training view: the default
+playback speed (`training.DEFAULT_SPEED`), the episode cut-off (`LEADER_GRACE_S`), and
+whether leaving the screen should keep training running. Retrain Silverstone with the
+steering term (D36) to confirm the wobble is gone in the viewer. Then Suzuka (open problem 1)
+and M5's multi-track training. The work is on branch `feature/leftovers`, not merged.
+Tracks built by agents may need copying to the user's own cache (Gotchas, D9).
 
 **Gotchas:**
 - **The hero photos ship with the app** in `src/f1sim/app/assets/hero/stage` (45 WebP photos,
@@ -717,6 +716,85 @@ offers `open_showcase()` for a future menu hook. Its screenshots and scratch sta
 git-ignored. **Rejected:** drawing the figures in pyglet inside the app (far more work for
 diagrams that are better as vector pages) and a separate repo (it shares the project's story).
 
+**D36 · A smooth-steering term in the training fitness** (2026-10-26)
+The AI's heading wiggled (open problem 5): the GA let the steering chatter because chatter
+costs no lap time. Every car's fitness now loses `steer_change_weight * sum(dsteer^2)`, the
+squared change of the steering command between decisions (30 Hz), summed until the car is
+done or has finished its lap; both stages. `TrainConfig.steer_change_weight`, default 200.
+- **Measured** (Silverstone, seed 0, 200 generations each; one seed, so a guide only):
+  weight 0: sum 0.17, yaw-acceleration p99 3.32 rad/s², best lap 85.35 s; weight 50: 0.09,
+  2.97, 85.59 s; weight 200: 0.11, 2.70, 85.18 s. The clone it starts from has 0.07 and 2.19.
+- At 200 a typical lap's 0.1 costs 20 points, what 0.4 s would. Rows of `evaluate` stats
+  gain `steer_change`. The drawer's score page explains the term and shows the real score;
+  the training view's "crashed" check allows for it (it used `fitness < progress`).
+- **Rejected:** an observation of the last action (the policy already sees its last inputs)
+  and low-pass filtering the actions in the sim (it would change the physics the cars learn,
+  and replays would no longer match a plain re-drive).
+
+**D37 · A minimum-curvature racing line where TUM has none** (2026-10-26)
+Spec v2 observes a racing line; circuits without a TUM raceline used the centre line, a poor
+line (open problem 1). `sim/mincurv.py` computes one: the centre line moved sideways along
+its normals, minimising the summed squared second difference of the points inside the track
+(minus half a car and margins), a box-bounded linear least-squares (`lsq_linear`, sparse),
+then two passes re-weighted by the line's own spacing (91.6 → 87.2 s at Silverstone; the
+re-weighting matters).
+- **Scripted laps** on it against TUM's line and the centre line: Silverstone 87.15 / 86.43 /
+  108.96 s, Monza 83.31 / 83.21 / 92.61, Budapest 79.76 / 78.87 / 91.19, Spa 104.62 /
+  104.19 / 117.89, Montreal 75.71 / 75.07 / 83.38, Marina Bay 89.38 / - / 129.01 s
+  (Russell's 2025 pole 89.16). Within 0.1–1.1% of TUM's line.
+- `raceline.raceline_for(track)`: TUM, else minimum curvature for a catalogue circuit, else
+  the centre line (the tests' synthetic tracks keep their behaviour). The trainer's `T_ref`
+  and `f1sim reference-lap` use the same choice; `source` says `"min-curvature"`.
+- 5 m spacing and `tol=1e-6`: under a second per circuit. **Rejected:** ADMM and a
+  primal-dual active-set solver (the fourth-difference normal matrix is badly conditioned:
+  ADMM stalled, the active set needed 100+ passes), a minimum-time line (needs the full
+  speed profile inside the optimisation; much more work for a few tenths).
+
+**D38 · The "How it works" drawer in the focus cards' style** (2026-10-26)
+The user found the drawer "alright, not premium" and the focus overlay's cards the better
+look. The drawer, its handle and the cards now share `focus_layer.draw_card`: near-black,
+a 1 px faint outline, a red stripe down the left edge, square corners (the glass blur is
+gone from the drawer). Rows' values and the page counter (`02 / 04`) are in the mono face;
+bars are 3 px with a 22% track in their own colour, like the sector bars. Checked in an
+offscreen render, not yet in the real window.
+
+**D39 · Alignment acceptance: 99% within 4 m of TUM's edges** (2026-10-26)
+Shanghai, Spa, Mexico City and the Red Bull Ring failed the 2024 check "for no known
+reason" (open problem 3). Their alignment was fine (median 1.9–4.2 m); 94–97% of the pole
+lap was within 1 m of TUM's edges, because at a corner or two real cars run up to 4 m past
+TUM's painted edge, every year, where its satellite widths miss kerbs and run-off. That is
+what track limits allow (`max_extra_m` = 4 m), so the check is now ≥ 99% within 4 m
+(was ≥ 98% within 1 m). 2024 poles: every unchanged layout ≥ 99.6%, every changed one (Yas
+Marina 91.4, Albert Park 92.8, Barcelona 93.5, Zandvoort 96.4%) below. Spa, Mexico City and
+the Red Bull Ring now build with limits; Shanghai's limits skip 2023 (no race).
+
+**D40 · Circuits without TUM data are built from real laps** (2026-10-26)
+M5's fallback. The plan's FastF1 spread method needs F1 live timing, which now needs a
+sign-in (D6), so `data/lap_geometry.py` uses OpenF1: each driver's fastest qualifying lap,
+2023–2026 (seasons without a race there are skipped), fitted to the newest pole lap and
+dropped if a median 3 m off it (another layout). Per side, the 90th percentile across laps
+of the furthest excursion from the pole lap, plus half a car and 0.75 m, is the road edge.
+- **The width is mostly a guess.** Every driver's fastest lap takes nearly the same line:
+  at Monaco the envelope is a 4.4 m road (median). So the road is widened to a minimum,
+  12 m (the FIA minimum for a permanent circuit), 9 m at Monaco and 10 m at Baku; the
+  extra goes to the outside of bends (cars take the apex, so the inside edge is known) and
+  to both sides on straights. Tagged `widths: "lap-envelope"`, `approximate: true`.
+- No separate track limits (the edges already are where cars drive). The stored alignment
+  is the identity (OpenF1's frame), so ghosts line up with no fitting.
+- The reference lap's smoothed ends left a 1 m-radius kink on the start/finish line (Monaco
+  pinched to 1.6 m there); 0.5 s is trimmed from each end and the periodic spline bridges it.
+- `build-track` uses it automatically without a TUM file; `--from-laps` forces it (the
+  out-of-date TUM layouts), `--lap-years` picks seasons.
+- **Monaco:** the first build's start/finish kink made the scripted lap look 5% fast. After
+  the seam fix it is 69.50 s against the 2025 pole of 69.95 s (-0.6%).
+- **Seasons not yet raced** are skipped: OpenF1 lists 2026 sessions in advance (Las Vegas,
+  Lusail, Yas Marina had no laps yet).
+- **TUM's raceline only on TUM geometry, and only if it laps:** the lap-built Albert Park,
+  Barcelona and Zandvoort are newer layouts, and Shanghai's TUM line runs 0.7 m off the
+  track (the scripted lap fails), so they get the minimum-curvature line.
+- **Rejected:** race laps for more spread (a whole race of position data per driver for a
+  little extra width), and widening both sides equally (puts road inside the apex).
+
 ## Change log
 
 | Date | Commit | Change |
@@ -761,3 +839,11 @@ diagrams that are better as vector pages) and a separate repo (it shares the pro
 | 2026-10-25 | `bf8f611` | True-size cars; hold-Enter focus overlay with pole ghost and sectors (D34) |
 | 2026-10-25 | `2b7c453` | Menu rebuilt as a card grid in the left 40%, display font slot for HN Revline (D33) |
 | 2026-10-26 | `25bbabc` | F1 Anatomy: five interactive isometric figures of the car, `f1_anatomy/` (D35) |
+| 2026-10-26 | `5927534` | Project log: F1 Anatomy (D35) |
+| 2026-10-26 | `5160ca8` | Drive mode: off track by the track limits |
+| 2026-10-26 | `d33bf35` | Training: smooth-steering term in the fitness (D36) |
+| 2026-10-26 | `bd50069` | Minimum-curvature racing line where TUM has none (D37) |
+| 2026-10-26 | `72fcfb1` | "How it works" drawer in the focus cards' style (D38) |
+| 2026-10-26 | `d30b42a` | Alignment within 4 m (D39); circuits built from real laps (D40) |
+| 2026-10-26 | `be8052d` | **M4:** legacy app removed, README rewritten |
+| 2026-10-26 | `1a18ce8` | Racing line: TUM's only on TUM geometry and when it laps; skip unraced seasons |
