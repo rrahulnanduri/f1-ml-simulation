@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-25 (true-size cars, focus overlay, D33). This section summarises
+*Last updated: 2026-10-26 (menu card grid D33; true-size cars, focus overlay D34). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
@@ -20,9 +20,9 @@ exists, but the new package replaces it.
 - **Simulation:** 64 cars at about 64× real time with numba.
 - **Ghosts:** `f1sim ghost <track> <year>` builds a smoothed real-driver ghost.
 - **The app is one window** (`f1sim menu`, D19–D22). The menu is its home screen; Drive and
-  Replay switch the window to those screens, and Esc comes back. Train opens a console. The
-  window remembers its place, but only restores it if it lands on a connected screen.
-  Train starts `f1sim train` in the background and switches to the training screen.
+  Replay switch the window to those screens, and Esc comes back. Train starts `f1sim train`
+  in the background and switches to the training screen. The window remembers its place,
+  but only restores it if it lands on a connected screen.
 - **The menu** (D33) is a card grid in the window's left 40%: logo bar, track picker and
   Drive / Replay / Train / Quit as squares. The older text below still describes the hero.
   Before D33: track picker and buttons on the left. On the right is a
@@ -49,15 +49,14 @@ exists, but the new package replaces it.
   reproduces `metrics.csv` exactly.
 - **Training view** (D30): the trainer replaces `generation.npz` every generation; the app
   re-drives the newest one with every genome on track (exactly the trainer's episodes; a
-  test checks lap times match). Cars keep one size at every zoom, each in its own colour,
-  in the 2026 sprite (D31), drawn at true size against the track (dots when tiny, D33).
-  Holding Enter fades in a focus view: the best AI car against the real pole ghost with
-  leader-line callouts and live sector times (D33). `H` or the edge tab opens a "How it works" drawer that
-  explains learning, scoring, realism and physics with this run's numbers (D32).
-  Opens fitted to the circuit; wheel zoom, right-drag pan,
-  `Z` fit, `F` follow the best genome, Up/Down 0.5–16×, `N` newest. Leaving the screen
-  stops the training. `f1sim watch <run>` opens it on any run folder. Checked in the real
-  window on a live Silverstone run.
+  test checks lap times match). Each car has its own colour, in the 2026 sprite (D31), at
+  its true size against the track (dots when tiny, D34). Holding Enter fades in a focus
+  view: the best AI car against the real pole ghost, with leader-line callouts and live
+  sector times (D34). `H` or the edge tab opens a "How it works" drawer that explains
+  learning, scoring, realism and physics with this run's numbers (D32). Opens fitted to
+  the circuit; wheel zoom, right-drag pan, `Z` fit, `F` follow the best genome, Up/Down
+  0.5–16×, `N` newest. Leaving the screen stops the training. `f1sim watch <run>` opens it
+  on any run folder. Checked in the real window on a Silverstone run.
 - **Tests:** 624 pass offline. `ruff check` is clean.
 
 **Open problems, most important first:**
@@ -677,7 +676,7 @@ headline and paragraph are gone. Squares shrink so the grid never meets the foot
 - **Rejected:** a 3 x 2 grid of smaller squares and a headline-plus-list layout (the
   prototypes the user compared).
 
-**D33 · True-size cars and a hold-Enter focus overlay** (2026-10-25)
+**D34 · True-size cars and a hold-Enter focus overlay** (2026-10-25)
 The user tried D31/D32: when the track was fitted to the window, the fixed-size cars were
 wider than the track. By "the same size" they meant the same size *against the track*. They
 also asked for a press-and-hold view of the fastest AI car against the real pole lap, with
@@ -746,6 +745,6 @@ the driver named on a pointer line and the sector times as three coloured lines.
 | 2026-10-23 | `c568d56` | Backdrop from the window's left edge, at 0.44 (D29) |
 | 2026-10-25 | `1c28454` | Training view: the newest generation re-driven live, `f1sim watch` (D30) |
 | 2026-10-25 | `1c7de5d` | 2026 car sprite; fixed-size, one-colour-per-car training field (D31) |
-| 2026-10-25 | (this commit) | "How it works" drawer in the training view (D32) |
-| 2026-10-25 | (this commit) | True-size cars; hold-Enter focus overlay with pole ghost and sectors (D33) |
-| 2026-10-25 | (this commit) | Menu rebuilt as a card grid in the left 40%, display font slot for HN Revline (D33) |
+| 2026-10-25 | `bf8f611` | "How it works" drawer in the training view (D32) |
+| 2026-10-25 | `bf8f611` | True-size cars; hold-Enter focus overlay with pole ghost and sectors (D34) |
+| 2026-10-25 | `2b7c453` | Menu rebuilt as a card grid in the left 40%, display font slot for HN Revline (D33) |
