@@ -289,7 +289,7 @@ def reference_lap_time(track: Track, car: CarParams) -> tuple[float, str]:
     from f1sim.sim.raceline import raceline_for
     from f1sim.sim.scripted import drive_reference_lap
 
-    raceline, source = raceline_for(track)
+    raceline, source = raceline_for(track, car)
     if raceline is not None:
         lap = drive_reference_lap(track, car, raceline_xy=raceline)
         if lap.completed and math.isfinite(lap.lap_time_s):

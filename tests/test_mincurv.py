@@ -66,3 +66,40 @@ def test_raceline_for_computes_one_for_a_catalogue_circuit_without_tum():
     xy, source = raceline_for(Track(data))
     assert source == "min-curvature"
     assert xy is not None and xy[0].shape == xy[1].shape
+
+
+def test_raceline_for_skips_tum_on_a_track_built_from_laps(monkeypatch):
+    """A lap-built track may be a newer layout than TUM's raceline (Albert Park, Barcelona)."""
+    from f1sim.sim import raceline
+
+    called = []
+    monkeypatch.setattr(raceline, "tum_raceline", lambda track_id: called.append(track_id))
+    x, y = stadium(300.0, 60.0, 3.0)
+    n = x.size
+    data = build_track(
+        x,
+        y,
+        np.full(n, 6.0),
+        np.full(n, 6.0),
+        track_id="melbourne",
+        name="M",
+        source={"geometry": "openf1-laps"},
+    )
+    xy, source = raceline_for(Track(data))
+    assert source == "min-curvature" and not called
+
+
+def test_raceline_for_drops_a_tum_line_the_driver_cannot_lap(monkeypatch):
+    """Shanghai's TUM line runs off the track, so the scripted lap fails: compute one."""
+    from types import SimpleNamespace
+
+    from f1sim.sim import raceline
+
+    x, y = stadium(300.0, 60.0, 3.0)
+    n = x.size
+    data = build_track(x, y, np.full(n, 6.0), np.full(n, 6.0), track_id="shanghai", name="S")
+    monkeypatch.setattr(raceline, "tum_raceline", lambda track_id: (x, y))
+    failed = SimpleNamespace(completed=True, lap_time_s=float("nan"))
+    monkeypatch.setattr(raceline.scripted, "drive_reference_lap", lambda *a, **kw: failed)
+    xy, source = raceline_for(Track(data))
+    assert source == "min-curvature"

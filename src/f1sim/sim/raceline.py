@@ -56,16 +56,28 @@ def tum_raceline(track_id: str) -> tuple[np.ndarray, np.ndarray] | None:
         return None
 
 
-def raceline_for(track: Track) -> tuple[tuple[np.ndarray, np.ndarray] | None, str]:
+def raceline_for(
+    track: Track, car: CarParams | None = None
+) -> tuple[tuple[np.ndarray, np.ndarray] | None, str]:
     """``(raceline_xy, source)`` for ``track``: the TUM raceline (``"tum-raceline"``), else a
     minimum-curvature line inside ``track`` for a catalogue circuit (``"min-curvature"``),
-    else ``(None, "centre-line")``."""
+    else ``(None, "centre-line")``.
+
+    TUM's line is only used on TUM's geometry (a track built from laps may be a newer layout)
+    and only if the scripted driver completes a clean lap on it: at Shanghai it runs 0.7 m
+    off the track, so the lap fails.
+    """
     from f1sim.data import catalog
     from f1sim.sim.mincurv import min_curvature_line
 
-    tum = tum_raceline(track.data.id)
+    tum = None
+    if track.data.source.get("geometry", "tum-racetrack-database") == "tum-racetrack-database":
+        tum = tum_raceline(track.data.id)
     if tum is not None:
-        return tum, "tum-raceline"
+        lap = scripted.drive_reference_lap(track, car or CarParams(), raceline_xy=tum)
+        if lap.completed and np.isfinite(lap.lap_time_s):
+            return tum, "tum-raceline"
+        log.warning("%s: the scripted lap on TUM's raceline fails; computing one", track.data.id)
     try:
         catalog.get(track.data.id)
     except KeyError:
@@ -131,7 +143,7 @@ def racing_line_for(track: Track, car: CarParams | None = None) -> RacingLine:
     hit = _CACHE.get(key)
     if hit is not None and hit[0].data is track.data:
         return hit[1]
-    xy, source = raceline_for(track)
+    xy, source = raceline_for(track, car)
     line = RacingLine(track, car, xy, source)
     _CACHE[key] = (track, line)  # holding the track keeps id(track.data) unique
     return line

@@ -91,17 +91,22 @@ def collect_laps(track_id: str, years, *, max_drivers: int = 25) -> LapSet:
     from f1sim.data import laps, openf1_source
     from f1sim.data.alignment import align_to_centreline, apply_alignment
 
-    sessions = {}
+    # Newest first; a year without a session, or whose session hasn't run yet (OpenF1 lists
+    # the season's sessions in advance), is skipped
+    sessions, refs = {}, {}
     for year in sorted({int(y) for y in years}, reverse=True):
         try:
-            sessions[year] = openf1_source.find_session(year, track_id, "Q")
-        except openf1_source.OpenF1Error as exc:
-            log.info("%s %d: no qualifying session (%s)", track_id, year, exc)
+            session = openf1_source.find_session(year, track_id, "Q")
+            refs[year], _ = laps.reference_lap(track_id, year, source="openf1")
+        except (openf1_source.OpenF1Error, ValueError) as exc:
+            log.info("%s %d: no qualifying laps (%s)", track_id, year, exc)
+            continue
+        sessions[year] = session
     if not sessions:
-        raise ValueError(f"{track_id}: no OpenF1 qualifying session in {sorted(years)}")
+        raise ValueError(f"{track_id}: no OpenF1 qualifying laps in {sorted(years)}")
     years = list(sessions)
     ref_year = years[0]
-    ref, _ = laps.reference_lap(track_id, ref_year, source="openf1")
+    ref = refs[ref_year]
     rx, ry = _smooth(ref)
     wide = np.full(rx.size, REFERENCE_WIDTH_M)
     samples: list[LapSample] = []
