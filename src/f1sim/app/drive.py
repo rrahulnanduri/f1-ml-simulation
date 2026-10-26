@@ -60,7 +60,8 @@ PEDAL_RAMP_S = 0.15
 STEER_RAMP_S = 0.15
 """Time for the steering command to go from centre to full lock (and back)."""
 OFF_TRACK_MARGIN_M = 1.0
-"""Off track when ``|n| > w_side - OFF_TRACK_MARGIN_M`` (car half width, as in progress.py)."""
+"""Off track when ``|n| > limit_side - OFF_TRACK_MARGIN_M`` (car half width, as in progress.py).
+The side's limit is the track limit where the track has them, else the white line."""
 OFF_TRACK_RESET_S = 1.0
 """How long "OFF TRACK" shows (with the car stopped) before the reset to the start line."""
 LAP_MIN_FRACTION = 0.98
@@ -260,7 +261,7 @@ class DriveSession:
         if self.clock_running:
             self.telemetry.record(self.lap_progress, self.lap_time, self.speed_kmh)
 
-        w_left, w_right = track.widths_at(self.s)
+        w_left, w_right = track.limits_at(self.s)
         w_side = float(w_left) if self.n >= 0.0 else float(w_right)
         if abs(self.n) > w_side - OFF_TRACK_MARGIN_M:
             self.off_track_timer = OFF_TRACK_RESET_S

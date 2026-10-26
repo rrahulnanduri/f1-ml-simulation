@@ -226,6 +226,25 @@ def test_drive_session_off_track_resets_after_one_second(circle_track):
     assert (session.x, session.y) == pytest.approx(start)
 
 
+def test_drive_session_off_track_uses_track_limits(circle_track):
+    from f1sim.app.drive import DriveSession
+
+    data = replace(
+        circle_track.data,
+        limit_left=circle_track.data.w_left + 3.0,
+        limit_right=circle_track.data.w_right + 3.0,
+    )
+    track = Track(data)
+    session = DriveSession(track)
+    w_left = float(track.widths_at(100.0)[0])
+    _teleport(session, 100.0, w_left + 1.0)  # over the white line, inside the limits
+    session.update_progress(1 / 60)
+    assert not session.off_track
+    _teleport(session, 100.0, w_left + 2.5)  # within the half width of the limit
+    session.update_progress(1 / 60)
+    assert session.off_track
+
+
 def test_drive_session_stays_on_track_with_margin(circle_track):
     from f1sim.app.drive import DriveSession
 
