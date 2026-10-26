@@ -26,12 +26,21 @@ The testable logic is pure Python/numpy, without arcade objects:
 
 **Window.** The track is the cached :class:`~f1sim.app.render_track.TrackRenderer` under an
 ``arcade.Camera2D`` synced from :class:`~f1sim.app.camera.Camera`, as in the replay viewer.
-It opens fitted to the whole circuit. All cars are pixel-art sprites of one size at every
-zoom (:data:`CAR_LENGTH_PX`), each in its own colour (``theme.field_liveries``, also its
-sliver in the tower), faded once out; the generation's best genome (by the trainer's
-fitness) has a light outline and the only label, ``BEST``. The HUD
-(:mod:`f1sim.app.ui.train_hud`) has the live order, the generation, the cars still running
-with the episode clock, and the best lap per generation.
+It opens fitted to the whole circuit. All cars are pixel-art sprites at their real size
+against the track at every zoom (dots when too small to see), each in its own colour
+(``theme.field_liveries``, also its sliver in the tower), faded once out. The generation's
+best genome (by the trainer's fitness) has a light outline and the only label, ``BEST``.
+The HUD (:mod:`f1sim.app.ui.train_hud`) has the live order, the generation, the cars still
+running with the episode clock, and the best lap per generation.
+
+``H`` (or the "How it works" tab on the right edge) slides out a drawer that explains the
+design decisions in plain words, with this run's numbers (:mod:`f1sim.app.explain`,
+:mod:`f1sim.app.ui.drawer`).
+
+Holding Enter fades in the *focus* overlay (:mod:`f1sim.app.focus`): the rest of the field
+and the track dim, the best car is ringed, the real pole lap drives alongside as a ghost,
+each has a callout on a leader line (name, lap clock, and its three sector times as a bar
+in three colours), and the three sectors are traced on the track in the same colours.
 
 Controls: mouse wheel zoom at the cursor, right-drag pan, ``Z`` fit the whole track, ``F``
 follow the generation's best car, Space pause, Up/Down playback speed, ``N`` jump to the
@@ -53,12 +62,15 @@ from pathlib import Path
 import arcade
 import numpy as np
 
+from f1sim.app import explain as ex
+from f1sim.app import focus as fo
 from f1sim.app import shell
 from f1sim.app.camera import Camera
 from f1sim.app.drive import format_lap_time
 from f1sim.app.shell import Screen
 from f1sim.app.ui import theme
 from f1sim.app.ui import timing as tm
+from f1sim.app.ui.focus_layer import FIELD_FADE
 from f1sim.sim.car_model import CarParams
 from f1sim.sim.progress import DoneReason
 from f1sim.track.track import Track
@@ -83,8 +95,6 @@ FIT_PADDING_PX = 60
 OUT_ALPHA = 70
 """Opacity (0-255) of cars that are out of the episode."""
 TOWER_ROWS = 10
-CAR_LENGTH_PX = 40.0
-"""On-screen length of every car, at any zoom (one physical pixel per art pixel at 1x)."""
 
 
 # ------------------------------------------------------------------------------- the run
@@ -101,6 +111,7 @@ class RunSetup:
     dt: float
     action_repeat: int
     init: str = "clone"
+    t_ref_s: float = math.nan  # the scripted driver's lap (the trainer's T_ref)
 
     @classmethod
     def from_config(cls, path: Path) -> RunSetup:
@@ -118,6 +129,7 @@ class RunSetup:
                 dt=float(resolved["dt"]),
                 action_repeat=int(resolved["action_repeat"]),
                 init=str(data.get("init", "clone")),
+                t_ref_s=float(resolved.get("t_ref_s", math.nan)),
             )
         except (KeyError, TypeError) as exc:
             raise ValueError(f"{path}: incomplete run config ({exc})") from exc
@@ -192,11 +204,17 @@ class GenerationPlayback:
         self.stage = int(generation["stage"])
         self.params = np.asarray(generation["params"], dtype=np.float32)
         self.fitness = np.asarray(generation["fitness"], dtype=np.float64)
+        # What the trainer recorded (the drawer quotes these; they don't change as cars drive)
+        self.recorded_lap_s = np.asarray(generation["lap_time_s"], dtype=np.float64)
+        self.recorded_progress_m = np.asarray(generation["progress_m"], dtype=np.float64)
         self.episode_s = float(generation["episode_s"])
         n = self.params.shape[0]
         if world.n_cars != n:
             raise ValueError(f"world has {world.n_cars} cars for {n} genomes")
         self.best = int(np.argmax(self.fitness))
+        self.start_s = np.asarray(generation["start_s"], dtype=np.float64)
+        self.start_v = np.asarray(generation["start_v"], dtype=np.float64)
+        self.observer = None  # called after every step (the focus overlay's lap timer)
         self.speed = float(speed)
         self.paused = False
         self.decision_dt = world.config.dt * world.config.action_repeat
@@ -294,6 +312,8 @@ class GenerationPlayback:
         res = self.world.step(actions)
         self._obs = res.obs
         self.steps += 1
+        if self.observer is not None:
+            self.observer()
         newly = res.lap_completed & ~self.finished
         if newly.any():
             self.lap_time[newly] = res.lap_time[newly]
@@ -561,6 +581,37 @@ def tower_rows(order: list[CarRow], best: int, colours: list[tuple]) -> list[tm.
     return rows
 
 
+def ghost_label(path: Path, meta: dict | None, fallback: str) -> str:
+    """``"Russell, 2024 pole"`` from a ghost ``<year>_<track>_<session>_<driver>.npz`` and
+    its sidecar: the surname, the year, and "pole" for a qualifying ghost (the session's
+    fastest lap) or the session's name."""
+    parts = path.stem.split("_")
+    year, session = parts[0], (parts[-2] if len(parts) >= 4 else "")
+    code = str((meta or {}).get("driver") or parts[-1]).strip().upper()
+    name = theme.DRIVER_SURNAMES.get(code, code.title()) if code else fallback
+    what = "pole" if session.upper() == "Q" else session
+    return f"{name}, {year} {what}".strip()
+
+
+def real_lap(track_id: str) -> tuple[float, str, Path | None]:
+    """``(lap_s, label, ghost_path)`` of the real fastest lap to compare with: the track's
+    newest real-driver ghost, else :data:`~f1sim.app.explain.REFERENCE_POLES` (no ghost to
+    draw), else ``(nan, "", None)``."""
+    try:
+        from f1sim import paths
+        from f1sim.app.menu import latest_ghost
+        from f1sim.app.replay import load_trace
+
+        ghost = latest_ghost(track_id, paths.ghosts_dir())
+        if ghost is not None:
+            tr = load_trace(ghost)
+            return float(tr.lap_time_s), ghost_label(ghost, tr.meta, tr.label), ghost
+    except (OSError, ValueError, ImportError):
+        pass
+    lap, label = ex.REFERENCE_POLES.get(track_id, (math.nan, ""))
+    return lap, label, None
+
+
 # --------------------------------------------------------------------------- window
 
 
@@ -568,7 +619,16 @@ def controls(on_back) -> list[str]:
     return [*CONTROLS[:-1], "Esc back" if on_back is not None else "Esc quit"]
 
 
-CONTROLS = ["Wheel zoom", "Z fit track", "F follow best", "↑↓ speed", "N newest", "Esc quit"]
+CONTROLS = [
+    "Hold Enter focus",
+    "H how it works",
+    "Wheel zoom",
+    "Z fit track",
+    "F follow best",
+    "↑↓ speed",
+    "N newest",
+    "Esc quit",
+]
 
 
 class TrainingView(Screen):
@@ -607,8 +667,25 @@ class TrainingView(Screen):
         self.cars = None
         self._painted_best: int | None = None
         self._car_colours: list[tuple] = []
+        from f1sim.app.ui.drawer import Drawer
+
+        self.drawer = Drawer(self.glass)
+        self.pole_s, self.pole_label, ghost = real_lap(track.data.id)
+        from f1sim.app.ui.focus_layer import FocusLayer
+
+        pole = None
+        if ghost is not None:
+            try:
+                pole = fo.PoleGhost.load(ghost, track, self.pole_label)
+            except (OSError, ValueError):
+                pole = None
+        self.focus_layer = FocusLayer(track, pole)
+        self.fade = fo.Fade()
+        self.enter_held = False
+        self.timer: fo.LapTimer | None = None
         self._metrics_len = -1
         self.hud.layout(self.width, self.height)
+        self.drawer.layout(self.width, self.height)
         self.fit_track()
 
     # ------------------------------------------------------------------------ helpers
@@ -648,9 +725,7 @@ class TrainingView(Screen):
             # label says so
             self._liveries = theme.field_liveries(n)
             self._car_colours = [lv.primary for lv in self._liveries]
-            self.cars = CarLayer(
-                ["Best"] * n, self._liveries, [False] * n, fixed_length_px=CAR_LENGTH_PX
-            )
+            self.cars = CarLayer(["Best"] * n, self._liveries, [False] * n, true_size=True)
             self.cars.only_highlight_label = True
             self._painted_best = None
         if self._painted_best != pb.best:
@@ -663,13 +738,30 @@ class TrainingView(Screen):
                 sprites[old].texture = car_texture(self._liveries[old], False)
             sprites[pb.best].texture = car_texture(self._liveries[pb.best], True)
             self._painted_best = pb.best
+        # Time the best car's lap live, for the focus overlay
+        b = pb.best
+        timer = fo.LapTimer(pb.start_s[b], pb.start_v[b], self.track.length, self.focus_layer.marks)
+        progress = pb.world.progress.state.progress
+        timer.feed(pb.t, float(progress[b]))
+        pb.observer = lambda: timer.feed(pb.t, float(progress[b]))
+        self.timer = timer
 
     # ------------------------------------------------------------------------- events
 
     def on_key_press(self, symbol: int, modifiers: int) -> None:
         pb = self.watch.playback
+        now = time.perf_counter()
         if symbol == arcade.key.ESCAPE:
-            self.close()
+            if self.drawer.is_open:
+                self.drawer.set_open(False, now)
+            else:
+                self.close()
+        elif symbol in (arcade.key.ENTER, arcade.key.RETURN, arcade.key.NUM_ENTER):
+            self.enter_held = True
+        elif symbol == arcade.key.H:
+            self.drawer.toggle(now)
+        elif symbol == arcade.key.TAB and self.drawer.is_open:
+            self.drawer.next_page()
         elif symbol == arcade.key.SPACE and pb is not None:
             pb.paused = not pb.paused
         elif symbol == arcade.key.UP:
@@ -684,9 +776,19 @@ class TrainingView(Screen):
             if self.watch.skip_to_newest():
                 self._build_cars()
 
+    def on_key_release(self, symbol: int, modifiers: int) -> None:
+        if symbol in (arcade.key.ENTER, arcade.key.RETURN, arcade.key.NUM_ENTER):
+            self.enter_held = False
+
     def on_mouse_scroll(self, x: int, y: int, scroll_x: float, scroll_y: float) -> None:
+        if self.drawer.on_scroll(x, y, scroll_y):
+            return  # the wheel scrolls the drawer's page
         if scroll_y:
             self.camera.zoom_at(ZOOM_STEP**scroll_y, x, y)  # follow re-centres on the car
+
+    def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> None:
+        if button == arcade.MOUSE_BUTTON_LEFT:
+            self.drawer.on_press(x, y, time.perf_counter())
 
     def on_mouse_drag(self, x: int, y: int, dx: int, dy: int, buttons: int, modifiers: int):
         if buttons & arcade.MOUSE_BUTTON_RIGHT:
@@ -697,6 +799,7 @@ class TrainingView(Screen):
         self.camera.resize(width, height)
         self.camera2d.match_window()
         self.hud.layout(width, height)
+        self.drawer.layout(width, height)
         self._follow_camera()
 
     def on_hide_view(self) -> None:
@@ -706,6 +809,7 @@ class TrainingView(Screen):
     def on_update(self, delta_time: float) -> None:
         if self.watch.update(delta_time):
             self._build_cars()
+        self.fade.update(delta_time, self.enter_held and self.watch.playback is not None)
         self._follow_camera()
 
     # --------------------------------------------------------------------------- draw
@@ -721,11 +825,21 @@ class TrainingView(Screen):
             self.track_view.draw(self.camera.pixels_per_metre)
             self.glass.use_pixels()
             self.track_view.draw_ticks(self.camera, self.glass)
+            f = self.fade.value if pb is not None and self.cars is not None else 0.0
+            focus = self._focus_state() if f > 0.0 else None
+            if focus is None:
+                f = 0.0
+            if f > 0.0:
+                self.focus_layer.draw_backdrop(self.camera, self.width, self.height, f)
             if pb is not None and self.cars is not None:
                 x, y, yaw = pb.poses()
                 running = pb.running | pb.finished
+                dim = 1.0 - FIELD_FADE * f
+                self.cars.show_labels = f < 0.3  # the focus callouts take over
                 for i, sp in enumerate(self.cars.sprites.sprites):
                     alpha = 255 if running[i] else OUT_ALPHA
+                    if i != pb.best:
+                        alpha = int(alpha * dim)
                     if sp.alpha != alpha:
                         sp.alpha = alpha
                 self.cars.draw(
@@ -734,8 +848,89 @@ class TrainingView(Screen):
                     pb.best,
                     self.get_pixel_ratio(),
                 )
+                if focus is not None:
+                    ratio = self.get_pixel_ratio()
+                    self.focus_layer.draw_pole(self.camera, focus["pose"], f, ratio)
+                    self.focus_layer.draw_ring(*focus["ai_xy"], f)
         self.glass.present()
+        if focus is not None:
+            self.focus_layer.draw_callouts(f, self.width, self.height, focus["ai"], focus["pole"])
         self.hud.draw(now)
+        self.drawer.draw(now)
+
+    def _focus_state(self) -> dict | None:
+        """Where the focus overlay's cars are and what their callouts say, this frame."""
+        pb, timer, layer = self.watch.playback, self.timer, self.focus_layer
+        if pb is None or timer is None:
+            return None
+        b = pb.best
+        x, y, _ = pb.poses()
+        clock = timer.lap_clock(pb.t + pb.alpha * pb.decision_dt)
+        progress = float(pb.world.progress.state.progress[b])
+        pole = layer.pole
+        widths = fo.bar_widths(pole.sector_times if pole else (), layer.marks)
+        lap = float(pb.lap_time[b]) if math.isfinite(pb.lap_time[b]) else timer.lap_time
+        sx, sy = self.camera.world_to_screen(float(x[b]), float(y[b]))
+        ai = fo.callout(
+            f"AI · car {b + 1} · gen {pb.gen}",
+            clock,
+            timer.lap_s(progress),
+            timer.sector_times,
+            lap,
+            layer.marks,
+            widths,
+            pole.sector_times if pole else None,
+        )
+        state = {"ai": (float(sx), float(sy), ai), "ai_xy": (float(sx), float(sy))}
+        state["pose"] = state["pole"] = None
+        if pole is not None:
+            pose = pole.prepared.pose(clock)
+            px, py = self.camera.world_to_screen(pose.x, pose.y)
+            state["pose"] = pose
+            pole_call = fo.callout(
+                pole.label,
+                clock,
+                pose.s,
+                fo.revealed(pole.sector_times, clock),
+                pole.lap_time,
+                layer.marks,
+                widths,
+            )
+            state["pole"] = (float(px), float(py), pole_call)
+        return state
+
+    def facts(self, status: str) -> ex.Facts:
+        """What the drawer says about the run right now."""
+        watch, pb = self.watch, self.watch.playback
+        setup = watch.setup
+        rows = watch.metrics
+        sigma = rows[-1].get("sigma", math.nan) if rows else math.nan
+        kw = {}
+        if pb is not None:
+            b = pb.best
+            prog = float(pb.recorded_progress_m[b])
+            kw = {
+                "gen": pb.gen,
+                "stage": pb.stage,
+                "population": pb.n_cars,
+                "best_index": b,
+                "best_lap_s": float(pb.recorded_lap_s[b]),
+                "best_progress_m": prog,
+                "best_crashed": bool(pb.fitness[b] < prog - 1e-6),
+                "episode_s": pb.episode_s,
+            }
+        return ex.Facts(
+            status=status,
+            copying=pb is None and watch.newest_gen is None and setup is None,
+            sigma=float(sigma),
+            track_length_m=float(self.track.length),
+            run_best_s=run_best_lap(rows),
+            t_ref_s=setup.t_ref_s if setup is not None else math.nan,
+            pole_s=self.pole_s,
+            pole_label=self.pole_label,
+            car=setup.car if setup is not None else CarParams(),
+            **kw,
+        )
 
     def _update_hud(self, now: float) -> None:
         from f1sim.app.ui.hud import ticker_date_time
@@ -769,6 +964,7 @@ class TrainingView(Screen):
             self.hud.generation.set(pb.gen, pb.stage, best_txt, watch.newest_gen)
             n_on = int(pb.running.sum())
             self.hud.field.set(n_on, pb.n_cars, f"{pb.t:4.1f} s", mode)
+        self.drawer.set_facts(self.facts(status))
         colour = theme.ACCENT if problem else theme.TEXT_PRIMARY
         if self.follow:
             self.hud.footer.set_status(f"{status} · following best", colour)

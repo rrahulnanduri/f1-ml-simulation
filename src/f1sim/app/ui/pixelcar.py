@@ -8,8 +8,8 @@ light, with one-pixel highlight (spine) and shadow (flanks) lines for shape.
 :func:`car_pixels` paints it in a :class:`~f1sim.app.ui.theme.Livery` (pure numpy),
 optionally with a 1 px light outline (ghosts), and :func:`sprite_scale` picks the on-screen
 size: the car's real 5.6 m, snapped to whole physical pixels per art pixel, with a minimum so
-it stays readable zoomed out (:func:`fixed_scale` instead keeps one size at every zoom, for
-the training view).
+it stays readable zoomed out (:func:`true_scale` instead keeps the real size at every zoom,
+for the training view, with dots when that's too small to see).
 
 :class:`CarSprites` (arcade, created with a window) turns the pixels into cached textures
 and draws all cars as one ``SpriteList`` with nearest-neighbour sampling, so the pixels stay
@@ -167,10 +167,19 @@ def sprite_scale(
     return max(int(round(world)), k_min, 1)
 
 
-def fixed_scale(length_px: float, pixel_ratio: float = 1.0) -> int:
-    """Physical screen pixels per art pixel for a car about ``length_px`` logical pixels long
-    at any zoom (a whole multiple of the art, at least 1)."""
-    return max(int(round(length_px * pixel_ratio / ART_H)), 1)
+def true_scale(
+    pixels_per_metre: float, pixel_ratio: float = 1.0, length_m: float = theme.CAR_LENGTH_M
+) -> float:
+    """Physical screen pixels per art pixel for the car at its real length at this zoom (not
+    rounded: the car keeps its size against the track at every zoom)."""
+    return length_m * pixels_per_metre * pixel_ratio / ART_H
+
+
+DOT_BELOW_PX = 10.0
+"""A true-size car shorter than this on screen is drawn as a dot (the art would be mush)."""
+DOT_MIN_R = 1.5
+"""Smallest dot radius, logical pixels: still visible, and inside a 12 m track down to about
+0.25 px/m."""
 
 
 def label_offset(heading: float, length_px: float, width_px: float) -> float:
@@ -233,49 +242,71 @@ class CarSprites:
         sp.position = (round(sx * ratio) / ratio, round(sy * ratio) / ratio)
         sp.angle = -math.degrees(heading)
 
-    def draw(self) -> None:
-        self.list.draw(pixelated=True)
+    def draw(self, pixelated: bool = True) -> None:
+        self.list.draw(pixelated=pixelated)
 
 
 class CarLayer:
     """The cars of a viewer with their micro labels, drawn in screen space (under the pixel
     camera) at the sprite size :func:`sprite_scale` picks for the zoom. With
     ``only_highlight_label`` only the highlighted car is labelled (a whole field of labels
-    would bury the track); with ``fixed_length_px`` the cars keep that length on screen at
-    every zoom (:func:`fixed_scale`)."""
+    would bury the track); with ``true_size`` the cars keep their real size against the
+    track at every zoom (:func:`true_scale`), and turn into dots in their colour when they'd
+    be shorter than :data:`DOT_BELOW_PX`."""
 
     def __init__(
         self,
         labels: list[str],
         liveries: list[theme.Livery],
         outlined: list[bool],
-        fixed_length_px: float | None = None,
+        true_size: bool = False,
     ):
         self.sprites = CarSprites(liveries, outlined)
         self.labels = [theme.micro(label, theme.CAR_LABEL) for label in labels]
+        self.colours = [tuple(lv.primary) for lv in liveries]
         self.only_highlight_label = False
-        self.fixed_length_px = fixed_length_px
+        self.show_labels = True
+        self.true_size = true_size
+        self.dots = False  # the last draw used dots
 
     def draw(self, camera, poses, highlight: int | None, pixel_ratio: float) -> None:
         """``poses``: ``(x, y, heading)`` per car in world metres; the ``highlight`` car is
         drawn on top with a red label."""
-        if self.fixed_length_px is None:
-            k = sprite_scale(camera.pixels_per_metre, pixel_ratio)
+        if self.true_size:
+            k = true_scale(camera.pixels_per_metre, pixel_ratio)
         else:
-            k = fixed_scale(self.fixed_length_px, pixel_ratio)
+            k = sprite_scale(camera.pixels_per_metre, pixel_ratio)
         length = ART_H * k / pixel_ratio
         width = ART_W * k / pixel_ratio
         n = len(poses)
         order = [i for i in range(n) if i != highlight] + (
             [highlight] if highlight is not None else []
         )
-        self.sprites.set_order(order)
         xs, ys = camera.world_to_screen([p[0] for p in poses], [p[1] for p in poses])
-        for i, (_, _, heading) in enumerate(poses):
-            self.sprites.place(i, float(xs[i]), float(ys[i]), heading, k, pixel_ratio)
-        self.sprites.draw()
+        self.dots = self.true_size and length < DOT_BELOW_PX
+        if self.dots:
+            import arcade
+
+            r = max(DOT_MIN_R, 0.5 * width)
+            length = width = 2 * r
+            for i in order:
+                alpha = self.sprites.sprites[i].alpha
+                c = self.colours[i]
+                arcade.draw_circle_filled(float(xs[i]), float(ys[i]), r, (*c[:3], alpha), 12)
+                if i == highlight:
+                    arcade.draw_circle_outline(
+                        float(xs[i]), float(ys[i]), r + 2.0, theme.CAR_OUTLINE, 1.0, 16
+                    )
+        else:
+            self.sprites.set_order(order)
+            for i, (_, _, heading) in enumerate(poses):
+                self.sprites.place(i, float(xs[i]), float(ys[i]), heading, k, pixel_ratio)
+            # Whole art pixels stay crisp; below one physical pixel each, filter smoothly
+            self.sprites.draw(pixelated=k >= 1.0)
         labelled = range(n)
-        if self.only_highlight_label:
+        if not self.show_labels:
+            labelled = order = []
+        elif self.only_highlight_label:
             labelled = order = [] if highlight is None else [highlight]
         # Labels right of each car, caps centred on it; overlapping ones stack downwards
         # (the highlighted car's label keeps its place).
@@ -284,7 +315,7 @@ class CarLayer:
             dx = label_offset(poses[i][2], length, width) + 6.0
             x, y = float(xs[i]) + dx, float(ys[i]) - 3.5
             boxes[i] = Rect(x, y - 2.0, self.labels[i].content_width, LABEL_H)
-        first = [highlight] if highlight is not None else []
+        first = [highlight] if highlight in boxes else []
         rest = sorted((i for i in boxes if i != highlight), key=lambda i: -boxes[i].y)
         placing = first + rest
         stacked = dict(

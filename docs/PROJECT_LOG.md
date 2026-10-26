@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-25 (2026 sprite, fixed-size coloured field, D31). This section summarises
+*Last updated: 2026-10-25 (true-size cars, focus overlay, D33). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
@@ -23,7 +23,9 @@ exists, but the new package replaces it.
   Replay switch the window to those screens, and Esc comes back. Train opens a console. The
   window remembers its place, but only restores it if it lands on a connected screen.
   Train starts `f1sim train` in the background and switches to the training screen.
-- **The menu** is a dark hero card: track picker and buttons on the left. On the right is a
+- **The menu** (D33) is a card grid in the window's left 40%: logo bar, track picker and
+  Drive / Replay / Train / Quit as squares. The older text below still describes the hero.
+  Before D33: track picker and buttons on the left. On the right is a
   metallic-black Ferrari SF-26 seen from above (55% of the window high, no logos), driving
   endless laps of Marina Bay at Russell's 2025 pole-lap speed. It keeps overtaking five
   slower cars in gunmetal, graphite and satin grey, and red and blue lamps flash by the
@@ -48,11 +50,15 @@ exists, but the new package replaces it.
 - **Training view** (D30): the trainer replaces `generation.npz` every generation; the app
   re-drives the newest one with every genome on track (exactly the trainer's episodes; a
   test checks lap times match). Cars keep one size at every zoom, each in its own colour,
-  in the 2026 sprite (D31). Opens fitted to the circuit; wheel zoom, right-drag pan,
+  in the 2026 sprite (D31), drawn at true size against the track (dots when tiny, D33).
+  Holding Enter fades in a focus view: the best AI car against the real pole ghost with
+  leader-line callouts and live sector times (D33). `H` or the edge tab opens a "How it works" drawer that
+  explains learning, scoring, realism and physics with this run's numbers (D32).
+  Opens fitted to the circuit; wheel zoom, right-drag pan,
   `Z` fit, `F` follow the best genome, Up/Down 0.5–16×, `N` newest. Leaving the screen
   stops the training. `f1sim watch <run>` opens it on any run folder. Checked in the real
   window on a live Silverstone run.
-- **Tests:** 602 pass offline. `ruff check` is clean.
+- **Tests:** 624 pass offline. `ruff check` is clean.
 
 **Open problems, most important first:**
 1. **Training needs a racing line.** Spec v2 observes a TUM raceline, or the centre line where
@@ -73,7 +79,10 @@ exists, but the new package replaces it.
 6. **Drive mode's off-track rule still uses the white line**, not the track limits
    (`app/drive.py`).
 
-**Next step:** the user tries the training view (menu → Train). Likely tweaks: the
+**Next step:** the user tries the training view's focus overlay (hold Enter) and the
+true-size cars. The user found the drawer
+"alright, not premium"; the focus overlay's card style (`ui/focus_layer.py`) may be the
+direction to bring it towards. Likely tweaks: the
 default playback speed (`training.DEFAULT_SPEED`), the episode cut-off
 (`LEADER_GRACE_S`), and whether leaving the screen should keep training running. In stage 2
 the cloned field drives as one tight pack, so even with distinct colours it shows as a
@@ -628,6 +637,75 @@ should look more like a 2026 car (they shared a pixel-art reference).
   (staggered starts) would only be for show, and the replay would no longer match the
   trainer's episodes.
 
+**D32 · A "How it works" drawer in the training view** (2026-10-25)
+The user asked for the design decisions (how the cars learn, the scoring, how close to the
+real lap, how real the physics is) to be explained in the app, perhaps in a side drawer.
+- **Drawer** (`app/ui/drawer.py`): a glass panel that slides in from the right over the
+  track. Closed, only a `? HOW IT WORKS` tab shows on the right edge. Open/close: the tab,
+  `H`, or Esc (Esc closes the drawer before it leaves the screen). Tabs for four pages, `Tab`
+  cycles them, the wheel scrolls a page when it doesn't fit (otherwise the wheel still zooms).
+- **Content** (`app/explain.py`, pure): Learn, Score, Results, Physics, in plain short
+  sentences, from D8, D11, D16 and D17. It's live: the generation and change size on
+  screen, this generation's best car with its score worked out with the trainer's own
+  constants, this run's best against the real lap and the scripted driver as bars, and this
+  run's car parameters (power, top speed, grip at 80 and 290 km/h). The first time it
+  opens, it shows the page that fits the run (Learn while copying, Score before the first
+  lap, then Results).
+- **The real lap** is the track's newest real-driver ghost; else a checked reference
+  (`REFERENCE_POLES`: only Silverstone, Russell's 85.819 s); else the page says how to
+  build a ghost.
+- **Text is wrapped by the drawer, not by pyglet.** At 2x, pyglet's word wrap left the start
+  of a word on the line above ("th|em") when the word's glyphs sat in different atlas
+  textures. `wrap_words` breaks lines at spaces using the font's glyph advances at the
+  label's DPI. (Without `dpi=` pyglet hands back the 96-dpi font, which halves every width.)
+- **Rejected:** a separate help screen (it would hide the cars it explains); tooltips on the
+  HUD (too little room for the reasoning).
+
+**D33 · Menu as a card grid in the left 40%, after the Audi F1 site** (2026-10-25)
+
+The old menu (kicker, "LEARN TO RACE." headline, paragraph, four wide buttons) felt crowded
+and covered the hero. Now `menu.card_layout` stacks, from the top of the window inside its
+left 40%: a black logo bar, a track-picker card (`‹ ›`), and Drive / Replay / Train / Quit as
+a 2 x 2 block of squares with a red round arrow button. The focused card turns red. The
+headline and paragraph are gone. Squares shrink so the grid never meets the footer
+(minimum 96 px). Mouse: cards as before; `picker_arrow_at` handles the arrows.
+- **Font:** the user chose **HN Revline Regular** (Hora Nocte, paid, Creative Market) for
+  the display face. It isn't in the repo and is git-ignored
+  (`assets/fonts/HNRevline/`, `theme.OPTIONAL_FONT_FILES`); without it the face
+  `display` falls back to Archivo. Drop `HN-Revline-Regular.otf` there to use it. The
+  family name registered by the file may need adding to `FACES["display"]`.
+- **Rejected:** a 3 x 2 grid of smaller squares and a headline-plus-list layout (the
+  prototypes the user compared).
+
+**D33 · True-size cars and a hold-Enter focus overlay** (2026-10-25)
+The user tried D31/D32: when the track was fitted to the window, the fixed-size cars were
+wider than the track. By "the same size" they meant the same size *against the track*. They
+also asked for a press-and-hold view of the fastest AI car against the real pole lap, with
+the driver named on a pointer line and the sector times as three coloured lines.
+- **True size** (`CarLayer(true_size=True)`, `pixelcar.true_scale`): the sprite is drawn
+  at the car's real 5.6 m at every zoom (not rounded to whole art pixels; smooth filtering
+  below one physical pixel per art pixel). Shorter than 10 px on screen, each car is a dot
+  in its colour (radius at least 1.5 px, which still fits a 12 m track down to about
+  0.25 px/m); the best car's dot has a ring. This replaces D31's fixed 40 px.
+- **Focus** (`app/focus.py` logic, `app/ui/focus_layer.py` drawing): hold Enter and it
+  eases in over 0.35 s (out over 0.25 s on release). The track and the field dim, the
+  generation's best car gets a red ring, the real pole lap (the track's newest ghost)
+  drives beside it in its team livery, and each has a card on a 1 px leader line: name,
+  lap clock, a bar in the three sector colours that fills as the lap goes, and the sector
+  times. The AI card adds its gap to the pole in each sector (green quicker, red slower).
+  The three sectors are traced on the track in the same colours (cyan, violet, amber).
+  Car labels hide while focus is on.
+- **Live sector times:** `LapTimer` times the best car from its progress in the playback
+  (line, splits and lap end, interpolated between steps, from the start offset). The pole
+  ghost is placed on the AI's lap clock, so both start the lap together, and its sector
+  times show as it reaches them. Silverstone check: Russell 27.978 / 34.504 against the
+  AI's 28.132 / 34.145.
+- **Without a ghost** only the AI card shows. Agents' ghosts land in the redirected cache
+  (see Gotchas): `f1sim ghost silverstone 2024` must be run in the user's own terminal.
+- **Rejected:** sector colours by F1 timing convention (purple, green, yellow) for the
+  bars: those mean "fastest / personal best", and with two cars they'd say little; colours
+  that name the sector link the cards to the track.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -667,4 +745,7 @@ should look more like a 2026 car (they shared a pixel-art reference).
 | 2026-10-23 | `f49555c` | Faint red and blue backdrop behind the driving cars (D29) |
 | 2026-10-23 | `c568d56` | Backdrop from the window's left edge, at 0.44 (D29) |
 | 2026-10-25 | `1c28454` | Training view: the newest generation re-driven live, `f1sim watch` (D30) |
-| 2026-10-25 | (this commit) | 2026 car sprite; fixed-size, one-colour-per-car training field (D31) |
+| 2026-10-25 | `1c7de5d` | 2026 car sprite; fixed-size, one-colour-per-car training field (D31) |
+| 2026-10-25 | (this commit) | "How it works" drawer in the training view (D32) |
+| 2026-10-25 | (this commit) | True-size cars; hold-Enter focus overlay with pole ghost and sectors (D33) |
+| 2026-10-25 | (this commit) | Menu rebuilt as a card grid in the left 40%, display font slot for HN Revline (D33) |

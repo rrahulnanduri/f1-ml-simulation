@@ -108,12 +108,15 @@ def test_sprite_scale_is_a_whole_multiple_with_a_minimum(ratio):
     assert pc.sprite_scale(20.0, ratio) > pc.sprite_scale(10.0, ratio)
 
 
-@pytest.mark.parametrize("ratio", [1.0, 1.5, 2.0])
-def test_fixed_scale_ignores_the_zoom(ratio):
-    k = pc.fixed_scale(40.0, ratio)
-    assert k == max(round(40.0 * ratio / pc.ART_H), 1)
-    assert abs(pc.ART_H * k / ratio - 40.0) <= 0.5 * pc.ART_H / ratio + 1e-9
-    assert pc.fixed_scale(1.0, ratio) == 1
+@pytest.mark.parametrize("ratio", [1.0, 2.0])
+def test_true_scale_keeps_the_real_length(ratio):
+    for ppm in (0.3, 4.0, 37.0):
+        k = pc.true_scale(ppm, ratio)
+        assert pc.ART_H * k / ratio == pytest.approx(theme.CAR_LENGTH_M * ppm)
+    # Fitted to a circuit (~0.37 px/m) a car is about 2 px long: drawn as a dot, and the dot
+    # stays narrower than a 12 m track down to about 0.25 px/m
+    assert pc.ART_H * pc.true_scale(0.37) < pc.DOT_BELOW_PX
+    assert 2 * pc.DOT_MIN_R <= 12.0 * 0.25
 
 
 def test_field_liveries_are_distinct():
