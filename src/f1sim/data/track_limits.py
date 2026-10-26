@@ -55,7 +55,8 @@ DEFAULT_PARAMS = LimitParams()
 def collect_laps(track: Track, track_id: str, years, *, max_drivers: int = 25) -> list[LapSample]:
     """Every driver's fastest qualifying lap for ``years`` (OpenF1), in the track frame.
 
-    Uses the track's stored alignment; drivers without a timed lap are skipped.
+    Uses the track's stored alignment; drivers without a timed lap are skipped, and so are
+    years with no qualifying session there (Shanghai had no race in 2023).
     """
     from f1sim.data import laps, openf1_source
     from f1sim.data.alignment import Alignment, apply_alignment
@@ -67,7 +68,10 @@ def collect_laps(track: Track, track_id: str, years, *, max_drivers: int = 25) -
     al = Alignment(**{k: meta[k] for k in Alignment.__dataclass_fields__})
     out: list[LapSample] = []
     for year in years:
-        session = openf1_source.find_session(int(year), track_id, "Q")
+        try:
+            session = openf1_source.find_session(int(year), track_id, "Q")
+        except openf1_source.OpenF1Error:
+            continue
         drivers = openf1_source._get("drivers", {"session_key": session["session_key"]})
         numbers = sorted({int(d["driver_number"]) for d in drivers})[:max_drivers]
         for number in numbers:

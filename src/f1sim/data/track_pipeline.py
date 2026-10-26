@@ -21,12 +21,16 @@ from f1sim.track.track import Track, TrackData
 if TYPE_CHECKING:
     from f1sim.data.alignment import Alignment
 
-# Section 4.3 acceptance. A real lap runs kerb to kerb (TUM's own optimal racing line sits a median
-# 5.1 m off the centre line at Silverstone), and position noise puts corner exits just past the
-# edges, so "inside" allows EDGE_TOLERANCE_M. A lap from a different layout scores far below both.
+# Section 4.3 acceptance (D39). A real lap runs kerb to kerb (TUM's own optimal racing line
+# sits a median 5.1 m off the centre line at Silverstone), and at a few corners real cars run
+# up to 4 m past TUM's painted edge, where its satellite widths miss the kerbs and run-off
+# (Shanghai, Spa, Mexico City, the Red Bull Ring). That is what track limits allow
+# (track_limits.LimitParams.max_extra_m), so "inside" allows EDGE_TOLERANCE_M = 4 m. 2024 poles:
+# every unchanged layout >= 99.6% inside, every changed one (Yas Marina, Albert Park,
+# Barcelona, Zandvoort) <= 96.4%.
 MAX_MEDIAN_DIST_M = 6.0
-MIN_INSIDE_RATIO = 0.98
-EDGE_TOLERANCE_M = 1.0
+MIN_INSIDE_RATIO = 0.99
+EDGE_TOLERANCE_M = 4.0
 
 
 class AlignmentRejected(RuntimeError):
@@ -59,8 +63,14 @@ def build_and_cache(
     resolution_m: float = 2.0,
     source: str = "auto",
     limit_years: tuple[int, ...] | None = None,
+    from_laps: bool = False,
+    lap_years: tuple[int, ...] | None = None,
 ) -> BuildReport:
     """Build `track_id` from TUM data and write it to the cache.
+
+    Circuits without a TUM file, or any circuit with `from_laps`, are built from real
+    qualifying laps instead (`lap_geometry.build_from_laps`, `lap_years` or its defaults);
+    `year`, `source` and `limit_years` don't apply to those.
 
     With `year`, the fastest qualifying lap of that year is aligned to the track to fix the
     start/finish line, racing direction and sector boundaries, and to validate the layout.
@@ -71,10 +81,24 @@ def build_and_cache(
     Raises AlignmentRejected if the lap doesn't fit (section 4.3).
     """
     entry = catalog.get(track_id)
-    if entry.tum_name is None:
-        raise NotImplementedError(
-            f"{entry.name} isn't in the TUM racetrack-database; the FastF1 width-estimation "
-            "fallback arrives in M5"
+    if from_laps or entry.tum_name is None:
+        from f1sim.data import lap_geometry
+
+        data = lap_geometry.build_from_laps(
+            entry.id, lap_years or lap_geometry.DEFAULT_YEARS, resolution_m=resolution_m
+        )
+        from f1sim.data.alignment import Alignment
+
+        meta = data.fastf1_alignment
+        out = track_path(entry.id)
+        write_track_json(data, out)
+        return BuildReport(
+            data,
+            out,
+            Alignment(**{k: meta[k] for k in Alignment.__dataclass_fields__}),
+            meta["reference_driver"],
+            meta["reference_lap_s"],
+            "openf1",
         )
     raw = tum_source.parse_tum_csv(tum_source.fetch_tum_csv(entry.tum_name))
     geometry_source = {
@@ -147,7 +171,8 @@ def build_and_cache(
         from f1sim.data import track_limits
 
         samples = track_limits.collect_laps(Track(data), entry.id, limit_years)
-        data = track_limits.with_limits(data, samples, limit_years)
+        used = sorted({int(s.label.rsplit(" ", 1)[1]) for s in samples})
+        data = track_limits.with_limits(data, samples, used or limit_years)
 
     out = track_path(entry.id)
     write_track_json(data, out)

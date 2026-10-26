@@ -110,11 +110,31 @@ def test_build_without_fastf1_keeps_tum_order(fake_sources):
     assert report.track.sectors_s == ()
 
 
-def test_track_without_tum_data_needs_the_fallback(monkeypatch):
+def test_track_without_tum_data_is_built_from_laps(monkeypatch, tmp_path):
+    from f1sim.data import lap_geometry
+    from f1sim.data.track_limits import LapSample
+
+    monkeypatch.setenv("F1SIM_CACHE_DIR", str(tmp_path))
     no_tum = CatalogEntry(id="monaco", name="Monaco", tum_name=None, fastf1_locations=("Monaco",))
     monkeypatch.setattr(catalog, "get", lambda track_id: no_tum)
-    with pytest.raises(NotImplementedError, match="fallback arrives in M5"):
-        track_pipeline.build_and_cache("monaco")
+    x, y = circle(200.0, 400)
+    lap_time = 2 * np.pi * 200.0 / SPEED
+    t = np.linspace(0.0, lap_time, x.size, endpoint=False)
+    ref = LapXY("LEC", lap_time, t, x, y, (lap_time / 3, 2 * lap_time / 3))
+    sample = LapSample("LEC 2025", *lap_geometry._smooth(ref))
+    monkeypatch.setattr(
+        lap_geometry,
+        "collect_laps",
+        lambda track_id, years: lap_geometry.LapSet(ref, 2025, [2025], [sample], []),
+    )
+    report = track_pipeline.build_and_cache("monaco")
+    d = report.track
+    assert d.source["geometry"] == "openf1-laps" and d.source["widths"] == "lap-envelope"
+    assert d.source["min_width_m"] == lap_geometry.min_width_m("monaco")
+    assert d.fastf1_alignment["reference_driver"] == "LEC"
+    assert report.alignment.inside_ratio == 1.0
+    assert len(d.sectors_s) == 3
+    assert track_pipeline.load_track("monaco").length == pytest.approx(d.length_m)
 
 
 def test_cli_build_and_list(fake_sources, capsys):

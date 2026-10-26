@@ -37,6 +37,8 @@ def _cmd_build_track(args: argparse.Namespace) -> int:
             resolution_m=args.resolution,
             source=args.source,
             limit_years=tuple(args.limit_years) if args.limits else None,
+            from_laps=args.from_laps,
+            lap_years=tuple(args.lap_years) if args.lap_years else None,
         )
     except (
         KeyError,
@@ -58,6 +60,11 @@ def _cmd_build_track(args: argparse.Namespace) -> int:
     print(f"  width        {total_width.min():.1f}-{total_width.max():.1f} m wall to wall")
     print(f"  walls        {left_x} left / {right_x} right self-crossings")
     print(f"  direction    {t.direction}")
+    if t.source.get("geometry") == "openf1-laps":
+        print(
+            f"  geometry     from {t.source['laps']} qualifying laps {t.source['years']} "
+            f"(approximate: road widened to {t.source['min_width_m']:g} m)"
+        )
     if report.alignment is not None:
         a = report.alignment
         print(
@@ -66,7 +73,8 @@ def _cmd_build_track(args: argparse.Namespace) -> int:
         )
         print(
             f"  alignment    median {a.median_dist_m:.2f} m from centre line, "
-            f"{t.fastf1_alignment['inside_ratio_tol']:.1%} within 1 m of edges, "
+            f"{t.fastf1_alignment['inside_ratio_tol']:.1%} within "
+            f"{t.fastf1_alignment['edge_tolerance_m']:g} m of edges, "
             f"{a.inside_ratio:.1%} inside edges, rotation {a.rotation_rad:.4f} rad, "
             f"mirrored={a.mirrored}"
         )
@@ -336,7 +344,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("tracks", help="list circuits and whether they're built")
     p.set_defaults(func=_cmd_tracks)
 
-    p = sub.add_parser("build-track", help="build a circuit from TUM data into the cache")
+    p = sub.add_parser(
+        "build-track", help="build a circuit (TUM data, or real laps without it) into the cache"
+    )
     p.add_argument("track_id")
     p.add_argument("--year", type=int, default=2024, help="qualifying session used for alignment")
     p.add_argument(
@@ -360,6 +370,17 @@ def main(argv: list[str] | None = None) -> int:
         nargs="+",
         default=[2023, 2024, 2025],
         help="seasons whose qualifying laps define the limits",
+    )
+    p.add_argument(
+        "--from-laps",
+        action="store_true",
+        help="build the road from real qualifying laps, not TUM (automatic without TUM data)",
+    )
+    p.add_argument(
+        "--lap-years",
+        type=int,
+        nargs="+",
+        help="seasons whose qualifying laps build the road (default 2023-2026)",
     )
     p.set_defaults(func=_cmd_build_track)
 
