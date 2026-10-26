@@ -181,7 +181,7 @@ class Headline:
                 "",
                 theme.HEADLINE_PX,
                 theme.white(theme.HEADLINE_FADE[i]),
-                face="headline",
+                face="display",
             )
             for i in range(n_lines)
         ]
@@ -604,7 +604,7 @@ class Footer:
     def __init__(self, glass: GlassRenderer, controls: list[str]):
         self.glass = glass
         self.wordmark = theme.make_text(
-            "F1SIM", theme.WORDMARK_PX, theme.TEXT_PRIMARY, face="headline"
+            "F1SIM", theme.WORDMARK_PX, theme.TEXT_PRIMARY, face="display"
         )
         self.links = [theme.micro(c, theme.TEXT_PRIMARY) for c in controls]
         self.status = theme.micro("", theme.TEXT_PRIMARY, anchor_x="right")
@@ -656,7 +656,7 @@ class Banner:
         self.glass = glass
         self.label = theme.micro(label, theme.ACCENT, anchor_x="center")
         self.text = theme.make_text(
-            text.upper(), 18, theme.TEXT_PRIMARY, face="headline", anchor_x="center"
+            text.upper(), 18, theme.TEXT_PRIMARY, face="display", anchor_x="center"
         )
         self.rect = lay.Rect(0, 0, 1, 1)
 

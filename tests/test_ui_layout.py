@@ -3,6 +3,7 @@
 import importlib
 import math
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -259,7 +260,11 @@ def test_fonts_are_bundled_with_licences():
         text = (theme.FONT_DIR / family / "OFL.txt").read_text(encoding="utf-8")
         assert "SIL OPEN FONT LICENSE Version 1.1" in text
     # Nothing bundled that isn't used.
-    bundled = {p.relative_to(theme.FONT_DIR).as_posix() for p in theme.FONT_DIR.rglob("*.ttf")}
+    bundled = {
+        p.relative_to(theme.FONT_DIR).as_posix()
+        for p in theme.FONT_DIR.rglob("*.ttf")
+        if p.parts[-2] not in {Path(o).parts[0] for o in theme.OPTIONAL_FONT_FILES}
+    }
     assert bundled == set(theme.FONT_FILES)
     assert theme.FACES["headline"].stretch == "expanded"
     assert theme.FACES["headline"].weight == "bold"

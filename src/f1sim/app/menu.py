@@ -106,10 +106,10 @@ STAGE_AMBIENT = 0.35
 """How much of the light stage's ambient photo (the car at rest) shows."""
 STAGE_FADE_OUT_M = 0.9
 """The stage light fades out this far outside its grid (over the menu, say)."""
-DRIVE_CAR_HEIGHT = 0.55
+DRIVE_CAR_HEIGHT = 0.86
 """The driving car's length as a share of the window height."""
 DRIVE_X = 0.72
-DRIVE_Y = 0.42
+DRIVE_Y = 0.48
 """The driving car's centre, as a share of the window width and height (a little low, so
 more track shows ahead, where the slower cars come from)."""
 TRACK_LINE_HALF_M = 0.07
@@ -147,7 +147,7 @@ LAMP_RADIUS_M = 0.35
 LAMP_REACH_M = 14.0
 """Lamps farther than this outside the window are left out (at most ``MAX_LAMPS``)."""
 LAMP_GLOW_M = 0.18
-BACKDROP_ALPHA = 0.44
+BACKDROP_ALPHA = 0.30
 """The red and blue backdrop behind the menu and the driving cars
 (``assets/hero/backdrop.webp``): it covers the window from its left edge, under the text."""
 MAX_LAMPS = 8
@@ -165,6 +165,65 @@ FLOOR_GLOW = 0.05
 """Brightness the cursor light adds to the floor (the card) at its centre."""
 
 ITEMS = ("Drive", "Replay", "Train", "Quit")
+KICKERS = {"Drive": "Race", "Replay": "Review", "Train": "Learn", "Quit": "Exit"}
+
+MENU_SHARE = 0.40
+"""The menu cards take the window's left 40%, so the driving car on the right stays clear."""
+MENU_MARGIN = 16.0
+CARD_GAP = 10.0
+BAR_H = 52.0
+PICKER_H = 84.0
+FOOTER_H = 30.0
+MIN_CARD = 96.0
+CARD_FILL = theme.hex_colour("#0C0C0E", 0.80)
+CARD_LINE = theme.white(0.13)
+
+Rect = tuple[float, float, float, float]
+"""``(left, bottom, width, height)`` in window pixels, y up."""
+
+
+@dataclass(frozen=True)
+class CardLayout:
+    """The menu's card grid: a bar, the track picker, then ``ITEMS`` as a 2 x 2 block of
+    squares, stacked from the top of the window inside its left 40%."""
+
+    left: float
+    col_w: float
+    bar: Rect
+    picker: Rect
+    cards: tuple[Rect, ...]
+    footer_y: float
+    square: float
+
+
+def card_layout(width: float, height: float) -> CardLayout:
+    """Lay the cards out for a window. The squares are as large as fit across 40% of the
+    width and between the picker and the footer; the bar and picker match their block."""
+    m, g = MENU_MARGIN, CARD_GAP
+    across = (MENU_SHARE * width - 2.0 * m - g) / 2.0
+    down = (height - 2.0 * m - BAR_H - PICKER_H - 3.0 * g - FOOTER_H - g) / 2.0
+    s = float(math.floor(max(MIN_CARD, min(across, down))))
+    col_w = 2.0 * s + g
+    top = height - m
+    bar = (m, top - BAR_H, col_w, BAR_H)
+    picker = (m, bar[1] - g - PICKER_H, col_w, PICKER_H)
+    row_top = picker[1] - g
+    cards = tuple(
+        (m + (i % 2) * (s + g), row_top - s - (i // 2) * (s + g), s, s) for i in range(len(ITEMS))
+    )
+    return CardLayout(m, col_w, bar, picker, cards, m + 8.0, s)
+
+
+def picker_arrow_at(picker: Rect, x: float, y: float) -> int:
+    """-1 or 1 when ``(x, y)`` is on the track picker's left or right arrow, else 0."""
+    left, bottom, w, h = picker
+    if not (bottom <= y <= bottom + h):
+        return 0
+    if left + w - 84.0 <= x < left + w - 42.0:
+        return -1
+    if left + w - 42.0 <= x <= left + w:
+        return 1
+    return 0
 
 
 # --------------------------------------------------------------------------- discovery
@@ -816,33 +875,22 @@ def _make_view_class():
             p["u_ambient_level"] = STAGE_AMBIENT
 
         def _init_text(self) -> None:
-            self.t_kicker = theme.micro("F1SIM  ·  NEUROEVOLUTION", theme.ACCENT)
-            self.t_head = [
-                theme.make_text("LEARN TO", 60, HEADLINE_TOP, face="headline"),
-                theme.make_text("RACE.", 60, HEADLINE_BOTTOM, face="headline"),
-            ]
-            self.t_body = theme.make_text(
-                "AI drivers teach themselves to lap real Formula 1 circuits. Pick a track, "
-                "drive it yourself against a real driver's ghost, replay the fastest AI lap, "
-                "or start training a new generation.",
-                16,
-                BODY_TEXT,
-                anchor_y="top",
-                multiline=True,
-                width=440,
-            )
+            self.t_kicker = theme.micro("Neuroevolution", theme.TEXT_SECONDARY, anchor_x="right")
+            self.t_logo = theme.make_text("F1SIM", 17, theme.TEXT_PRIMARY, face="display")
             self.t_track_label = theme.micro("Track", theme.TEXT_SECONDARY)
-            self.t_track = theme.make_text("", 15, theme.TEXT_PRIMARY, face="headline")
+            self.t_track = theme.make_text("", 22, theme.TEXT_PRIMARY, face="display")
             self.t_arrows = [
-                theme.make_text("‹", 22, theme.TEXT_SECONDARY, face="medium", anchor_x="center"),
-                theme.make_text("›", 22, theme.TEXT_SECONDARY, face="medium", anchor_x="center"),
+                theme.make_text("‹", 26, theme.TEXT_SECONDARY, face="medium", anchor_x="center"),
+                theme.make_text("›", 26, theme.TEXT_SECONDARY, face="medium", anchor_x="center"),
+            ]
+            self.t_kickers = [
+                theme.micro(KICKERS[i], theme.TEXT_SECONDARY, anchor_x="left") for i in ITEMS
             ]
             self.t_items = [
-                theme.make_text(i.upper(), 13, theme.TEXT_PRIMARY, face="micro", tracking_px=1.5)
-                for i in ITEMS
+                theme.make_text(i, 22, theme.TEXT_PRIMARY, face="display") for i in ITEMS
             ]
             self.t_notes = [
-                theme.make_text("", 11, theme.TEXT_TERTIARY, face="medium") for _ in ITEMS
+                theme.make_text("", 12, theme.TEXT_TERTIARY, face="medium") for _ in ITEMS
             ]
             self.t_footer = theme.micro(
                 "↑↓ select   ·   ←→ track   ·   enter open   ·   esc quit", theme.TEXT_TERTIARY
@@ -871,39 +919,30 @@ def _make_view_class():
             super().on_resize(width, height)
             w, h = float(width), float(height)
             # Text is laid out on whole pixels (a glyph between pixels is resampled: blurred)
-            self.left = float(round(max(48.0, 0.07 * w)))
-            col_w = float(round(min(460.0, 0.42 * w - self.left)))
+            lay = card_layout(w, h)
+            self.cards = lay
+            self.left, col_w = lay.left, lay.col_w
             self.col_w = col_w
-            self.t_body.width = col_w
-            body_h = float(round(self.t_body.content_height))
-            # Column height, top of the kicker to the bottom of the last button
-            total = 62.0 + 66.0 + 34.0 + body_h + 40.0 + 34.0 + 30.0 + 4 * 48.0 - 8.0
-            footer_room = 70.0
-            y = float(round(min(0.5 * (h + footer_room) + 0.5 * total, h - 48.0)))
-            self.t_kicker.position = (self.left, y)
-            y -= 62.0
-            for k, t in enumerate(self.t_head):
-                t.position = (self.left, y)
-                y -= 66.0 if k == 0 else 34.0
-            self.t_body.position = (self.left, y)
-            y -= body_h + 40.0
-            self.t_track_label.position = (self.left, y)
-            y -= 34.0
-            self.track_row_y = y
-            self.t_arrows[0].position = (self.left + 8.0, y - 2.0)
-            self.t_track.position = (self.left + 32.0, y)
-            self.t_arrows[1].position = (self.left + col_w - 8.0, y - 2.0)
-            y -= 30.0
+            pad = 18.0
+            bl, bb, bw, bh = lay.bar
+            self.t_logo.position = (bl + pad, bb + 0.5 * bh - 6.0)
+            self.t_kicker.position = (bl + bw - pad, bb + 0.5 * bh - 4.0)
+            pl, pb, pw, ph = lay.picker
+            self.t_track_label.position = (pl + pad, pb + ph - 28.0)
+            self.t_track.position = (pl + pad, pb + 20.0)
+            self.t_arrows[0].position = (pl + pw - 63.0, pb + 0.5 * ph - 10.0)
+            self.t_arrows[1].position = (pl + pw - 21.0, pb + 0.5 * ph - 10.0)
             self.buttons = []
-            for i, (t, note) in enumerate(zip(self.t_items, self.t_notes, strict=True)):
-                rect = (self.left, y - 40.0, col_w, 40.0)
+            size = float(round(min(26.0, max(15.0, 0.15 * lay.square))))
+            for i, rect in enumerate(lay.cards):
                 self.buttons.append(Button(ITEMS[i], rect))
-                t.position = (self.left + 18.0, y - 25.0)
-                note.position = (self.left + col_w - 16.0, y - 25.0)
-                note.anchor_x = "right"
-                y -= 48.0
-            self.t_footer.position = (self.left, 28.0)
-            self.t_status.position = (self.left, 52.0)
+                cl, cb, cw, ch = rect
+                self.t_kickers[i].position = (cl + pad, cb + ch - 27.0)
+                self.t_items[i].font_size = theme.px_to_pt(size)
+                self.t_items[i].position = (cl + pad, cb + 36.0)
+                self.t_notes[i].position = (cl + pad, cb + 16.0)
+            self.t_footer.position = (self.left, lay.footer_y)
+            self.t_status.position = (self.left, lay.footer_y)
             if self.drive is not None:
                 self.hero = drive_layout(w, h, self.dstage.size_m, self.dstage.rear_axle_y)
                 self.traffic.view_m = view_radius_m(w, h, self.hero, self.dstage.rear_axle_y)
@@ -946,11 +985,9 @@ def _make_view_class():
                 self.focus = i
                 self.open_item(ITEMS[i])
                 return
-            if abs(y - self.track_row_y) < 18:
-                if x < self.left + 24:
-                    self.change_track(-1)
-                elif x > self.left + self.col_w - 24:
-                    self.change_track(1)
+            step = picker_arrow_at(self.cards.picker, x, y)
+            if step:
+                self.change_track(step)
 
         def on_key_press(self, symbol: int, modifiers: int) -> None:
 
@@ -1274,42 +1311,61 @@ def _make_view_class():
 
         def _texts(self) -> list:
             return [
+                self.t_logo,
                 self.t_kicker,
-                *self.t_head,
-                self.t_body,
                 self.t_track_label,
                 *self.t_arrows,
                 self.t_track,
+                *self.t_kickers,
                 *self.t_items,
                 *self.t_notes,
                 self.t_footer,
                 self.t_status,
             ]
 
+        @staticmethod
+        def _panel(rect: Rect, fill=CARD_FILL, line=CARD_LINE) -> None:
+            left, bottom, w, h = rect
+            arcade.draw_lrbt_rectangle_filled(left, left + w, bottom, bottom + h, fill)
+            arcade.draw_lrbt_rectangle_outline(left, left + w, bottom, bottom + h, line, 1)
+
+        @staticmethod
+        def _arrow_button(cx: float, cy: float, fill, ink) -> None:
+            """A round button with a ↗ arrow, drawn from lines (the fonts have no arrow)."""
+            arcade.draw_circle_filled(cx, cy, 15.0, fill)
+            a = 5.0
+            arcade.draw_line(cx - a, cy - a, cx + a, cy + a, ink, 1.6)
+            arcade.draw_line(cx - 1.0, cy + a, cx + a, cy + a, ink, 1.6)
+            arcade.draw_line(cx + a, cy + a, cx + a, cy - 1.0, ink, 1.6)
+
         def _draw_text(self) -> None:
+            status_on = time.perf_counter() - self.status_t < 4.0
+            self._panel(self.cards.bar, theme.hex_colour("#000000", 0.88))
+            self._panel(self.cards.picker)
             for i, b in enumerate(self.buttons):
                 left, bottom, bw, bh = b.rect
                 active = i == self.focus
                 disabled = b.item == "Replay" and self.run is None
-                if active and not disabled:
-                    arcade.draw_lrbt_rectangle_filled(
-                        left, left + bw, bottom, bottom + bh, theme.ACCENT
-                    )
-                else:
-                    arcade.draw_lrbt_rectangle_filled(
-                        left, left + bw, bottom, bottom + bh, theme.white(0.03)
-                    )
-                    arcade.draw_lrbt_rectangle_outline(
-                        left, left + bw, bottom, bottom + bh, theme.white(0.20), 1
-                    )
-                self.t_items[i].color = theme.TEXT_TERTIARY if disabled else theme.TEXT_PRIMARY
-                self.t_notes[i].color = (
-                    theme.white(0.75) if active and not disabled else theme.TEXT_TERTIARY
+                lit = active and not disabled
+                self._panel(
+                    b.rect, theme.ACCENT if lit else CARD_FILL, theme.ACCENT if lit else CARD_LINE
                 )
+                self._arrow_button(
+                    left + bw - 27.0,
+                    bottom + bh - 27.0,
+                    theme.TEXT_PRIMARY if lit else theme.ACCENT,
+                    theme.ACCENT if lit else theme.TEXT_PRIMARY,
+                )
+                self.t_items[i].color = theme.TEXT_TERTIARY if disabled else theme.TEXT_PRIMARY
+                self.t_kickers[i].color = theme.white(0.8) if lit else theme.TEXT_SECONDARY
+                self.t_notes[i].color = theme.white(0.8) if lit else theme.TEXT_TERTIARY
             with theme.text_batch():
                 for t in self._texts():
-                    if t is not self.t_status or time.perf_counter() - self.status_t < 4.0:
-                        t.draw()
+                    if t is self.t_status and not status_on:
+                        continue
+                    if t is self.t_footer and status_on:
+                        continue
+                    t.draw()
 
     return MenuView
 

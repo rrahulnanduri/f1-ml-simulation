@@ -395,6 +395,15 @@ FONT_FILES = (
     "Archivo/Archivo-Medium.ttf",
     "JetBrainsMono/JetBrainsMono-Regular.ttf",
 )
+OPTIONAL_FONT_FILES = (
+    "Orbitron/Orbitron-Regular.ttf",
+    "Orbitron/Orbitron-Bold.ttf",
+    "HNRevline/HN-Revline-Regular.otf",
+    "HNRevline/HN-Revline-Regular.ttf",
+)
+"""HN Revline (Hora Nocte, a paid font from Creative Market): the menu's display face. It is
+git-ignored, so it is loaded only when the user has dropped it in; without it the display
+face falls back to Archivo Expanded."""
 _SANS = ("Segoe UI", "Helvetica Neue", "Arial", "DejaVu Sans")
 
 
@@ -414,6 +423,10 @@ class Face:
 
 FACES: dict[str, Face] = {
     "headline": Face(("Archivo Expanded", "Archivo", *_SANS), "bold", "expanded"),
+    "display": Face(
+        ("Orbitron", "HN Revline", "HN REVLINE", "Archivo Expanded", "Archivo", *_SANS),
+        "bold",
+    ),
     "micro": Face(("Archivo SemiExpanded", "Archivo", *_SANS), "bold", "semiexpanded"),
     "medium": Face(("Archivo", "Archivo Medium", *_SANS), "medium"),
     "mono": Face(("JetBrains Mono", "Consolas", "Menlo", "DejaVu Sans Mono", "Courier New")),
@@ -438,6 +451,12 @@ def load_fonts() -> bool:
             ok = False
             log.warning("Can't load font %s (%s); using system fonts", rel, exc)
             break
+    for rel in OPTIONAL_FONT_FILES:
+        if (FONT_DIR / rel).is_file():
+            try:
+                arcade.load_font(FONT_DIR / rel)
+            except Exception as exc:  # noqa: BLE001 - the display face falls back
+                log.warning("Can't load font %s (%s); using Archivo Expanded", rel, exc)
     _fonts_loaded = ok
     return ok
 

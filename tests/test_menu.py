@@ -363,3 +363,26 @@ def test_cars_and_the_light_map_between_frames():
 def test_flat_array_uniforms_pad_to_size():
     assert menu._flat([(1, 2, 3)], 2, 3) == (1.0, 2.0, 3.0, 0.0, 0.0, 0.0)
     assert menu._flat([(1, 2)] * 5, 2, 2) == (1.0, 2.0, 1.0, 2.0)
+
+
+@pytest.mark.parametrize("w,h", [(1280, 800), (1920, 1080), (1000, 600)])
+def test_cards_fit_in_the_left_40_percent_as_squares(w, h):
+    lay = menu.card_layout(w, h)
+    assert len(lay.cards) == len(menu.ITEMS)
+    for left, bottom, cw, _ in (lay.bar, lay.picker, *lay.cards):
+        assert left >= menu.MENU_MARGIN and bottom >= 0
+        assert left + cw <= menu.MENU_SHARE * w + 1 or lay.square == menu.MIN_CARD
+    for _, _, cw, ch in lay.cards:
+        assert cw == ch == lay.square
+    tops = [b + ch for _, b, _, ch in lay.cards]
+    assert tops[0] == tops[1] > tops[2] == tops[3]
+    assert lay.picker[1] > tops[0]  # the picker sits above the grid
+    assert min(b for _, b, _, _ in lay.cards) >= lay.footer_y  # clear of the footer
+
+
+def test_picker_arrows_hit_their_zones():
+    picker = (16.0, 500.0, 300.0, 84.0)
+    assert menu.picker_arrow_at(picker, 316.0 - 63.0, 540.0) == -1
+    assert menu.picker_arrow_at(picker, 316.0 - 20.0, 540.0) == 1
+    assert menu.picker_arrow_at(picker, 40.0, 540.0) == 0
+    assert menu.picker_arrow_at(picker, 316.0 - 20.0, 100.0) == 0
