@@ -70,14 +70,16 @@ def test_pose_heading_is_continuous_across_the_line():
     assert abs(math.remainder(h_after - h_before, 2 * math.pi)) < 0.05
 
 
-def test_world_to_screen_puts_the_heading_up():
-    pose = (10.0, 20.0, math.radians(30.0))
-    ahead = (10.0 + 5 * math.cos(pose[2]), 20.0 + 5 * math.sin(pose[2]))
-    left = (10.0 - 2 * math.sin(pose[2]), 20.0 + 2 * math.cos(pose[2]))
-    pts = hd.world_to_screen([pose[:2], ahead, left], pose, ppm=10.0, anchor=(300.0, 200.0))
-    assert pts[0] == pytest.approx((300.0, 200.0))  # the rear axle at the anchor
-    assert pts[1] == pytest.approx((300.0, 250.0))  # 5 m ahead: 50 px straight up
-    assert pts[2] == pytest.approx((280.0, 200.0))  # 2 m left: 20 px to the left
+def test_world_to_screen_is_a_fixed_top_down_view():
+    # The view never turns with the car: whatever its heading, world +y is up and +x right
+    for heading in (0.0, math.radians(30.0), math.radians(-120.0)):
+        pose = (10.0, 20.0, heading)
+        pts = hd.world_to_screen(
+            [pose[:2], (15.0, 20.0), (10.0, 25.0)], pose, ppm=10.0, anchor=(300.0, 200.0)
+        )
+        assert pts[0] == pytest.approx((300.0, 200.0))  # the rear axle at the anchor
+        assert pts[1] == pytest.approx((350.0, 200.0))  # 5 m east: 50 px right
+        assert pts[2] == pytest.approx((300.0, 250.0))  # 5 m north: 50 px up
 
 
 def test_edge_quads_cover_a_band_around_the_line():

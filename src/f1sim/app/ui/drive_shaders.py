@@ -249,10 +249,10 @@ void main() {
 
 TRACK_VS = """
 #version 330
-uniform vec2 u_car;     // the hero's rear axle, world metres
+uniform vec2 u_car;     // the camera centre (the hero car's middle), world metres
 uniform vec2 u_rot;     // cos, sin of the rotation that puts the hero's heading up
 uniform float u_ppm;
-uniform vec2 u_anchor;  // the hero's rear axle on screen, window pixels
+uniform vec2 u_anchor;  // the camera centre on screen, window pixels
 uniform vec2 u_size;
 in vec2 in_pos;
 in vec4 in_col;

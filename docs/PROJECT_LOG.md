@@ -34,8 +34,8 @@ laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
   metallic-black Ferrari SF-26 seen from above (55% of the window high, no logos), driving
   endless laps of Marina Bay at Russell's 2025 pole-lap speed. It keeps overtaking five
   slower cars in gunmetal, graphite and satin grey, and red and blue lamps flash by the
-  track (D24, D25). The car stays fixed while the track moves and turns underneath it;
-  every car's front wheels steer. One light model lights the cars, the floor and the track
+  track (D24, D25). The camera is a fixed top-down view that follows the car without turning,
+  so the car drives and turns on screen (D41); every car's front wheels steer. One light model lights the cars, the floor and the track
   lines: photographed diffuse light from a Blender light stage, live GGX reflections, and
   the cars' shadows cast away from the cursor (D25). Without the driving set the menu falls
   back to the still light stage, then relit maps, then the car drawn in code.
@@ -795,6 +795,32 @@ of the furthest excursion from the pole lap, plus half a car and 0.75 m, is the 
 - **Rejected:** race laps for more spread (a whole race of position data per driver for a
   little extra width), and widening both sides equally (puts road inside the apex).
 
+**D41 · The menu's driving camera is a fixed top-down view** (2026-10-29)
+The hero used to stay nose up with the circuit turning under it. Now the view never turns:
+`hero_drive.VIEW_HEADING` (world north, π/2) is up on screen, the camera still follows the hero's
+rear axle at the same anchor and zoom, and the hero is drawn turned by `heading - VIEW_HEADING`
+like the rivals. `world_to_screen`, the track shader's `u_rot` and `car_in_hero_frame` all use it,
+so lamps, shadows and the cursor light follow. The camera follows the car's *middle*, not its rear axle (`menu.hero_camera`): a car turns about its rear axle, so anchoring there swung the view tail-first; the hero's rear axle now sits behind the screen anchor and swings with the heading.
+The camera also **zooms with speed** (`menu.zoom_for_speed`): fully in at 25 m/s and below, pulled back at 85 m/s and above (smoothstep, evenly in scale); first 1x to 0.65x, then made more dramatic: `ZOOM_IN` 2x (the car is larger than the window) to `ZOOM_OUT` 0.325x of the layout's scale, the zoom eased with a 0.9 s time constant so it breathes out and back in. `Menu.view` is the hero layout at the current zoom, about the car's centre; every drive-mode draw, the cursor light and `traffic.view_m` (sized for the widest zoom) use it. Setting `VIEW_HEADING` to any other angle rotates
+the whole view.
+
+**D42 · Other cars are less predictable; plainer drawer text** (2026-10-29)
+Slower cars drove a fixed *share* (72-86%) of the lap's speed and always reappeared 60-160 m ahead, so
+the hero caught them at a rate tied to the track's speed profile and about 2.6 were in view at any
+time. Now each drives a fixed *gap* below the lap speed (`RIVAL_CLOSING_MS`, 6-18 m/s, never under half
+the lap speed), redrawn every time it reappears, and reappears 60-320 m ahead: about 1.5 in view on
+average, none about a fifth of the time. About 47% of the time a car is in view is in the slow parts
+(the hero is there 36% of the time): not from where cars appear (tried: choosing reappearance spots
+by where the hero would catch them, no effect) but from waiting behind a car in narrow places.
+The "How it works" drawer text uses shorter, plainer words; the numbers are unchanged.
+
+**D43 · Track picker: flags, and text that stays in its box** (2026-10-29)
+The track name could run into the arrows (long names such as "Autódromo José Carlos Pace
+(Interlagos)") and the Replay card's run name ran out of its card. `menu._fit_track` shrinks the
+name to 60% to fit, then cuts it with "..."; `menu._fit_note` cuts the cards' notes the same way;
+both re-run on resize. A minimalist flag (`ui/flags.py`: stripes, discs, rectangles and lines in
+unit coordinates, drawn flat, no image files) sits left of the name, one per circuit in the catalogue.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -847,3 +873,7 @@ of the furthest excursion from the pole lap, plus half a car and 0.75 m, is the 
 | 2026-10-26 | `d30b42a` | Alignment within 4 m (D39); circuits built from real laps (D40) |
 | 2026-10-26 | `be8052d` | **M4:** legacy app removed, README rewritten |
 | 2026-10-26 | `1a18ce8` | Racing line: TUM's only on TUM geometry and when it laps; skip unraced seasons |
+| 2026-10-29 | uncommitted | Menu hero camera: fixed top-down view instead of heading-up (D41) |
+| 2026-10-29 | uncommitted | Other cars: speed set as a gap below the lap speed (6-18 m/s), redrawn at each reappearance, reappearing 60-320 m ahead; "How it works" text in plainer words (D42) |
+| 2026-10-29 | uncommitted | Security audit written (`docs/SECURITY_AUDIT.md`, S1-S12); no code changed |
+| 2026-10-29 | uncommitted | Track picker: flags; names and notes fitted to their boxes (D43). Speed zoom widened (2x in, 0.325x out) |

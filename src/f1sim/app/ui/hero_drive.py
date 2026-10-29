@@ -1,6 +1,7 @@
 """The driving hero: the photographed car lapping a real circuit forever, seen from above.
 
-The car stays fixed on screen, nose up; the circuit moves and turns underneath it. The world
+The camera is a fixed top-down view that follows the car without turning: the car drives and
+turns on screen, the circuit slides underneath it. The world
 is drawn minimalist: only the track-limit lines and the kerbs. Slower cars share the track and
 the hero keeps overtaking them.
 
@@ -18,8 +19,9 @@ the hero keeps overtaking them.
   within ``PASS_START_M`` ahead, the hero moves over (to the inside of the next corner, or the
   side with more room) and passes; the slower car leaves it room. A car left well behind and
   out of view reappears out of view ahead, so the overtakes never end. Seeded: it repeats.
-- :func:`world_to_screen` is the transform the track shader uses: rotate the world so the
-  car's heading points up, scale, and put the rear axle at its place on screen.
+- :func:`world_to_screen` is the transform the track shader uses: a fixed top-down view
+  (world ``VIEW_HEADING`` up, the world never turns), scale, and put the rear axle at its place
+  on screen.
 
 Pure numpy: the menu (:mod:`f1sim.app.menu`) draws it.
 """
@@ -41,6 +43,9 @@ STEER_GAIN = 2.5
 menu size; this exaggerates it, up to ``MAX_STEER_RAD``."""
 STEER_TAU_S = 0.12
 MAX_STEER_RAD = math.radians(28.0)
+VIEW_HEADING = math.pi / 2
+"""The world direction (rad) that points up on screen. Fixed: the camera follows the hero but
+never turns with it."""
 PACE = 1.0
 """Playback speed: 1 = the real lap's speed."""
 OFFSET_OMEGA = 2.6
@@ -52,11 +57,15 @@ EDGE_MARGIN_M = 0.3
 """An offset car keeps its side this far inside the track limit."""
 
 N_RIVALS = 5
-RIVAL_PACE = (0.72, 0.86)
-"""The slower cars' pace: a share of the real lap's speed at each point."""
+RIVAL_CLOSING_MS = (6.0, 18.0)
+"""How much slower than the real lap's speed (m/s) each slower car drives, drawn again every
+time it reappears. A fixed gap in speed, not a share of it, so the hero catches a car at the
+same rate on a straight as in a corner and the overtakes don't bunch up in the slow parts."""
+RIVAL_MIN_SHARE = 0.5
+"""...but never below this share of the real speed (the car would crawl in a slow corner)."""
 RIVAL_WOBBLE_M = 0.35
 RESPAWN_BEHIND_M = 25.0
-RESPAWN_AHEAD_M = (60.0, 160.0)
+RESPAWN_AHEAD_M = (60.0, 320.0)
 RIVAL_SPACING_M = 30.0
 """Cars more than ``RESPAWN_BEHIND_M`` behind the hero (and out of view) reappear this far
 ahead (out of view too), at least ``RIVAL_SPACING_M`` from every other car."""
@@ -200,6 +209,8 @@ class Drive:
     steer: float = 0.0
     laps: int = 0
     pace: float = PACE
+    slow_ms: float = 0.0
+    """Metres per second below ``pace`` times the lap's speed (``RIVAL_MIN_SHARE`` at least)."""
     d: float = 0.0
     vd: float = 0.0
     d_target: float = 0.0
@@ -216,10 +227,15 @@ class Drive:
     @property
     def speed(self) -> float:
         """Speed along the car's own path, m/s."""
-        v = _sample(self.circuit.speed, self.s) * self.pace
+        v = self.natural_speed(self.s)
         if self.rate_cap is not None:
             v = min(v, self.rate_cap * self._stretch())
         return v
+
+    def natural_speed(self, s: float) -> float:
+        """The speed at ``s`` with no car ahead, m/s."""
+        v = _sample(self.circuit.speed, s)
+        return max(v * self.pace - self.slow_ms, RIVAL_MIN_SHARE * v * self.pace)
 
     def _stretch(self) -> float:
         """Metres of the car's path per metre of the line: an offset path is longer outside
@@ -339,7 +355,7 @@ class Traffic:
             drive = Drive(
                 self.circuit,
                 wheelbase_m=hero.wheelbase_m,
-                pace=float(self.rng.uniform(*RIVAL_PACE)),
+                slow_ms=float(self.rng.uniform(*RIVAL_CLOSING_MS)),
             )
             rival = Rival(
                 drive,
@@ -347,7 +363,7 @@ class Traffic:
                 float(self.rng.uniform(0, 2 * math.pi)),
                 float(self.rng.uniform(0.25, 0.6)),
             )
-            drive.place(self._spawn_s(), 0.0)
+            drive.place(self._spawn_s(drive.slow_ms), 0.0)
             self.rivals.append(rival)
 
     # ---------------------------------------------------------------- geometry
@@ -369,14 +385,16 @@ class Traffic:
         room = self.room_left if side > 0 else self.room_right
         return float(np.min(_window(room, s, ahead))) - CAR_HALF_WIDTH_M - EDGE_MARGIN_M
 
-    def _spawn_s(self, moving: Rival | None = None) -> float:
-        """A place ahead of the hero, out of view, clear of the other cars (but ``moving``)."""
+    def _spawn_s(self, slow_ms: float, moving: Rival | None = None) -> float:
+        """A place ahead of the hero, out of view, clear of the other cars (but ``moving``),
+        for a car that will drive ``slow_ms`` below the lap speed."""
         n = self.circuit.length
         hx, hy, _ = self.hero.pose()
         others = [r.drive.s for r in self.rivals if r is not moving]
         best, best_clear = None, -1.0
         for _ in range(40):
-            s = (self.hero.s + float(self.rng.uniform(*RESPAWN_AHEAD_M))) % n
+            lo, hi = RESPAWN_AHEAD_M[0], min(RESPAWN_AHEAD_M[1], 0.4 * n)
+            s = (self.hero.s + float(self.rng.uniform(lo, hi))) % n
             clear = min(
                 (abs((s - o + 0.5 * n) % n - 0.5 * n) for o in others), default=float("inf")
             )
@@ -394,9 +412,8 @@ class Traffic:
     def _pass_reach(self, gap: float, rival: Rival) -> float:
         """Metres of track the hero covers passing ``rival`` from ``gap`` ahead until it's
         ``PASS_CLEAR_M`` clear, plus the offset spring's settling distance."""
-        speed = self.circuit.speed
-        v = _sample(speed, self.hero.s) * self.hero.pace  # the natural speeds: no flicker
-        closing = max(v - _sample(speed, rival.drive.s) * rival.drive.pace, 3.0)
+        v = self.hero.natural_speed(self.hero.s)  # the natural speeds: no flicker
+        closing = max(v - rival.drive.natural_speed(rival.drive.s), 3.0)
         return (max(gap, 0.0) + PASS_CLEAR_M + CAR_LENGTH_M) * v / closing + v * SETTLE_S
 
     def _pass_room(self, side: float, gap: float, rival: Rival) -> float:
@@ -429,7 +446,8 @@ class Traffic:
         for r in self.rivals:
             if self.gap(r) < -RESPAWN_BEHIND_M and self.distance(r) > self.view_m:
                 before = self.distance(r)
-                r.drive.place(self._spawn_s(r), 0.0)
+                r.drive.slow_ms = float(self.rng.uniform(*RIVAL_CLOSING_MS))
+                r.drive.place(self._spawn_s(r.drive.slow_ms, r), 0.0)
                 r.respawns += 1
                 self.respawn_log.append((self.t, before, self.distance(r)))
         # The pass: a side is picked when a car comes within reach, and held until every car
@@ -492,10 +510,11 @@ class Traffic:
 
 
 def world_to_screen(points, pose, ppm: float, anchor) -> np.ndarray:
-    """World points ``(..., 2)`` -> window pixels: the car's heading up, its rear axle at
-    ``anchor`` (window pixels), ``ppm`` pixels per metre. Same maths as the track shader."""
-    x, y, heading = pose
-    a = math.pi / 2 - heading
+    """World points ``(..., 2)`` -> window pixels: a fixed top-down view (world ``VIEW_HEADING``
+    up), the car's rear axle at ``anchor`` (window pixels), ``ppm`` pixels per metre. Same maths
+    as the track shader."""
+    x, y, _ = pose
+    a = math.pi / 2 - VIEW_HEADING
     c, s = math.cos(a), math.sin(a)
     d = np.asarray(points, dtype=np.float64) - (x, y)
     rx = c * d[..., 0] - s * d[..., 1]

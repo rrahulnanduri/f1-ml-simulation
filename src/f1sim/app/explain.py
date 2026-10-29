@@ -119,34 +119,35 @@ def _learn(f: Facts) -> Page:
         blocks.append(Para("Now: copying the scripted driver. This takes about a minute.", True))
     elif f.gen is not None:
         n = f.population or 0
-        step = f" Change size now: {f.sigma:.4f}." if math.isfinite(f.sigma) else ""
+        step = f" Size of the random changes: {f.sigma:.4f}." if math.isfinite(f.sigma) else ""
         blocks.append(Para(f"Now: generation {f.gen}, {n} cars, each one lap.{step}", True))
     blocks += [
         Heading("1 · Copy a driver"),
         Para(
-            "A scripted driver follows a published racing line at a calculated speed. "
-            "A small neural network watches it and learns to copy its steering and pedals. "
-            "This gives a car that can already do a lap."
+            "A scripted driver follows a racing line at a set speed. "
+            "A small AI watches it and learns to copy its steering and pedals. "
+            "Now the car can already drive a lap."
         ),
         Heading("2 · Evolve the copy"),
         Para(
-            "Each generation is a field of slightly different copies. All of them drive one "
-            "timed lap from the same start. The best few are kept, and the next field is "
-            "made from them with small random changes. The changes grow when many help and "
-            "shrink when few do."
+            "Each generation is a group of cars that are all a little different. They all "
+            "drive one lap from the same start. The best few are kept, and the next group "
+            "is made from them with small random changes. The changes get bigger when many "
+            "of them help, and smaller when few do."
         ),
         Heading("What a car sees"),
         Para(
-            "29 numbers, 30 times a second: 9 distance rays to the edges, its speed, angle "
-            "and place on the track, the bends ahead, its last inputs, and where the racing "
-            "line goes next with the target speeds. It answers with steering and pedal."
+            "29 numbers, 30 times a second: how far the track edges are (9 beams), its "
+            "speed, its angle and place on the track, the bends ahead, what it just did, "
+            "and where the racing line goes next and how fast to go. It answers with "
+            "steering and pedals."
         ),
         Heading("Why copy first"),
         Para(
-            "Learning from nothing got to 1:40.7 at Silverstone. The copy laps in about "
-            "1:27 at once, so evolution spends its time making it faster, not learning to "
-            "stay on the road. The cost: the car is told the racing line; it does not "
-            "find it."
+            "Learning from nothing only reached 1:40.7 at Silverstone. The copy laps in "
+            "about 1:27 straight away, so the cars spend their time getting faster, not "
+            "learning to stay on the road. The catch: the car is told the racing line. It "
+            "does not find it by itself."
         ),
     ]
     return Page("How they learn", tuple(blocks))
@@ -154,14 +155,14 @@ def _learn(f: Facts) -> Page:
 
 def _score(f: Facts) -> Page:
     blocks: list = [
-        Para("Every car gets one score for its lap. Higher is better."),
+        Para("Every car gets one score for its lap. A higher score is better."),
         Row("Lap completed", f"length + {LAP_BONUS:,.0f} + {LAP_TIME_WEIGHT:g} per s saved"),
         Row("No lap", "metres driven"),
         Row("Crash", f"metres driven − {CRASH_PENALTY:.0%}"),
         Row("Steering", f"− {TrainConfig.steer_change_weight:g} × each change², summed"),
         Para(
-            "Any car that completes the lap beats every car that does not. After that, "
-            f"each second saved is worth {LAP_TIME_WEIGHT:g} points."
+            "A car that finishes the lap always scores more than one that does not. After "
+            f"that, every second saved is worth {LAP_TIME_WEIGHT:g} points."
         ),
     ]
     if f.best_index is not None and math.isfinite(f.track_length_m):
@@ -195,17 +196,17 @@ def _score(f: Facts) -> Page:
     blocks += [
         Heading("Crashes"),
         Para(
-            "Off track: past the track limits, which come from real drivers' qualifying "
-            "laps. Wrong way: backwards for a second. Stall: almost no progress for a while."
+            "Off track: outside the track edges, which come from real drivers' fast laps. "
+            "Wrong way: going backwards for a second. Stuck: hardly moving for a while."
         ),
         Heading("Smooth steering"),
         Para(
-            "Each change of the steering from one decision to the next costs a little, so "
-            "a car that saws at the wheel loses what a few tenths of a second would. Without it "
-            "the steering wobbles: wobbling costs no time."
+            "Every change to the steering costs a little, so a car that jerks the wheel "
+            "loses about as much as a few tenths of a second. Without this the steering "
+            "would wobble, because wobbling costs no time."
         ),
         Heading("Not scored"),
-        Para("Tyre wear, fuel and contact: the cars drive through each other."),
+        Para("Tyre wear, fuel and touching other cars: the cars drive through each other."),
     ]
     return Page("What earns points", tuple(blocks))
 
@@ -233,21 +234,21 @@ def _results(f: Facts) -> Page:
         blocks.append(Para("No completed lap yet in this run.", True))
     if not math.isfinite(f.pole_s):
         blocks.append(
-            Para("No real lap for this track yet. Build one with: f1sim ghost <track> 2024")
+            Para("There is no real lap for this track yet. Make one with: f1sim ghost <track> 2024")
         )
     blocks += bars
     blocks += [
         Heading("How to read it"),
         Para(
-            "The grip and braking were tuned so the scripted driver lands near the real "
-            "pole at Silverstone (+0.7%). That match is partly by design. In 20 minutes "
-            "the AI gets 0.3-0.8% under the real pole."
+            "The grip and braking were set so the scripted driver lands close to the real "
+            "pole lap at Silverstone (+0.7%). So that match is partly on purpose. In 20 "
+            "minutes the AI gets 0.3-0.8% under the real pole lap."
         ),
         Para(
-            "So the AI beats a real driver here. Part of that is better driving. Part is "
-            "the model's simple parts: tyres that never spin, perfect inputs and generous "
-            "track limits. Read it as a fast lap for this car model, not proof that a real "
-            "car could do it."
+            "So the AI is faster than a real driver here. Some of that is good driving. "
+            "Some of it comes from the simple parts of the model: tyres that never spin, "
+            "perfect steering and wide track edges. Treat it as a fast lap for this model, "
+            "not proof that a real car could do it."
         ),
     ]
     return Page("How close to real", tuple(blocks))
@@ -257,7 +258,7 @@ def _physics(f: Facts) -> Page:
     car = f.car
     v_top = top_speed_mps(car)
     blocks: list = [
-        Heading("Close to a real car"),
+        Heading("Like a real car"),
         Row("Power / mass", f"{car.power_w / 1000:,.0f} kW / {car.mass_kg:,.0f} kg"),
         Row("Top speed", f"{v_top * 3.6:,.0f} km/h" if math.isfinite(v_top) else "-"),
         Row(
@@ -266,24 +267,24 @@ def _physics(f: Facts) -> Page:
         ),
         Row("Braking limit", f"{car.max_brake_g:.1f} g"),
         Para(
-            "Grip grows with speed, like downforce. Cornering and braking share the same "
-            "grip: ask for too much and the car slides wide and loses speed. Real track "
-            "widths, limits and racing line."
+            "Grip grows with speed, like downforce does. Turning and braking share the same "
+            "grip: ask for too much and the car slides wide and slows down. The track "
+            "width, edges and racing line are real."
         ),
         Heading("Simpler than a real car"),
         Para(
-            "Tyres: no slip angles, weight transfer or oversteer, so the car cannot spin. "
-            f"Braking is held at {car.max_brake_g:.0f} g (real cars reach 5 g or more) so the "
-            "stopping distances come out right. A flat track: no hills, camber or kerb bumps. "
-            "No tyre wear, fuel, gears, hybrid deployment or active aero."
+            "Tyres: they never slip sideways or shift weight, so the car cannot spin. "
+            f"Braking is capped at {car.max_brake_g:.0f} g (real cars reach 5 g or more) so "
+            "the stopping distances come out right. The track is flat: no hills, sloped "
+            "corners or kerb bumps. No tyre wear, fuel, gears, hybrid power or moving wings."
         ),
         Para(
-            "The AI also knows exactly where it is and never reacts late, and the track "
-            "limits sit about half a car outside the white line."
+            "The AI also knows exactly where it is and never reacts late. The track edges "
+            "sit about half a car width outside the white line."
         ),
         Heading("Most worth adding"),
         Para(
-            "A tyre model that can spin, limits at the white line, a penalty for jerky "
+            "Tyres that can spin, track edges at the white line, a penalty for jerky "
             "steering, then real braking with matching grip."
         ),
     ]

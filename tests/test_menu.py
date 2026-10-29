@@ -344,16 +344,30 @@ def test_cars_and_the_light_map_between_frames():
     # A car 10 m straight ahead of the hero, turned 30 degrees left
     ahead = (100.0 + 10 * np.cos(0.4), 50.0 + 10 * np.sin(0.4), 0.4 + np.radians(30))
     anchor, angle = menu.car_in_hero_frame(lay, AXLE_Y, hero, ahead)
-    hx, hy = lay.to_window(0.0, AXLE_Y)
-    assert anchor == pytest.approx((hx, hy + 10 * lay.px_per_m))
-    assert angle == pytest.approx(np.radians(30))
-    # The hero's own frame: the light keeps its map coordinates
-    assert menu.light_in_car(lay, AXLE_Y, (0.3, 2.0), (hx, hy), 0.0) == pytest.approx((0.3, 2.0))
+    (hx, hy), hero_angle = menu.car_in_hero_frame(lay, AXLE_Y, hero, hero)
+    # The camera follows the hero's middle, so its rear axle is behind the screen anchor
+    _, centre_anchor = menu.hero_camera(lay, AXLE_Y, hero)
+    back = (AXLE_Y - 0.5 * lay.length_m) * lay.px_per_m
+    assert (hx, hy) == pytest.approx(
+        (centre_anchor[0] - back * np.cos(0.4), centre_anchor[1] - back * np.sin(0.4))
+    )
+    # The view is fixed (world north up), so the offset is the world's, not turned with the hero
+    assert anchor == pytest.approx(
+        (hx + 10 * np.cos(0.4) * lay.px_per_m, hy + 10 * np.sin(0.4) * lay.px_per_m)
+    )
+    assert angle == pytest.approx(0.4 + np.radians(30) - hero_drive.VIEW_HEADING)
+    # Over the hero's rear axle the light is at its rear axle, however the hero is turned
+    hero_over = lay.to_car(hx, hy)
+    got = menu.light_in_car(lay, AXLE_Y, hero_over, (hx, hy), hero_angle)
+    assert got == pytest.approx((0.0, AXLE_Y))
     # Over the turned car's rear axle the light is at its rear axle
     over = lay.to_car(*anchor)
     assert menu.light_in_car(lay, AXLE_Y, over, anchor, angle) == pytest.approx((0.0, AXLE_Y))
-    # 1 m to the turned car's left (on screen: rotated 30 degrees)
-    left = (anchor[0] - lay.px_per_m * np.cos(np.radians(30)), anchor[1] - lay.px_per_m * 0.5)
+    # 1 m to the turned car's left (on screen: rotated by its angle)
+    left = (
+        anchor[0] - lay.px_per_m * np.cos(angle),
+        anchor[1] - lay.px_per_m * np.sin(angle),
+    )
     lx, ly = menu.window_to_car(lay, AXLE_Y, left, anchor, angle)
     assert (lx, ly) == pytest.approx((-1.0, AXLE_Y))
     r = menu.view_radius_m(1600, 900, lay, AXLE_Y)
@@ -386,3 +400,19 @@ def test_picker_arrows_hit_their_zones():
     assert menu.picker_arrow_at(picker, 316.0 - 20.0, 540.0) == 1
     assert menu.picker_arrow_at(picker, 40.0, 540.0) == 0
     assert menu.picker_arrow_at(picker, 316.0 - 20.0, 100.0) == 0
+
+
+def test_follow_camera_zooms_out_with_speed_and_back_in():
+    assert menu.zoom_for_speed(0.0) == menu.ZOOM_IN
+    assert menu.zoom_for_speed(menu.ZOOM_SPEED_LOW_MS) == menu.ZOOM_IN
+    assert menu.zoom_for_speed(200.0) == pytest.approx(menu.ZOOM_OUT)
+    speeds = np.linspace(0.0, 100.0, 50)
+    zooms = [menu.zoom_for_speed(v) for v in speeds]
+    assert all(b <= a + 1e-12 for a, b in zip(zooms, zooms[1:], strict=False))  # monotone
+
+    # Zooming about the car's centre keeps it where it is on screen and scales the world
+    lay = menu.drive_layout(1600, 900, DRIVE_SIZE_M, AXLE_Y)
+    z = lay.zoomed(0.7)
+    mid = 0.5 * lay.length_m
+    assert z.to_window(0.0, mid) == pytest.approx(lay.to_window(0.0, mid))
+    assert z.px_per_m == pytest.approx(0.7 * lay.px_per_m)

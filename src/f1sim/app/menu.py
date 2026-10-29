@@ -63,6 +63,7 @@ import numpy as np
 from f1sim.app.ui import (
     car_top,
     drive_shaders,
+    flags,
     hero_drive,
     hero_maps,
     light_stage,
@@ -112,6 +113,18 @@ DRIVE_X = 0.72
 DRIVE_Y = 0.48
 """The driving car's centre, as a share of the window width and height (a little low, so
 more track shows ahead, where the slower cars come from)."""
+ZOOM_IN = 2.0
+ZOOM_OUT = 0.325
+"""The follow camera's zoom at low and at top speed, as a multiple of the layout's own scale
+(the scale the menu had before the speed zoom, with the car 86% of the window high). At
+``ZOOM_IN`` the car is bigger than the window; ``ZOOM_OUT`` shows about six times as much
+track."""
+ZOOM_SPEED_LOW_MS = 25.0
+ZOOM_SPEED_HIGH_MS = 85.0
+"""Speeds (m/s) at and below which the camera is fully zoomed in, and at and above which it
+is fully pulled back."""
+ZOOM_TAU_S = 0.9
+"""How slowly the zoom follows the speed (a smoothing time constant), so it breathes."""
 TRACK_LINE_HALF_M = 0.07
 """Half the width of a drawn track-limit line, metres."""
 TRACK_LINE = (1.0, 1.0, 1.0, 0.40)
@@ -173,6 +186,12 @@ MENU_MARGIN = 16.0
 CARD_GAP = 10.0
 BAR_H = 52.0
 PICKER_H = 84.0
+FLAG_H = 18.0
+FLAG_GAP = 11.0
+"""The track picker's flag: its height, and the space between it and the track's name."""
+PICKER_ARROWS_W = 84.0
+PICKER_NAME_PAD = 10.0
+"""The picker's arrows take this much of its right end; the name stops this far before them."""
 FOOTER_H = 30.0
 MIN_CARD = 96.0
 CARD_FILL = theme.hex_colour("#0C0C0E", 0.80)
@@ -324,6 +343,27 @@ class HeroLayout:
     def to_window(self, cx: float, cy: float) -> tuple[float, float]:
         return self.left + (cx + 0.5 * self.width_m) * self.px_per_m, self.top - cy * self.px_per_m
 
+    def zoomed(self, factor: float) -> HeroLayout:
+        """This layout at ``factor`` times the scale, about the car's centre (which stays put
+        on screen)."""
+        ax, ay = self.to_window(0.0, 0.5 * self.length_m)
+        ppm = self.px_per_m * factor
+        return HeroLayout(
+            left=ax - 0.5 * self.width_m * ppm,
+            top=ay + 0.5 * self.length_m * ppm,
+            px_per_m=ppm,
+            width_m=self.width_m,
+            length_m=self.length_m,
+        )
+
+
+def zoom_for_speed(speed: float) -> float:
+    """The follow camera's zoom (1 = fully in) at ``speed`` m/s: pulls back smoothly between
+    ``ZOOM_SPEED_LOW_MS`` and ``ZOOM_SPEED_HIGH_MS`` from ``ZOOM_IN`` to ``ZOOM_OUT`` (evenly
+    in scale, so the zoom feels the same speed all the way)."""
+    t = min(max((speed - ZOOM_SPEED_LOW_MS) / (ZOOM_SPEED_HIGH_MS - ZOOM_SPEED_LOW_MS), 0.0), 1.0)
+    return ZOOM_IN * (ZOOM_OUT / ZOOM_IN) ** (t * t * (3.0 - 2.0 * t))
+
 
 def hero_layout(width: float, height: float, size_m: tuple[float, float]) -> HeroLayout:
     """The maps (``size_m`` = width, length) in the right third, nose up: ``HERO_VISIBLE_M``
@@ -364,12 +404,23 @@ def view_radius_m(width: float, height: float, layout: HeroLayout, rear_axle_y: 
     return corner / layout.px_per_m + hero_drive.CAR_LENGTH_M
 
 
+def hero_camera(layout: HeroLayout, rear_axle_y: float, hero_pose):
+    """The follow camera: the hero's centre (world pose, ``(x, y, heading)``) and where it
+    shows in the window (pixels). The camera follows the middle of the car, not its rear axle,
+    so a car turning about its rear axle doesn't swing the view."""
+    x, y, heading = hero_pose
+    ahead = rear_axle_y - 0.5 * layout.length_m  # rear axle -> centre, along the heading
+    centre = (x + ahead * math.cos(heading), y + ahead * math.sin(heading), heading)
+    return centre, layout.to_window(0.0, 0.5 * layout.length_m)
+
+
 def car_in_hero_frame(layout: HeroLayout, rear_axle_y: float, hero_pose, pose):
     """Where a car at ``pose`` (world) shows: its rear axle in window pixels and its rotation
-    on screen (radians, anticlockwise), with the hero fixed nose up."""
-    anchor = layout.to_window(0.0, rear_axle_y)
-    px = hero_drive.world_to_screen(pose[:2], hero_pose, layout.px_per_m, anchor)
-    return (float(px[0]), float(px[1])), pose[2] - hero_pose[2]
+    on screen (radians, anticlockwise), in the fixed top-down view that follows the hero's
+    centre."""
+    centre, anchor = hero_camera(layout, rear_axle_y, hero_pose)
+    px = hero_drive.world_to_screen(pose[:2], centre, layout.px_per_m, anchor)
+    return (float(px[0]), float(px[1])), pose[2] - hero_drive.VIEW_HEADING
 
 
 def window_to_car(layout: HeroLayout, rear_axle_y: float, px, anchor, angle):
@@ -663,6 +714,7 @@ def _make_view_class():
             self.light = Light()
             self.t0 = time.perf_counter()
             self.clock = 0.0  # seconds of animation (the lamps' flashes)
+            self.zoom = ZOOM_IN  # the follow camera's zoom now (see zoom_for_speed)
             self.status = ""
             self.status_t = -10.0
             circuit = hero_drive.load_circuit()
@@ -879,6 +931,10 @@ def _make_view_class():
             self.t_logo = theme.make_text("F1SIM", 17, theme.TEXT_PRIMARY, face="display")
             self.t_track_label = theme.micro("Track", theme.TEXT_SECONDARY)
             self.t_track = theme.make_text("", 22, theme.TEXT_PRIMARY, face="display")
+            self._track_font = self.t_track.font_size
+            self._track_name = ""
+            self._flag = None
+            self._notes = [""] * len(ITEMS)
             self.t_arrows = [
                 theme.make_text("‹", 26, theme.TEXT_SECONDARY, face="medium", anchor_x="center"),
                 theme.make_text("›", 26, theme.TEXT_SECONDARY, face="medium", anchor_x="center"),
@@ -901,7 +957,9 @@ def _make_view_class():
             from f1sim import paths
 
             tid, name = self.tracks[self.track_i]
-            self.t_track.text = name.upper()
+            self._track_name = name.upper()
+            self._flag = flags.flag_for(tid)
+            self._fit_track()
             self.run = latest_run(tid, self.runs_root)
             self.ghost = latest_ghost(tid, paths.ghosts_dir())
             notes = {
@@ -910,8 +968,88 @@ def _make_view_class():
                 "Train": "watch it learn",
                 "Quit": "",
             }
-            for t, item in zip(self.t_notes, ITEMS, strict=True):
-                t.text = notes[item]
+            self._notes = [notes[item] for item in ITEMS]
+            for i in range(len(ITEMS)):
+                self._fit_note(i)
+
+        def _fit_track(self) -> None:
+            """Place the track's flag and name in the picker, the name shrunk (then cut) so it
+            never reaches the arrows."""
+            cards = getattr(self, "cards", None)
+            if cards is None:
+                return
+            pl, pb, pw, ph = cards.picker
+            x = pl + 18.0
+            self._flag_rect = None
+            if self._flag is not None:
+                fw = FLAG_H * flags.ASPECT
+                self._flag_rect = (x, pb + 19.0, fw, FLAG_H)
+                x += fw + FLAG_GAP
+            room = pl + pw - PICKER_ARROWS_W - PICKER_NAME_PAD - x
+            t, name = self.t_track, self._track_name
+            t.font_size = self._track_font
+            t.text = name
+            t.font_size = self._track_font * flags.fit_scale(t.content_width, room)
+            n = len(name)
+            while t.content_width > room and n > 1:  # still too wide at the smallest size
+                n -= 1
+                t.text = name[:n].rstrip() + "..."
+            t.position = (x, pb + 20.0)
+
+        def _fit_note(self, i: int, room: float | None = None) -> None:
+            """Cut card ``i``'s note (with "...") so it stays inside its card."""
+            cards = getattr(self, "cards", None)
+            if room is None:
+                if cards is None:
+                    return
+                room = cards.cards[i][2] - 36.0
+            t, note = self.t_notes[i], self._notes[i]
+            t.text = note
+            n = len(note)
+            while t.content_width > room and n > 1:
+                n -= 1
+                t.text = note[:n].rstrip() + "..."
+
+        def _draw_flag(self) -> None:
+            if self._flag is None or self._flag_rect is None:
+                return
+            left, bottom, w, h = self._flag_rect
+            f = self._flag
+
+            def box(x0, y0, x1, y1, colour) -> None:
+                arcade.draw_lrbt_rectangle_filled(
+                    left + x0 * w,
+                    left + x1 * w,
+                    bottom + y0 * h,
+                    bottom + y1 * h,
+                    theme.hex_colour(colour),
+                )
+
+            for a, b, colour in f.bands():
+                if f.vertical:
+                    box(a, 0.0, b, 1.0, colour)
+                else:
+                    box(0.0, 1.0 - b, 1.0, 1.0 - a, colour)
+            for shape in f.shapes:
+                if isinstance(shape, flags.Rect):
+                    box(shape.x0, shape.y0, shape.x1, shape.y1, shape.colour)
+                elif isinstance(shape, flags.Line):
+                    arcade.draw_line(
+                        left + shape.x0 * w,
+                        bottom + shape.y0 * h,
+                        left + shape.x1 * w,
+                        bottom + shape.y1 * h,
+                        theme.hex_colour(shape.colour),
+                        shape.width * h,
+                    )
+                else:
+                    arcade.draw_circle_filled(
+                        left + shape.x * w,
+                        bottom + shape.y * h,
+                        shape.r * h,
+                        theme.hex_colour(shape.colour),
+                    )
+            arcade.draw_lrbt_rectangle_outline(left, left + w, bottom, bottom + h, CARD_LINE, 1)
 
         # --------------------------------------------------------------- layout
 
@@ -929,7 +1067,7 @@ def _make_view_class():
             self.t_kicker.position = (bl + bw - pad, bb + 0.5 * bh - 4.0)
             pl, pb, pw, ph = lay.picker
             self.t_track_label.position = (pl + pad, pb + ph - 28.0)
-            self.t_track.position = (pl + pad, pb + 20.0)
+            self._fit_track()
             self.t_arrows[0].position = (pl + pw - 63.0, pb + 0.5 * ph - 10.0)
             self.t_arrows[1].position = (pl + pw - 21.0, pb + 0.5 * ph - 10.0)
             self.buttons = []
@@ -941,11 +1079,14 @@ def _make_view_class():
                 self.t_items[i].font_size = theme.px_to_pt(size)
                 self.t_items[i].position = (cl + pad, cb + 36.0)
                 self.t_notes[i].position = (cl + pad, cb + 16.0)
+                self._fit_note(i, cw - 2.0 * pad)
             self.t_footer.position = (self.left, lay.footer_y)
             self.t_status.position = (self.left, lay.footer_y)
             if self.drive is not None:
                 self.hero = drive_layout(w, h, self.dstage.size_m, self.dstage.rear_axle_y)
-                self.traffic.view_m = view_radius_m(w, h, self.hero, self.dstage.rear_axle_y)
+                self.traffic.view_m = view_radius_m(
+                    w, h, self.hero.zoomed(ZOOM_OUT), self.dstage.rear_axle_y
+                )
                 self.track_fade = (
                     self.left + col_w + 10.0,
                     self.left + col_w + 10.0 + TRACK_FADE_PX,
@@ -964,13 +1105,13 @@ def _make_view_class():
             return None
 
         def on_mouse_motion(self, x: int, y: int, dx: int, dy: int) -> None:
-            self.light.aim(*self.hero.to_car(x, y))
+            self.light.aim(*self.view.to_car(x, y))
             self.hover = self._button_at(x, y)
             if self.hover is not None:
                 self.focus = self.hover
 
         def on_mouse_enter(self, x: int, y: int) -> None:
-            self.light.aim(*self.hero.to_car(x, y))
+            self.light.aim(*self.view.to_car(x, y))
 
         def on_mouse_scroll(self, x: int, y: int, scroll_x: float, scroll_y: float) -> None:
             self.light.scroll(scroll_y)
@@ -1064,6 +1205,11 @@ def _make_view_class():
             self.t_status.text = text
             self.status_t = time.perf_counter()
 
+        @property
+        def view(self) -> HeroLayout:
+            """The hero's layout as drawn now: the follow camera's zoom applied while driving."""
+            return self.hero.zoomed(self.zoom) if self.drive is not None else self.hero
+
         # ---------------------------------------------------------------- frame
 
         def on_update(self, delta_time: float) -> None:
@@ -1072,6 +1218,8 @@ def _make_view_class():
             self.clock += delta_time
             if self.traffic is not None:
                 self.traffic.update(min(delta_time, 0.1))
+                k = 1.0 - math.exp(-min(delta_time, 0.1) / ZOOM_TAU_S)
+                self.zoom += k * (zoom_for_speed(self.drive.speed) - self.zoom)
 
         def _draw_stage(self) -> None:
             ctx = self.ctx
@@ -1097,7 +1245,7 @@ def _make_view_class():
             """This frame's cars on screen (``(anchor, angle, drive, finish)``, the hero
             last), the cursor light (window pixels, height) and the lit lamp heads (window
             pixels and height, colour)."""
-            st, lay = self.dstage, self.hero
+            st, lay = self.dstage, self.view
             pose = self.drive.pose()
             reach = 0.5 * hero_drive.CAR_LENGTH_M * lay.px_per_m + lay.px_per_m
             cars = []
@@ -1108,11 +1256,12 @@ def _make_view_class():
                     and -reach < anchor[1] < self.height + reach
                 ):
                     cars.append((anchor, angle, car, finish))
-            hero_anchor = lay.to_window(0.0, st.rear_axle_y)
-            cars.append((hero_anchor, 0.0, self.drive, hero_drive.HERO_FINISH))
+            hero_anchor, hero_angle = car_in_hero_frame(lay, st.rear_axle_y, pose, pose)
+            cars.append((hero_anchor, hero_angle, self.drive, hero_drive.HERO_FINISH))
+            centre, centre_anchor = hero_camera(lay, st.rear_axle_y, pose)
             lx, ly = lay.to_window(self.light.x, self.light.y)
             light = (lx, ly, st.light_z)
-            px = hero_drive.world_to_screen(self._lamp_xy, pose, lay.px_per_m, hero_anchor)
+            px = hero_drive.world_to_screen(self._lamp_xy, centre, lay.px_per_m, centre_anchor)
             margin = LAMP_REACH_M * lay.px_per_m
             lamps = []
             for lamp, (x, y) in zip(self.lamps, px, strict=True):
@@ -1121,7 +1270,7 @@ def _make_view_class():
                 b = hero_drive.lamp_brightness(lamp, self.clock) * LAMP_GAIN
                 if b > 1e-3:
                     rgb = hero_drive.LAMP_COLOURS[lamp.colour]
-                    d = math.hypot(x - hero_anchor[0], y - hero_anchor[1])
+                    d = math.hypot(x - centre_anchor[0], y - centre_anchor[1])
                     head = (float(x), float(y), hero_drive.LAMP_HEIGHT_M)
                     lamps.append((d, head, tuple(b * v for v in rgb)))
             lamps.sort(key=lambda item: item[0])
@@ -1131,7 +1280,7 @@ def _make_view_class():
             shadow_cars = cars[-quality.tier().shadow_cars :]  # the hero is last
             set_uniforms(
                 program,
-                u_ppm=self.hero.px_per_m,
+                u_ppm=self.view.px_per_m,
                 u_light_px=light,
                 u_power=self.light.power * DRIVE_LIGHT,
                 u_n_lamps=len(lamps),
@@ -1184,16 +1333,16 @@ def _make_view_class():
                 u_size=(float(self.width), float(self.height)),
                 u_appear=min(max((now - SPOTLIGHT_DELAY_S) / SPOTLIGHT_FADE_S, 0.0), 1.0),
                 u_bg=_rgb(CARD_BG),
-                u_lamp_glow_px=LAMP_GLOW_M * self.hero.px_per_m,
+                u_lamp_glow_px=LAMP_GLOW_M * self.view.px_per_m,
             )
             self._fs_quad.render(p)
 
         def _draw_drive(self) -> None:
             ctx = self.ctx
-            st, lay = self.dstage, self.hero
+            st, lay = self.dstage, self.view
             cars, light, lamps = self._scene
-            x, y, heading = self.drive.pose()
-            a = math.pi / 2 - heading
+            (x, y, _), anchor = hero_camera(lay, st.rear_axle_y, self.drive.pose())
+            a = math.pi / 2 - hero_drive.VIEW_HEADING
             ctx.enable(ctx.BLEND)
             ctx.blend_func = ctx.BLEND_PREMULTIPLIED_ALPHA
             t = self._p_track
@@ -1202,7 +1351,7 @@ def _make_view_class():
                 u_car=(x, y),
                 u_rot=(math.cos(a), math.sin(a)),
                 u_ppm=lay.px_per_m,
-                u_anchor=lay.to_window(0.0, st.rear_axle_y),
+                u_anchor=anchor,
                 u_size=(float(self.width), float(self.height)),
                 u_fade=self.track_fade,
                 u_under=TRACK_UNDER_MENU,
@@ -1218,7 +1367,7 @@ def _make_view_class():
         def _draw_car(self, anchor, angle, steer, finish, light, lamps) -> None:
             """One car, its rear axle at ``anchor`` (window pixels), turned ``angle`` on
             screen, lit by the cursor light and the lamps in its own frame."""
-            st, lay = self.dstage, self.hero
+            st, lay = self.dstage, self.view
             lx, ly = window_to_car(lay, st.rear_axle_y, light[:2], anchor, angle)
             cells, _ = light_stage.blend_weights(st.xs, st.ys, lx, ly)
             gx = min(max(lx, st.xs[0]), st.xs[-1])
@@ -1342,6 +1491,7 @@ def _make_view_class():
             status_on = time.perf_counter() - self.status_t < 4.0
             self._panel(self.cards.bar, theme.hex_colour("#000000", 0.88))
             self._panel(self.cards.picker)
+            self._draw_flag()
             for i, b in enumerate(self.buttons):
                 left, bottom, bw, bh = b.rect
                 active = i == self.focus
