@@ -358,8 +358,10 @@ def new_run_dir(track_id: str, runs_root: Path) -> Path:
     return run_dir
 
 
-def train_command(track_id: str, run_dir: Path) -> list[str]:
-    return [
+def train_command(track_id: str, run_dir: Path, minutes: float | None = None) -> list[str]:
+    """The command that trains ``track_id`` into ``run_dir`` for ``minutes`` (None: the
+    config's own limit)."""
+    cmd = [
         sys.executable,
         "-m",
         "f1sim.cli",
@@ -369,20 +371,23 @@ def train_command(track_id: str, run_dir: Path) -> list[str]:
         "--run-dir",
         str(run_dir),
     ]
+    if minutes is not None:
+        cmd += ["--minutes", f"{minutes:g}"]
+    return cmd
 
 
 class TrainingProcess:
     """``f1sim train`` in the background: no console window, output in ``train.log`` in the
     run folder. It's stopped by :meth:`stop` and when the app exits."""
 
-    def __init__(self, track_id: str, run_dir: Path):
+    def __init__(self, track_id: str, run_dir: Path, minutes: float | None = None):
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.log_path = self.run_dir / "train.log"
         flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         with self.log_path.open("wb") as log:
             self.proc = subprocess.Popen(
-                train_command(track_id, self.run_dir),
+                train_command(track_id, self.run_dir, minutes),
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,

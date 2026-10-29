@@ -821,6 +821,18 @@ name to 60% to fit, then cuts it with "..."; `menu._fit_note` cuts the cards' no
 both re-run on resize. A minimalist flag (`ui/flags.py`: stripes, discs, rectangles and lines in
 unit coordinates, drawn flat, no image files) sits left of the name, one per circuit in the catalogue.
 
+**D44 · Data is fetched from the menu, not the terminal** (2026-10-29)
+First step of `docs/packaging-plan.md`. The picker lists every catalogue circuit; a strip under
+it shows what the selected one needs and has one button: Get track data, Get real lap, then
+Cancel while it runs and Retry if it fails (`menu.strip_state`). The work (`f1sim build-track`,
+`f1sim ghost`) runs in a background thread (`app/jobs.py`: `Job`, `get_track_data`,
+`get_real_lap`); a library call cannot be stopped, so Cancel makes the window drop its result.
+The real lap tries the newest season first and goes back to 2023 (OpenF1's first). Drive and
+Train on an unbuilt circuit fetch the data and then open by themselves. The Train card has -/+
+for the run length (5-120 min, default 30, the trainer's own limit) passed as `--minutes`; it is
+not saved between sessions. Checked by hand: Get real lap on Austin took 10 s and saved the
+2026 pole lap; the track download was not run end to end here.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -877,3 +889,5 @@ unit coordinates, drawn flat, no image files) sits left of the name, one per cir
 | 2026-10-29 | uncommitted | Other cars: speed set as a gap below the lap speed (6-18 m/s), redrawn at each reappearance, reappearing 60-320 m ahead; "How it works" text in plainer words (D42) |
 | 2026-10-29 | uncommitted | Security audit written (`docs/SECURITY_AUDIT.md`, S1-S12); no code changed |
 | 2026-10-29 | uncommitted | Track picker: flags; names and notes fitted to their boxes (D43). Speed zoom widened (2x in, 0.325x out) |
+| 2026-10-29 | uncommitted | Packaging plan for a Windows/macOS app with no terminal steps: `docs/packaging-plan.md` (plan only) |
+| 2026-10-29 | uncommitted | Menu: all circuits listed, Get track data / Get real lap buttons as background jobs, Train time control (D44) |

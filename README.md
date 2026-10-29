@@ -57,6 +57,10 @@ f1sim menu
 
 ## Build tracks
 
+In the menu this needs no terminal: pick a circuit and press **Get track data** (or just
+choose Drive or Train: it is fetched first). **Get real lap** downloads a real driver's fastest
+lap to race against. The commands below do the same from a terminal.
+
 List circuits, then build one (TUM data aligned to a real qualifying lap, or real laps for
 circuits TUM doesn't have):
 

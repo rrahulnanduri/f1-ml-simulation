@@ -27,13 +27,20 @@ The car doesn't move on screen; the cursor is the light. It also lights the floo
 Away from the light the car is only just visible. The light fades in after the spotlight
 beam, and out when the cursor leaves the window.
 
-The menu is the home screen of the app window (:mod:`f1sim.app.shell`). For the selected
-built track:
+The menu is the home screen of the app window (:mod:`f1sim.app.shell`). The picker lists
+every circuit. Under it a strip says what the selected one needs and has the button for it
+(``strip_state``): "Get track data" (the work of ``f1sim build-track``) or "Get real lap"
+(``f1sim ghost``), run as a background job (:mod:`f1sim.app.jobs`) with the time shown, a
+Cancel button (Esc) and, on a failure, a message and Retry. Drive and Train on a circuit
+without data fetch it first and then open. The G key does what the button does; the Train
+card has ``-`` / ``+`` for how long a run lasts (``TRAIN_MINUTES``). For the selected built
+track:
 - **Drive:** switches the window to the drive screen, with the newest ghost of the track if
   there is one.
 - **Replay:** switches to the replay screen: the newest run of the track plus that ghost.
-- **Train:** starts ``f1sim train`` on the track in the background and switches to the
-  training screen (:mod:`f1sim.app.training`), which shows each new generation driving.
+- **Train:** starts ``f1sim train`` (for the chosen time) on the track in the background and
+  switches to the training screen (:mod:`f1sim.app.training`), which shows each new generation
+  driving.
 - **Quit.**
 
 Esc on the drive, replay or training screen comes back here (leaving the training screen
@@ -60,6 +67,7 @@ from pathlib import Path
 
 import numpy as np
 
+from f1sim.app import jobs
 from f1sim.app.ui import (
     car_top,
     drive_shaders,
@@ -192,6 +200,15 @@ FLAG_GAP = 11.0
 PICKER_ARROWS_W = 84.0
 PICKER_NAME_PAD = 10.0
 """The picker's arrows take this much of its right end; the name stops this far before them."""
+ACTION_H = 44.0
+ACTION_BTN_W = 150.0
+"""The strip under the picker that says what the track needs (data, a real lap) and holds the
+button for it; the button's width."""
+TRAIN_MINUTES = (5, 10, 20, 30, 60, 120)
+DEFAULT_TRAIN_MINUTES = 30
+"""The training times the Train card offers (minutes), and the one it starts on."""
+TIME_BTN = 22.0
+TIME_TEXT_W = 46.0
 FOOTER_H = 30.0
 MIN_CARD = 96.0
 CARD_FILL = theme.hex_colour("#0C0C0E", 0.80)
@@ -210,6 +227,7 @@ class CardLayout:
     col_w: float
     bar: Rect
     picker: Rect
+    action: Rect
     cards: tuple[Rect, ...]
     footer_y: float
     square: float
@@ -220,17 +238,18 @@ def card_layout(width: float, height: float) -> CardLayout:
     width and between the picker and the footer; the bar and picker match their block."""
     m, g = MENU_MARGIN, CARD_GAP
     across = (MENU_SHARE * width - 2.0 * m - g) / 2.0
-    down = (height - 2.0 * m - BAR_H - PICKER_H - 3.0 * g - FOOTER_H - g) / 2.0
+    down = (height - 2.0 * m - BAR_H - PICKER_H - ACTION_H - 4.0 * g - FOOTER_H - g) / 2.0
     s = float(math.floor(max(MIN_CARD, min(across, down))))
     col_w = 2.0 * s + g
     top = height - m
     bar = (m, top - BAR_H, col_w, BAR_H)
     picker = (m, bar[1] - g - PICKER_H, col_w, PICKER_H)
-    row_top = picker[1] - g
+    action = (m, picker[1] - g - ACTION_H, col_w, ACTION_H)
+    row_top = action[1] - g
     cards = tuple(
         (m + (i % 2) * (s + g), row_top - s - (i // 2) * (s + g), s, s) for i in range(len(ITEMS))
     )
-    return CardLayout(m, col_w, bar, picker, cards, m + 8.0, s)
+    return CardLayout(m, col_w, bar, picker, action, cards, m + 8.0, s)
 
 
 def picker_arrow_at(picker: Rect, x: float, y: float) -> int:
@@ -260,6 +279,68 @@ def built_tracks() -> list[tuple[str, str]]:
         for e in sorted(catalog.CATALOG.values(), key=lambda e: e.id)
         if paths.track_file(e.id).exists()
     ]
+
+
+def circuits() -> list[tuple[str, str]]:
+    """``(track_id, circuit name)`` of every circuit in the catalogue, built or not, by id."""
+    from f1sim.data import catalog
+
+    return [(e.id, e.name) for e in sorted(catalog.CATALOG.values(), key=lambda e: e.id)]
+
+
+def is_built(track_id: str) -> bool:
+    from f1sim import paths
+
+    return paths.track_file(track_id).exists()
+
+
+def ghost_label(ghost: Path | None) -> str | None:
+    """``RUS 2025`` for ``2025_silverstone_Q_RUS.npz``, or None without a ghost."""
+    if ghost is None:
+        return None
+    year, _, rest = ghost.stem.partition("_")
+    return f"{rest.rsplit('_', 1)[-1]} {year}"
+
+
+def step_minutes(current: int, step: int) -> int:
+    """The next training time (minutes) ``step`` places along ``TRAIN_MINUTES``, clamped."""
+    i = TRAIN_MINUTES.index(current) if current in TRAIN_MINUTES else 0
+    return TRAIN_MINUTES[min(max(i + step, 0), len(TRAIN_MINUTES) - 1)]
+
+
+def action_button_rect(action: Rect) -> Rect:
+    left, bottom, w, h = action
+    return (left + w - 7.0 - ACTION_BTN_W, bottom + 7.0, ACTION_BTN_W, h - 14.0)
+
+
+def time_buttons(card: Rect, pad: float = 12.0) -> tuple[Rect, Rect]:
+    """The Train card's ``-`` and ``+`` boxes (training time), along its bottom edge."""
+    left, bottom, _, _ = card
+    y = bottom + 6.0
+    return (
+        (left + pad, y, TIME_BTN, TIME_BTN),
+        (left + pad + TIME_BTN + TIME_TEXT_W, y, TIME_BTN, TIME_BTN),
+    )
+
+
+def inside(rect: Rect, x: float, y: float) -> bool:
+    left, bottom, w, h = rect
+    return left <= x <= left + w and bottom <= y <= bottom + h
+
+
+def strip_state(built: bool, ghost: str | None, job) -> tuple[str, str | None, bool]:
+    """What the strip under the track picker says: ``(text, button label or None, is a
+    problem)``. ``job`` is the background job for this track (or None)."""
+    if job is not None:
+        if job.state == "running":
+            return f"{job.spec.title} · {jobs.format_elapsed(job.elapsed)}", "Cancel", False
+        if job.state == "failed":
+            return job.message, "Retry", True
+    if not built:
+        return "Track data not downloaded yet", "Get track data", False
+    if ghost is None:
+        return "No real lap to race yet", "Get real lap", False
+    return f"Real lap: {ghost}", None, False
 
 
 def latest_run(track_id: str, runs_root: Path) -> Path | None:
@@ -706,10 +787,17 @@ def _make_view_class():
             theme.load_fonts()
             self.background_color = CARD_BG
             self.runs_root = runs_root
-            self.tracks = built_tracks() or [("silverstone", "Silverstone Circuit")]
+            self.tracks = circuits() or [("silverstone", "Silverstone Circuit")]
             ids = [t[0] for t in self.tracks]
             self.track_i = ids.index("silverstone") if "silverstone" in ids else 0
             self.focus = 0
+            self.job = None  # the background download (jobs.Job) and what it is for
+            self.job_kind = ""
+            self.job_track = ""
+            self.job_then: str | None = None
+            self.built = False
+            self.ghost_name: str | None = None
+            self.train_minutes = DEFAULT_TRAIN_MINUTES
             self.hover: int | None = None
             self.light = Light()
             self.t0 = time.perf_counter()
@@ -948,8 +1036,16 @@ def _make_view_class():
             self.t_notes = [
                 theme.make_text("", 12, theme.TEXT_TERTIARY, face="medium") for _ in ITEMS
             ]
+            self.t_action = theme.make_text("", 13, theme.TEXT_SECONDARY, face="medium")
+            self.t_action_btn = theme.make_text(
+                "", 12, theme.TEXT_PRIMARY, face="display", anchor_x="center"
+            )
+            self.t_minutes = theme.make_text(
+                "", 12, theme.TEXT_PRIMARY, face="medium", anchor_x="center"
+            )
             self.t_footer = theme.micro(
-                "↑↓ select   ·   ←→ track   ·   enter open   ·   esc quit", theme.TEXT_TERTIARY
+                "↑↓ select   ·   ←→ track   ·   enter open   ·   g data   ·   esc quit",
+                theme.TEXT_TERTIARY
             )
             self.t_status = theme.make_text("", 12, theme.TEXT_SECONDARY, face="medium")
 
@@ -962,10 +1058,12 @@ def _make_view_class():
             self._fit_track()
             self.run = latest_run(tid, self.runs_root)
             self.ghost = latest_ghost(tid, paths.ghosts_dir())
+            self.built = is_built(tid)
+            self.ghost_name = ghost_label(self.ghost)
             notes = {
                 "Drive": f"vs ghost {self.ghost.stem.split('_')[-1]}" if self.ghost else "solo",
                 "Replay": self.run.name if self.run else "no runs yet",
-                "Train": "watch it learn",
+                "Train": "",  # the time control is drawn here instead
                 "Quit": "",
             }
             self._notes = [notes[item] for item in ITEMS]
@@ -1009,6 +1107,49 @@ def _make_view_class():
             while t.content_width > room and n > 1:
                 n -= 1
                 t.text = note[:n].rstrip() + "..."
+
+        def _draw_strip(self) -> None:
+            """The strip under the picker: what the track needs, and a button for it."""
+            lay = self.cards
+            text, label, problem = self._strip()
+            self._panel(lay.action)
+            al, ab, aw, ah = lay.action
+            room = aw - 28.0 - (ACTION_BTN_W + 7.0 if label else 0.0)
+            t = self.t_action
+            t.text = text
+            n = len(text)
+            while t.content_width > room and n > 1:
+                n -= 1
+                t.text = text[:n].rstrip() + "..."
+            t.color = theme.ACCENT if problem else theme.TEXT_SECONDARY
+            if label:
+                self._panel(action_button_rect(lay.action), theme.ACCENT, theme.ACCENT)
+            self.t_action_btn.text = label.upper() if label else ""
+            job = self._job_here()
+            if job is not None and job.state == "running":  # a bar sweeping along the bottom
+                p = (self.clock * 0.7) % 1.3
+                x0, x1 = max(p - 0.3, 0.0), min(p, 1.0)
+                if x1 > x0:
+                    arcade.draw_lrbt_rectangle_filled(
+                        al + x0 * aw, al + x1 * aw, ab, ab + 3.0, theme.ACCENT
+                    )
+
+        def _draw_train_time(self) -> None:
+            """``-  30 min  +`` on the Train card: how long a training run lasts."""
+            card = self.cards.cards[ITEMS.index("Train")]
+            lit = ITEMS.index("Train") == self.focus
+            ink = theme.TEXT_PRIMARY
+            line = theme.white(0.8) if lit else CARD_LINE
+            minus, plus = time_buttons(card)
+            for rect in (minus, plus):
+                self._panel(rect, theme.white(0.0), line)
+            (ml, mb, mw, mh), (pl_, _, pw_, _) = minus, plus
+            cy = mb + 0.5 * mh
+            arcade.draw_line(ml + 6.0, cy, ml + mw - 6.0, cy, ink, 1.4)
+            arcade.draw_line(pl_ + 6.0, cy, pl_ + pw_ - 6.0, cy, ink, 1.4)
+            arcade.draw_line(pl_ + 0.5 * pw_, cy - 5.0, pl_ + 0.5 * pw_, cy + 5.0, ink, 1.4)
+            self.t_minutes.text = f"{self.train_minutes} min"
+            self.t_minutes.position = (ml + mw + 0.5 * TIME_TEXT_W, cy - 5.0)
 
         def _draw_flag(self) -> None:
             if self._flag is None or self._flag_rect is None:
@@ -1080,6 +1221,10 @@ def _make_view_class():
                 self.t_items[i].position = (cl + pad, cb + 36.0)
                 self.t_notes[i].position = (cl + pad, cb + 16.0)
                 self._fit_note(i, cw - 2.0 * pad)
+            al, ab, aw, ah = lay.action
+            self.t_action.position = (al + 14.0, ab + 0.5 * ah - 5.0)
+            bl2, bb2, bw2, bh2 = action_button_rect(lay.action)
+            self.t_action_btn.position = (bl2 + 0.5 * bw2, bb2 + 0.5 * bh2 - 5.0)
             self.t_footer.position = (self.left, lay.footer_y)
             self.t_status.position = (self.left, lay.footer_y)
             if self.drive is not None:
@@ -1121,6 +1266,16 @@ def _make_view_class():
             self.hover = None
 
         def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> None:
+            if self._strip_button() is not None and inside(
+                action_button_rect(self.cards.action), x, y
+            ):
+                self._strip_action()
+                return
+            minus, plus = time_buttons(self.cards.cards[ITEMS.index("Train")])
+            for rect, step in ((minus, -1), (plus, 1)):
+                if inside(rect, x, y):
+                    self.train_minutes = step_minutes(self.train_minutes, step)
+                    return
             i = self._button_at(x, y)
             if i is not None:
                 self.focus = i
@@ -1134,7 +1289,16 @@ def _make_view_class():
 
             k = arcade.key
             if symbol == k.ESCAPE:
-                self.close()
+                if self.job is not None and self.job.running:
+                    self.job.cancel()
+                else:
+                    self.close()
+            elif symbol == k.G:
+                self._strip_action()
+            elif symbol in (k.MINUS, k.NUM_SUBTRACT):
+                self.train_minutes = step_minutes(self.train_minutes, -1)
+            elif symbol in (k.EQUAL, k.PLUS, k.NUM_ADD):
+                self.train_minutes = step_minutes(self.train_minutes, 1)
             elif symbol in (k.UP, k.W):
                 self.focus = (self.focus - 1) % len(ITEMS)
             elif symbol in (k.DOWN, k.S):
@@ -1155,7 +1319,62 @@ def _make_view_class():
                 self.close()
                 return
             tid, name = self.tracks[self.track_i]
+            if item in ("Drive", "Train") and not self.built:
+                self._start_job("track", tid, then=item)  # then it opens by itself
+                return
             self._open_screen(item, tid, name)
+
+        # ------------------------------------------------------------- downloads
+
+        def _job_here(self):
+            """The background job if it is for the track on screen."""
+            tid = self.tracks[self.track_i][0]
+            return self.job if self.job is not None and self.job_track == tid else None
+
+        def _strip(self) -> tuple[str, str | None, bool]:
+            return strip_state(self.built, self.ghost_name, self._job_here())
+
+        def _strip_button(self) -> str | None:
+            return self._strip()[1]
+
+        def _start_job(self, kind: str, tid: str, then: str | None = None) -> None:
+            if self.job is not None and self.job.running:
+                self._say("Wait for the download to finish (Esc cancels it)")
+                return
+            if kind == "track":
+                spec = jobs.JobSpec("Getting track data", lambda: jobs.get_track_data(tid))
+            else:
+                spec = jobs.JobSpec("Getting real lap", lambda: jobs.get_real_lap(tid))
+            self.job, self.job_kind, self.job_track, self.job_then = jobs.Job(spec), kind, tid, then
+
+        def _strip_action(self) -> None:
+            """The strip's button (and the G key): cancel, retry, or get what is missing."""
+            tid = self.tracks[self.track_i][0]
+            job = self._job_here()
+            if job is not None and job.state == "running":
+                job.cancel()
+            elif job is not None and job.state == "failed":
+                self._start_job(self.job_kind, tid, self.job_then)
+            elif not self.built:
+                self._start_job("track", tid)
+            elif self.ghost is None:
+                self._start_job("real", tid)
+
+        def _poll_job(self) -> None:
+            job = self.job
+            if job is not None and job.state == "failed" and not getattr(job, "reported", False):
+                job.reported = True
+                self._say(f"{job.spec.title} failed: {job.message}")  # the strip has no room
+            if job is None or job.state in ("running", "failed"):
+                return
+            tid, then, self.job, self.job_then = self.job_track, self.job_then, None, None
+            if job.state != "done":
+                return
+            self._say(job.message)
+            if tid == self.tracks[self.track_i][0]:
+                self._refresh_track()
+                if then is not None:
+                    self.open_item(then)
 
         def _open_screen(self, item: str, tid: str, name: str) -> None:
             """Switch the window to the drive, replay or training screen; Esc there comes
@@ -1168,7 +1387,7 @@ def _make_view_class():
             try:
                 track = load_track(tid)
             except FileNotFoundError:
-                self._say(f"{name} isn't built: f1sim build-track {tid}")
+                self._say(f"{name} needs its track data first")
                 return
             try:
                 if item == "Drive":
@@ -1178,7 +1397,9 @@ def _make_view_class():
                 elif item == "Train":
                     from f1sim.app.training import TrainingProcess, TrainingView, new_run_dir
 
-                    process = TrainingProcess(tid, new_run_dir(tid, self.runs_root))
+                    process = TrainingProcess(
+                        tid, new_run_dir(tid, self.runs_root), minutes=self.train_minutes
+                    )
                     screen = TrainingView(
                         track, process.run_dir, process=process, on_back=self.come_back
                     )
@@ -1216,6 +1437,7 @@ def _make_view_class():
             now = time.perf_counter() - self.t0
             self.light.update(delta_time, ready=now > SPOTLIGHT_DELAY_S + 0.5)
             self.clock += delta_time
+            self._poll_job()
             if self.traffic is not None:
                 self.traffic.update(min(delta_time, 0.1))
                 k = 1.0 - math.exp(-min(delta_time, 0.1) / ZOOM_TAU_S)
@@ -1465,9 +1687,12 @@ def _make_view_class():
                 self.t_track_label,
                 *self.t_arrows,
                 self.t_track,
+                self.t_action,
+                self.t_action_btn,
                 *self.t_kickers,
                 *self.t_items,
                 *self.t_notes,
+                self.t_minutes,
                 self.t_footer,
                 self.t_status,
             ]
@@ -1492,6 +1717,7 @@ def _make_view_class():
             self._panel(self.cards.bar, theme.hex_colour("#000000", 0.88))
             self._panel(self.cards.picker)
             self._draw_flag()
+            self._draw_strip()
             for i, b in enumerate(self.buttons):
                 left, bottom, bw, bh = b.rect
                 active = i == self.focus
@@ -1506,6 +1732,8 @@ def _make_view_class():
                     theme.TEXT_PRIMARY if lit else theme.ACCENT,
                     theme.ACCENT if lit else theme.TEXT_PRIMARY,
                 )
+                if b.item == "Train":
+                    self._draw_train_time()
                 self.t_items[i].color = theme.TEXT_TERTIARY if disabled else theme.TEXT_PRIMARY
                 self.t_kickers[i].color = theme.white(0.8) if lit else theme.TEXT_SECONDARY
                 self.t_notes[i].color = theme.white(0.8) if lit else theme.TEXT_TERTIARY

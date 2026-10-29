@@ -416,3 +416,68 @@ def test_follow_camera_zooms_out_with_speed_and_back_in():
     mid = 0.5 * lay.length_m
     assert z.to_window(0.0, mid) == pytest.approx(lay.to_window(0.0, mid))
     assert z.px_per_m == pytest.approx(0.7 * lay.px_per_m)
+
+
+# ------------------------------------------------------------------ downloads in the window
+
+
+def test_the_strip_sits_between_the_picker_and_the_cards():
+    lay = menu.card_layout(1280, 760)
+    assert lay.action[3] == menu.ACTION_H
+    assert lay.picker[1] > lay.action[1] + lay.action[3] - 1e-9  # below the picker
+    assert lay.action[1] > max(b + h for _, b, _, h in lay.cards)  # above the cards
+    left, bottom, w, h = menu.action_button_rect(lay.action)
+    assert left + w <= lay.action[0] + lay.action[2] and bottom >= lay.action[1]
+
+
+def test_every_circuit_is_listed_built_or_not():
+    ids = [t[0] for t in menu.circuits()]
+    assert "silverstone" in ids and len(ids) == len(set(ids)) >= 24
+
+
+class _Job:
+    def __init__(self, state, message="", elapsed=0.0):
+        self.state, self.message, self.elapsed = state, message, elapsed
+        self.spec = type("Spec", (), {"title": "Getting track data"})()
+
+
+def test_the_strip_says_what_the_track_needs():
+    assert menu.strip_state(False, None, None) == (
+        "Track data not downloaded yet",
+        "Get track data",
+        False,
+    )
+    assert menu.strip_state(True, None, None) == ("No real lap to race yet", "Get real lap", False)
+    assert menu.strip_state(True, "RUS 2025", None) == ("Real lap: RUS 2025", None, False)
+    running = menu.strip_state(False, None, _Job("running", elapsed=75.0))
+    assert running == ("Getting track data · 1:15", "Cancel", False)
+    failed = menu.strip_state(False, None, _Job("failed", "No connection to the data server."))
+    assert failed == ("No connection to the data server.", "Retry", True)
+
+
+def test_ghost_label_and_training_time_steps():
+    from pathlib import Path
+
+    assert menu.ghost_label(Path("2025_silverstone_Q_RUS.npz")) == "RUS 2025"
+    assert menu.ghost_label(Path("2025_marina_bay_Q_NOR.npz")) == "NOR 2025"
+    assert menu.ghost_label(None) is None
+    assert menu.step_minutes(30, 1) == 60 and menu.step_minutes(30, -1) == 20
+    assert menu.step_minutes(5, -1) == 5 and menu.step_minutes(120, 1) == 120
+
+
+def test_the_train_card_buttons_stay_inside_the_card():
+    lay = menu.card_layout(1280, 760)
+    card = lay.cards[menu.ITEMS.index("Train")]
+    for left, bottom, w, h in menu.time_buttons(card):
+        assert left >= card[0] and left + w <= card[0] + card[2]
+        assert bottom >= card[1] and bottom + h <= card[1] + card[3]
+
+
+def test_training_is_started_for_the_chosen_time():
+    from pathlib import Path
+
+    from f1sim.app.training import train_command
+
+    cmd = train_command("monza", Path("runs/x"), minutes=20)
+    assert cmd[-2:] == ["--minutes", "20"]
+    assert "--minutes" not in train_command("monza", Path("runs/x"))
