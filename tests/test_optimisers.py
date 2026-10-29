@@ -360,3 +360,34 @@ def test_make_optimiser_cmaes():
     es = make_optimiser("cmaes", DIM, population=16, sigma0=0.2, seed=0)
     assert isinstance(es, CMAES) and es.population == 16
     assert isinstance(make_optimiser("CMAES", DIM), CMAES)
+
+
+class _Boom:
+    """Unpickling this calls ``os.system``: what a crafted checkpoint would carry."""
+
+    def __reduce__(self):
+        import os
+
+        return (os.system, ("echo pwned",))
+
+
+@needs_cma
+def test_cmaes_state_round_trips_through_safe_unpickler():
+    a = make_optimiser("cmaes", DIM, population=8, seed=0)
+    for _ in range(3):
+        pop = a.ask()
+        a.tell(-np.sum(pop.astype(np.float64) ** 2, axis=1))
+    b = make_optimiser("cmaes", DIM, population=8, seed=0)
+    b.load_state_dict(a.state_dict())
+    np.testing.assert_array_equal(a.ask(), b.ask())
+
+
+@needs_cma
+def test_cmaes_refuses_crafted_es_pickle():
+    import pickle
+
+    es = make_optimiser("cmaes", DIM, population=8, seed=0)
+    state = es.state_dict()
+    state["es_pickle"] = np.frombuffer(pickle.dumps(_Boom()), dtype=np.uint8).copy()
+    with pytest.raises(pickle.UnpicklingError, match="refusing"):
+        es.load_state_dict(state)

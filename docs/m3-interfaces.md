@@ -16,7 +16,7 @@ and confirm this file exists.
 
 **Cache location.** Processes started by the agent tools run inside the Claude desktop app's
 package, so Windows redirects writes under `%LOCALAPPDATA%` to
-`%LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Local`. That's fine for your work:
+`%LOCALAPPDATA%\Packages\<Claude package>\LocalCache\Local`. That's fine for your work:
 `load_track("silverstone")` finds the built tracks there. Just don't hard-code cache paths; use
 `f1sim.paths`.
 

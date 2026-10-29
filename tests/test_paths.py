@@ -52,3 +52,15 @@ def test_default_uses_platformdirs(tmp_path, monkeypatch, value):
 def test_existing_dir_is_fine(tmp_path, monkeypatch):
     monkeypatch.setenv(paths.ENV_VAR, str(tmp_path))
     assert paths.fastf1_dir() == paths.fastf1_dir()
+
+
+@pytest.mark.parametrize("bad", ["", "../evil", "a/b", "a\b", "C:x", "x.y", "a b"])
+def test_track_file_refuses_ids_that_are_not_plain_names(tmp_path, monkeypatch, bad):
+    monkeypatch.setenv(paths.ENV_VAR, str(tmp_path))
+    with pytest.raises(ValueError, match="Not a track id"):
+        paths.track_file(bad)
+
+
+def test_track_file_takes_catalogue_ids(tmp_path, monkeypatch):
+    monkeypatch.setenv(paths.ENV_VAR, str(tmp_path))
+    assert paths.track_file("marina_bay") == tmp_path / "tracks" / "marina_bay.track.json"

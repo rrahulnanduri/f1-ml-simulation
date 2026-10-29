@@ -185,3 +185,11 @@ def test_real_download_silverstone(cache):
 
     x, y = tum.parse_tum_raceline(tum.fetch_tum_raceline("Silverstone"))
     assert x.size > 1000 and x.size == y.size
+
+
+def test_fetch_refuses_oversized_download(tmp_path, monkeypatch):
+    monkeypatch.setenv("F1SIM_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(tum, "_MAX_BYTES", 16)
+    monkeypatch.setattr(tum.urllib.request, "urlopen", FakeUrlopen(payload=b"# x_m\n" + b"1" * 64))
+    with pytest.raises(OSError, match="over 16 bytes"):
+        tum.fetch_tum_csv("Spa")

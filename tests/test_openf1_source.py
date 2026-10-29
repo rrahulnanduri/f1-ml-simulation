@@ -231,3 +231,24 @@ def test_silverstone_2024_matches_fastf1_positions():
         for k in np.arange(-0.3, 0.3, 0.005)
     )
     assert best < 0.5
+
+
+def test_get_refuses_non_finite_numbers(monkeypatch, tmp_path):
+    monkeypatch.setenv("F1SIM_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(o, "MIN_REQUEST_INTERVAL_S", 0.0)
+    monkeypatch.setattr(
+        o.urllib.request, "urlopen", lambda url, timeout: _Response(b'[{"x": NaN}]')
+    )
+    with pytest.raises(o.OpenF1Error, match="non-finite"):
+        o._get("laps", {"session_key": 8})
+
+
+def test_get_refuses_oversized_responses(monkeypatch, tmp_path):
+    monkeypatch.setenv("F1SIM_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(o, "MIN_REQUEST_INTERVAL_S", 0.0)
+    monkeypatch.setattr(o, "MAX_RESPONSE_BYTES", 10)
+    monkeypatch.setattr(
+        o.urllib.request, "urlopen", lambda url, timeout: _Response(b'[{"x": 1234567}]')
+    )
+    with pytest.raises(o.OpenF1Error, match="over 10 bytes"):
+        o._get("laps", {"session_key": 9})

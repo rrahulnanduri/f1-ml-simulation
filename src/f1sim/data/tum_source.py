@@ -62,6 +62,7 @@ RACELINE_COLUMNS = ("x_m", "y_m")
 
 _RAW_BASE = "https://raw.githubusercontent.com"
 _TIMEOUT_S = 30.0
+_MAX_BYTES = 8 * 1024 * 1024  # the largest TUM CSV is ~0.2 MB
 
 
 class TumTrack(NamedTuple):
@@ -95,9 +96,11 @@ def _fetch(kind: str, name: str, valid: tuple[str, ...]) -> Path:
     url = tum_url(kind, name)
     try:
         with urllib.request.urlopen(url, timeout=_TIMEOUT_S) as resp:
-            payload = resp.read()
+            payload = resp.read(_MAX_BYTES + 1)
     except OSError as e:  # URLError, HTTPError and timeouts are all OSError
         raise OSError(f"Could not download TUM {kind} {name!r} from {url}: {e}") from e
+    if len(payload) > _MAX_BYTES:
+        raise OSError(f"Unexpected content from {url}: over {_MAX_BYTES} bytes")
     if not payload.lstrip().startswith(b"#"):
         raise OSError(f"Unexpected content from {url}: no '#' header line")
 

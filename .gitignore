@@ -37,3 +37,8 @@ src/f1sim/app/assets/fonts/HNRevline/
 # F1 Anatomy working files: screenshots (no images in the repo) and scratch scripts
 f1_anatomy/shots/
 f1_anatomy/tmp/
+
+# Explorer "copy of" folders and other local backups: never publish them (they hold build
+# caches with local paths baked in, and screenshots)
+* - Copy/
+* - Copy (*)/

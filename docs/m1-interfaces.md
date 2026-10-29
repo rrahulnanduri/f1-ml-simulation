@@ -21,7 +21,7 @@ says so. Package `__init__.py` files already exist and must stay empty.
 - **Code style:** type hints on public functions, short docstrings, and `ruff check` +
   `ruff format` clean.
 - **Running things:** use the repo venv,
-  `C:\Users\r.nanduri\Desktop\Desktop\Desktop\Personal\f1-ml-simulation\.venv\Scripts\python.exe`,
+  `<main checkout>\.venv\Scripts\python.exe`,
   from your worktree root. pytest puts `src/` first on `sys.path`, so your worktree's code is the
   code under test.
 

@@ -6,3 +6,5 @@
 *.pkl binary
 *.sqlite binary
 *.ttf binary
+# cmd.exe needs CRLF: with LF, labels and goto in batch files can misfire
+*.bat text eol=crlf

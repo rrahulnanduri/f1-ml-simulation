@@ -38,10 +38,16 @@ from f1sim.data.laps import OPENF1_FIRST_YEAR, CarTrace, LapXY
 BASE_URL = "https://api.openf1.org/v1"
 SESSION_NAMES = {"Q": "Qualifying", "R": "Race", "S": "Sprint", "SQ": "Sprint Qualifying"}
 MIN_REQUEST_INTERVAL_S = 2.1  # free tier: 30 requests/minute
+MAX_RESPONSE_BYTES = 256 * 1024 * 1024  # a whole session's car data is tens of MB
 SESSION_LIST_MAX_AGE_S = 24 * 3600  # schedules change during a season; lap data doesn't
 _EDGE_PAD_S = 2.0
 
 _last_request = 0.0
+
+
+def _reject_constant(name: str) -> float:
+    """``json.loads`` hook: OpenF1 never sends NaN or Infinity, so refuse them at the door."""
+    raise ValueError(f"non-finite number {name} in an OpenF1 response")
 
 
 class OpenF1Error(RuntimeError):
@@ -81,7 +87,13 @@ def _get(
         _last_request = time.monotonic()
         try:
             with urllib.request.urlopen(url, timeout=60) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+                body = resp.read(MAX_RESPONSE_BYTES + 1)
+            if len(body) > MAX_RESPONSE_BYTES:
+                raise OpenF1Error(f"OpenF1 response over {MAX_RESPONSE_BYTES} bytes for {url}")
+            try:
+                data = json.loads(body.decode("utf-8"), parse_constant=_reject_constant)
+            except ValueError as e:  # JSONDecodeError and UnicodeDecodeError included
+                raise OpenF1Error(f"Unreadable OpenF1 response for {url}: {e}") from e
             break
         except urllib.error.HTTPError as e:
             if e.code == 404:  # OpenF1 answers 404 {"detail": "No results found."}

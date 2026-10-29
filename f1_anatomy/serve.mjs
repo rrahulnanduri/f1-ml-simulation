@@ -8,10 +8,17 @@ const ROOT = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.argv[2] || process.env.PORT || 5177);
 const TYPES = { ".html": "text/html; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json" };
 
+// Only this machine's own names: a web page that rebinds its DNS to 127.0.0.1 still sends its
+// own Host, so it can't read files through the server.
+const HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`]);
+// Screenshots and scratch files stay private even while the server runs.
+const PRIVATE = /^(tmp|shots)([/\\ ]|$)/i;
+
 createServer(async (req, res) => {
   try {
+    if (!HOSTS.has(String(req.headers.host).toLowerCase())) throw new Error("no");
     let path = normalize(decodeURIComponent(new URL(req.url, "http://x").pathname)).replace(/^[/\\]+/, "");
-    if (path.includes("..")) throw new Error("no");
+    if (path.includes("..") || PRIVATE.test(path)) throw new Error("no");
     let file = join(ROOT, path);
     if ((await stat(file).catch(() => null))?.isDirectory()) file = join(file, "index.html");
     const body = await readFile(file);

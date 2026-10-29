@@ -21,6 +21,7 @@ Non-finite fitness values (NaN, Â±inf) are treated as the worst possible resul
 
 from __future__ import annotations
 
+import io
 import pickle
 from typing import Any, Protocol, runtime_checkable
 
@@ -397,6 +398,67 @@ class _Randn:
         return self.rng.standard_normal(shape)
 
 
+# Every global a pickled ``cma.CMAEvolutionStrategy`` (cma 4.x, numpy 2.x) refers to. A
+# checkpoint is a file someone can hand you, so nothing outside this list is resolved: a
+# module prefix would be too loose (``numpy.load`` with ``allow_pickle=True`` is a gadget).
+_CMA_PICKLE_GLOBALS = frozenset(
+    {
+        ("builtins", "range"),
+        ("cma.boundary_handler", "BoundNone"),
+        ("cma.boundary_handler", "BoundTransform"),
+        ("cma.evolution_strategy", "CMAEvolutionStrategy"),
+        ("cma.evolution_strategy", "_CMASolutionDict_functional"),
+        ("cma.evolution_strategy", "_CMAStopDict"),
+        ("cma.evolution_strategy", "_StopTolXStagnation"),
+        ("cma.evolution_strategy", "_pass"),
+        ("cma.logger", "CMADataLogger"),
+        ("cma.optimization_tools", "BestSolution"),
+        ("cma.options_parameters", "CMAOptions"),
+        ("cma.options_parameters", "CMAParameters"),
+        ("cma.options_parameters", "is_feasible"),
+        ("cma.recombination_weights", "RecombinationWeights"),
+        ("cma.sampler", "GaussStandardConstant"),
+        ("cma.sigma_adaptation", "CMAAdaptSigmaCSA"),
+        ("cma.sigma_adaptation", "CMAAdaptSigmaTPA"),
+        ("cma.sigma_adaptation", "_TPAParameters"),
+        ("cma.transformations", "DiagonalDecoding"),
+        ("cma.transformations", "GenoPheno"),
+        ("cma.transformations", "RoundIntegerVariables"),
+        ("cma.utilities.utils", "BlancClass"),
+        ("cma.utilities.utils", "DictFromTagsInString"),
+        ("cma.utilities.utils", "ElapsedWCTime"),
+        ("cma.utilities.utils", "MoreToWrite"),
+        ("cma.utilities.utils", "SolutionDict"),
+        ("f1sim.agents.optimisers", "_Randn"),
+        ("numpy", "dtype"),
+        ("numpy", "ndarray"),
+        ("numpy._core.multiarray", "_reconstruct"),
+        ("numpy._core.multiarray", "scalar"),
+        ("numpy.core.multiarray", "_reconstruct"),
+        ("numpy.core.multiarray", "scalar"),
+        ("numpy.linalg", "eigh"),
+        ("numpy.random._pcg64", "PCG64"),
+        ("numpy.random._pickle", "__bit_generator_ctor"),
+        ("numpy.random._pickle", "__generator_ctor"),
+        ("numpy.random.bit_generator", "SeedSequence"),
+        ("numpy.random.bit_generator", "__pyx_unpickle_SeedSequence"),
+    }
+)
+
+
+class _CMAUnpickler(pickle.Unpickler):
+    """Unpickler for ``es_pickle`` that resolves only :data:`_CMA_PICKLE_GLOBALS`."""
+
+    def find_class(self, module: str, name: str) -> Any:
+        if (module, name) not in _CMA_PICKLE_GLOBALS:
+            raise pickle.UnpicklingError(
+                f"CMA-ES state refers to {module}.{name}, which a cma checkpoint never does; "
+                "refusing to load it (the checkpoint is corrupt, from another cma version, "
+                "or crafted)"
+            )
+        return super().find_class(module, name)
+
+
 def _import_cma():
     try:
         import cma
@@ -425,8 +487,8 @@ class CMAES(_BestTracker):
 
     **State.** ``state_dict()["es_pickle"]`` is ``pickle.dumps(es)`` as a uint8 array, so it
     fits the NPZ, which is loaded with ``allow_pickle=False``. ``load_state_dict`` unpickles
-    it, so only load optimiser state from checkpoints this project wrote: unpickling
-    untrusted data can run arbitrary code.
+    it with :class:`_CMAUnpickler`, which only resolves the cma, numpy and f1sim names a real
+    ``es`` contains, so a crafted checkpoint can't reach ``os.system`` and the like.
     """
 
     def __init__(
@@ -502,7 +564,7 @@ class CMAES(_BestTracker):
         """Restore from :meth:`state_dict`. Unpickles ``es_pickle``: own checkpoints only."""
         _check_kind(d, "cmaes", self.dim, self.population)
         blob = np.asarray(d["es_pickle"], dtype=np.uint8).tobytes()
-        self._es = pickle.loads(blob)  # our own checkpoints only (see class doc)
+        self._es = _CMAUnpickler(io.BytesIO(blob)).load()
         pending = np.asarray(d["pending"], dtype=np.float64)
         self._pending = pending.copy() if pending.shape[0] else None
         self.generation = int(d["generation"])

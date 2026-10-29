@@ -8,12 +8,14 @@ monkeypatch it. Every function creates its folder if needed and returns it.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import platformdirs
 
 ENV_VAR = "F1SIM_CACHE_DIR"
 APP_NAME = "f1sim"
+_TRACK_ID = re.compile(r"[A-Za-z0-9_-]+")
 
 
 def _ensure(path: Path) -> Path:
@@ -42,7 +44,10 @@ def tracks_dir() -> Path:
 
 
 def track_file(track_id: str) -> Path:
-    """Where the built track ``track_id`` is (``f1sim build-track``)."""
+    """Where the built track ``track_id`` is (``f1sim build-track``). ValueError unless the id
+    is a plain name (letters, digits, ``_``, ``-``), so it can't point outside the folder."""
+    if not _TRACK_ID.fullmatch(track_id):
+        raise ValueError(f"Not a track id: {track_id!r} (letters, digits, '_' and '-' only)")
     return tracks_dir() / f"{track_id}.track.json"
 
 

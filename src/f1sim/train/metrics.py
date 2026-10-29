@@ -224,7 +224,7 @@ def read_generation(path: Path) -> dict[str, np.ndarray] | None:
     lacks a key (the writer replaces it atomically, but a reader may still lose a race with
     the rename on Windows)."""
     try:
-        with np.load(Path(path)) as z:
+        with np.load(Path(path), allow_pickle=False) as z:
             if not all(k in z.files for k in GENERATION_KEYS):
                 return None
             return {k: z[k] for k in GENERATION_KEYS}

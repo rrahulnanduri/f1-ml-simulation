@@ -67,6 +67,8 @@ laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
 - **F1 Anatomy** (D35): `python f1_anatomy/launch.py` opens five interactive figures of how
   the car works, a static site beside the package.
 - **Tests:** 640 pass offline. `ruff check` is clean.
+- **Security** (D45): fixes for the audit in `docs/SECURITY_AUDIT.md`; the GitHub-side
+  steps there are the owner's.
 
 **Open problems, most important first:**
 1. **Suzuka's figure-eight isn't supported.** Its centre line crosses itself at the bridge.
@@ -110,14 +112,14 @@ Tracks built by agents may need copying to the user's own cache (Gotchas, D9).
   pipeline once it has N lines, which kills Blender mid-render.
 - **Cache redirection.** On this Windows machine, Claude Desktop's tool processes run inside an
   app package. Writes under `%LOCALAPPDATA%` are redirected to
-  `%LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Local`. Tracks built by agents don't
+  `%LOCALAPPDATA%\Packages\<Claude package>\LocalCache\Local`. Tracks built by agents don't
   appear in the user's own terminal until copied to `%LOCALAPPDATA%\f1sim` (decision D9).
 - **F1 live timing needs a sign-in.** It returns 401 without an F1 TV subscription, so FastF1 only
   works for sessions already in its cache. Use OpenF1 for 2023 onwards (D6).
 - **Rendering quality:** `F1SIM_QUALITY=high|medium|low` forces a tier (default `auto`; the
   log says which tier it picked and why). `F1SIM_GL_DEBUG=1` turns pyglet's GL error checks
-  back on, for debugging GL. This laptop runs Python on its integrated Intel Arc, not the
-  RTX (so the app starts at medium here).
+  back on, for debugging GL. The dev laptop runs Python on its integrated GPU, not the
+  discrete one (so the app starts at medium there).
 - **Use the repo venv:** `.venv\Scripts\python.exe` (Python 3.13). Install with
   `pip install -e ".[dev,fast,es]"`.
 
@@ -236,7 +238,7 @@ Measured, not guessed: draw cost was fine (p95 10 ms) and update and draw stay p
   `DriveSession.render_pose()` and `render_lap_time()` interpolate by the leftover accumulator.
   The drawn car's speed now changes at most 1.6% between frames.
 - **Frame pacing:** the 1/60 s timer with vsync off missed a refresh on 10–12% of frames. The
-  driver ignores the vsync request here (windowed OpenGL, dual-GPU laptop), so the windows now
+  driver ignores the vsync request here (windowed OpenGL, dual-GPU machine), so the windows now
   tick at 1/120 s with `vsync=True`: no frames over 20 ms. Rejected: `DwmFlush()` after each
   swap (GLFW's approach), which gave 30 fps here. Rejected: a damped follow camera, since
   positions are smooth once interpolated, and lag would let the car drift off the stage centre.
@@ -561,7 +563,7 @@ queries per pass, cProfile per frame, startup), then fixed the largest costs:
     to load).
   - The menu no longer imports the track pipeline (numba) just to list built tracks
     (`paths.track_file`).
-- **Measured in the real window on this laptop's integrated Intel Arc 140T** (Windows runs
+- **Measured in the real window on the dev laptop's integrated GPU** (Windows runs
   Python on it): every tier holds the 120 Hz tick on every screen. CPU per screen, before →
   after: menu 30 → 25%, drive 50 → 33%, replay 59 → 43% of a core.
 - **Not tried:** a lower draw rate on 60 Hz displays (D15 found a 1/60 s timer hitches
@@ -833,6 +835,16 @@ for the run length (5-120 min, default 30, the trainer's own limit) passed as `-
 not saved between sessions. Checked by hand: Get real lap on Austin took 10 s and saved the
 2026 pole lap; the track download was not run end to end here.
 
+**D45 · Security hardening for a public repo** (2026-10-29)
+Audit and fixes in `docs/SECURITY_AUDIT.md` (S1-S12). `scripts/run_latest.bat` lists new
+commits and only updates on Y, and pip installs with `-c constraints.txt`. CMA-ES checkpoint
+state loads through an exact-name allowlist unpickler (`_CMAUnpickler`), not plain pickle.
+Downloads are size-capped; OpenF1 NaN/Infinity is refused; `paths.track_file` takes plain ids
+only; the anatomy preview server checks `Host`. Docs no longer name the local account path,
+GPU models or the Claude app's package ID, and this repo commits with the GitHub noreply email.
+Added `SECURITY.md` and Dependabot. Left to the owner: GitHub settings (2FA, branch protection,
+email privacy, secret scanning) and removing old pickles and paths from history.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -887,7 +899,8 @@ not saved between sessions. Checked by hand: Get real lap on Austin took 10 s an
 | 2026-10-26 | `1a18ce8` | Racing line: TUM's only on TUM geometry and when it laps; skip unraced seasons |
 | 2026-10-29 | uncommitted | Menu hero camera: fixed top-down view instead of heading-up (D41) |
 | 2026-10-29 | uncommitted | Other cars: speed set as a gap below the lap speed (6-18 m/s), redrawn at each reappearance, reappearing 60-320 m ahead; "How it works" text in plainer words (D42) |
-| 2026-10-29 | uncommitted | Security audit written (`docs/SECURITY_AUDIT.md`, S1-S12); no code changed |
+| 2026-10-29 | `f1efbde` | Security audit written (`docs/SECURITY_AUDIT.md`, S1-S12) |
 | 2026-10-29 | uncommitted | Track picker: flags; names and notes fitted to their boxes (D43). Speed zoom widened (2x in, 0.325x out) |
 | 2026-10-29 | uncommitted | Packaging plan for a Windows/macOS app with no terminal steps: `docs/packaging-plan.md` (plan only) |
 | 2026-10-29 | uncommitted | Menu: all circuits listed, Get track data / Get real lap buttons as background jobs, Train time control (D44) |
+| 2026-10-29 | uncommitted | Security hardening (D45): launcher asks before updating, safe CMA-ES unpickling, download caps, docs scrubbed |
