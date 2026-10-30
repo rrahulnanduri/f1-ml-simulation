@@ -69,9 +69,10 @@ laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
 - **F1 Anatomy** (D35): `python f1_anatomy/launch.py` opens five interactive figures of how
   the car works, a static site beside the package.
 - **Tests:** 679 pass offline. `ruff check` is clean.
-- **Loader prototype** (D49): `python scripts/geo/loader_demo.py silverstone` draws the circuit
-  over the terrain in 3D, from a 45 kB asset baked from OpenStreetMap and AWS Terrain Tiles
-  (`scripts/geo/fetch.py`, `bake.py`). It's Silverstone only, and not in the app yet.
+- **Loader** (D49): the circuit drawn in 3D over the terrain, from a 45 kB asset baked from
+  OpenStreetMap and AWS Terrain Tiles (`scripts/geo/fetch.py`, `bake.py`). The menu shows it
+  over the hero during fetch jobs; `L` previews it. Silverstone only. Checked offscreen at 2×;
+  the owner hasn't judged it in the real window yet.
 - **Security** (D45): fixes for the audit in `docs/SECURITY_AUDIT.md`; the GitHub-side
   steps there are the owner's.
 
@@ -91,8 +92,8 @@ laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
 4. **Checks only the user can do:** the training view's focus overlay and the restyled
    drawer in the real window, and the 2× UI on their real 2× display (D26).
 
-**Next step:** the owner reviews the loader prototype (D49): its look, and whether to wire it
-into the menu's fetch jobs and the training screen's wait, then bake more circuits.
+**Next step:** the owner reviews the loader in the menu (D49, `L` on Silverstone), then it
+gets baked for more circuits and added to the training screen's wait.
 Also, the user tries the focus overlay (hold Enter) and the restyled drawer, and
 says what a settings screen should hold. Likely tweaks in the training view: the default
 playback speed (`training.DEFAULT_SPEED`), the episode cut-off (`LEADER_GRACE_S`), and
@@ -885,9 +886,13 @@ Body median on a lit frame: 14/255 (gloss) -> 18/255; before D47 it was 55.
 **D49 · A "track being drawn" loader, baked from OpenStreetMap and open terrain** (2026-10-30)
 A small animation to play while the app fetches a lap or track data, or while a run starts: the
 circuit drawn from the start line with a red head, over a faint wireframe of the land, under
-an orbiting 35° camera (3.6 s a loop; terrain heights ×4). Prototype only, Silverstone only:
-`scripts/geo/loader_demo.py` (live, or `--record DIR` for PNG stills, a WebP of the full orbit
-and a one-loop GIF). Not in the app yet.
+an orbiting 35° camera (3.6 s a loop; terrain heights ×4). Silverstone only so far. It lives
+in `f1sim.app.ui.loader`. The menu fades it in over the hero, on a dark backing, while a Get
+track data / Get real lap job runs for a circuit that has an asset, and `L` previews it.
+`scripts/geo/loader_demo.py` runs it on its own (live, or `--record DIR` for PNG stills, a WebP
+of the full orbit and a one-loop GIF).
+- **Gotcha:** arcade's window framebuffer takes `viewport` in window units and scales it by
+  the pixel ratio itself; passing pixels drew the loader 2× too big on a 2× display.
 - **Data:** only OSM (ODbL) and AWS Terrain Tiles, fetched at build time by
   `scripts/geo/fetch.py`, then baked by `scripts/geo/bake.py` into a committed 45 kB
   `src/f1sim/app/assets/geo/<id>.npz` (data-formats §7). No GIS libraries: a small GeoTIFF
@@ -908,8 +913,7 @@ and a one-loop GIF). Not in the app yet.
   way to show a circuit that hasn't been built.
 - **Elevation:** Silverstone's centre line runs from 145.3 to 158.0 m (12.7 m range), smoothed
   over 15 m.
-- **Where it would plug in:** the menu's Get real lap / Get track data jobs (D44,
-  `f1sim.app.jobs`) while they run, and the training screen before the first `generation.npz`.
+- **Not yet:** the training screen before the first `generation.npz` arrives.
 - Rejected: Google 3D tiles or satellite imagery (terms); depending on Aleph at runtime;
   rasterio, GDAL or tifffile (too heavy for a two-tag GeoTIFF).
 
@@ -976,3 +980,4 @@ and a one-loop GIF). Not in the app yet.
 | 2026-10-30 | uncommitted | Menu: cars, track lines and backdrop composite "over" instead of additively, so the black car is black (D47) |
 | 2026-10-30 | uncommitted | Menu: backdrop streaks only behind the menu cards; hero in satin black (D48) |
 | 2026-10-30 | uncommitted | Loader prototype: `scripts/geo` fetch, bake and demo; Silverstone asset from OSM and terrain (D49) |
+| 2026-10-30 | uncommitted | Loader in the menu over the hero during fetch jobs, `L` previews it (D49) |

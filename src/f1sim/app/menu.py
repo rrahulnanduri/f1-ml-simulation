@@ -46,8 +46,11 @@ track:
 Esc on the drive, replay or training screen comes back here (leaving the training screen
 stops the training).
 
+While a job runs for a circuit with a loader asset (only Silverstone so far), the "track
+being drawn" loader (:mod:`f1sim.app.ui.loader`, D49) covers the hero; ``L`` previews it.
+
 Controls: mouse (hover, click), Up/Down to pick, Enter to open, Left/Right or the arrows to
-change track, Esc to quit.
+change track, L to preview the loader, Esc to quit.
 
 The testable logic (track and run discovery, the commands, the hero layout and the
 screen-to-car mapping, the light's easing) is pure Python/numpy. :class:`MenuWindow` only
@@ -75,6 +78,7 @@ from f1sim.app.ui import (
     hero_drive,
     hero_maps,
     light_stage,
+    loader,
     quality,
     theme,
 )
@@ -85,6 +89,10 @@ HEADLINE_TOP = theme.hex_colour("#FAFAFA")
 HEADLINE_BOTTOM = theme.hex_colour("#A3A3A3")
 """The headline's top-to-bottom gradient (neutral-50 to neutral-400), one colour per line."""
 BODY_TEXT = theme.hex_colour("#D4D4D4")
+LOADER_FADE_S = 0.25
+"""The loader (D49) fades in over the hero, and out, with this time constant."""
+LOADER_DIM = 0.92
+"""How much the loader's backing darkens the hero behind it (0-1)."""
 SPOTLIGHT_DELAY_S = 0.75
 SPOTLIGHT_FADE_S = 2.0
 """The beam fades in after this delay over this long (the original's animation)."""
@@ -802,6 +810,10 @@ def _make_view_class():
             self.job_kind = ""
             self.job_track = ""
             self.job_then: str | None = None
+            self.loader = None  # (track_id, LoaderScene), built on first use
+            self.loader_preview = False  # L: show it without a job running
+            self.loader_alpha = 0.0
+            self.loader_t0 = 0.0
             self.built = False
             self.ghost_name: str | None = None
             self.train_minutes = DEFAULT_TRAIN_MINUTES
@@ -1306,6 +1318,8 @@ def _make_view_class():
                     self.close()
             elif symbol == k.G:
                 self._strip_action()
+            elif symbol == k.L:
+                self.loader_preview = not self.loader_preview
             elif symbol in (k.MINUS, k.NUM_SUBTRACT):
                 self.train_minutes = step_minutes(self.train_minutes, -1)
             elif symbol in (k.EQUAL, k.PLUS, k.NUM_ADD):
@@ -1449,6 +1463,11 @@ def _make_view_class():
             self.light.update(delta_time, ready=now > SPOTLIGHT_DELAY_S + 0.5)
             self.clock += delta_time
             self._poll_job()
+            want = 1.0 if self._loader_track() else 0.0
+            if want and self.loader_alpha < 0.01:
+                self.loader_t0 = self.clock  # each showing starts at the start line
+            k = 1.0 - math.exp(-min(delta_time, 0.1) / LOADER_FADE_S)
+            self.loader_alpha += k * (want - self.loader_alpha)
             if self.traffic is not None:
                 self.traffic.update(min(delta_time, 0.1))
                 k = 1.0 - math.exp(-min(delta_time, 0.1) / ZOOM_TAU_S)
@@ -1677,6 +1696,7 @@ def _make_view_class():
                 ctx.enable(ctx.BLEND)
                 self._draw_backdrop()
                 self._draw_hero()
+                self._draw_loader()
                 self._draw_text()
                 return
             p = self._p_spot
@@ -1690,7 +1710,48 @@ def _make_view_class():
             self._fs_quad.render(p)
             ctx.enable(ctx.BLEND)
             self._draw_hero()
+            self._draw_loader()
             self._draw_text()
+
+        def _loader_track(self) -> str | None:
+            """The circuit the loader should draw now: the one on screen, while its fetch job
+            runs (or the L preview is on), if it has a loader asset."""
+            tid = self.tracks[self.track_i][0]
+            job = self._job_here()
+            busy = job is not None and job.state == "running"
+            return tid if (busy or self.loader_preview) and loader.has_asset(tid) else None
+
+        def _draw_loader(self) -> None:
+            """The loader over the hero, right of the menu column, on a dark backing."""
+            if self.loader_alpha < 0.005:
+                return
+            tid = self._loader_track() or (self.loader[0] if self.loader else None)
+            if tid is None:
+                return
+            if self.loader is None or self.loader[0] != tid:
+                try:
+                    self.loader = (tid, loader.LoaderScene(self.ctx, loader.load_asset(tid)))
+                except (OSError, ValueError, KeyError) as exc:
+                    self._say(f"Loader unavailable: {exc}")
+                    self.loader_preview = False
+                    self.loader_alpha = 0.0
+                    return
+            a = self.loader_alpha
+            x0 = self.left + self.col_w
+            arcade.draw_lrbt_rectangle_filled(
+                x0, self.width, 0, self.height, (*CARD_BG[:3], int(255 * LOADER_DIM * a))
+            )
+            fbo = self.ctx.active_framebuffer
+            old = fbo.viewport
+            # the window's own framebuffer takes its viewport in window units (arcade scales
+            # it by the pixel ratio); an offscreen one takes pixels
+            r = 1.0 if fbo is self.ctx.screen else self.window.get_pixel_ratio()
+            vp = (int(x0 * r), 0, int((self.width - x0) * r), int(self.height * r))
+            fbo.viewport = vp
+            px = self.window.get_pixel_ratio() / r  # pixels per viewport unit
+            size = (int(vp[2] * px), int(vp[3] * px))
+            self.loader[1].render(self.clock - self.loader_t0, size, alpha=a)
+            fbo.viewport = old
 
         def _texts(self) -> list:
             return [
