@@ -111,7 +111,7 @@ class Finish:
     coat: float
 
 
-HERO_FINISH = Finish("metallic black", 1.0, 0.30, 0.85, 1.0)
+HERO_FINISH = Finish("satin black", 1.6, 0.50, 0.50, 0.35)
 RIVAL_FINISHES = (
     Finish("gunmetal", 6.0, 0.30, 0.90, 1.0),
     Finish("graphite", 3.5, 0.42, 0.35, 0.8),

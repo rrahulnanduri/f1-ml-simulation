@@ -46,8 +46,11 @@ track:
 Esc on the drive, replay or training screen comes back here (leaving the training screen
 stops the training).
 
+While a job runs for a circuit with a loader asset (only Silverstone so far), the "track
+being drawn" loader (:mod:`f1sim.app.ui.loader`, D49) covers the hero; ``L`` previews it.
+
 Controls: mouse (hover, click), Up/Down to pick, Enter to open, Left/Right or the arrows to
-change track, Esc to quit.
+change track, L to preview the loader, Esc to quit.
 
 The testable logic (track and run discovery, the commands, the hero layout and the
 screen-to-car mapping, the light's easing) is pure Python/numpy. :class:`MenuWindow` only
@@ -67,7 +70,7 @@ from pathlib import Path
 
 import numpy as np
 
-from f1sim.app import jobs
+from f1sim.app import jobs, loading
 from f1sim.app.ui import (
     car_top,
     drive_shaders,
@@ -75,6 +78,7 @@ from f1sim.app.ui import (
     hero_drive,
     hero_maps,
     light_stage,
+    loader,
     quality,
     theme,
 )
@@ -85,6 +89,10 @@ HEADLINE_TOP = theme.hex_colour("#FAFAFA")
 HEADLINE_BOTTOM = theme.hex_colour("#A3A3A3")
 """The headline's top-to-bottom gradient (neutral-50 to neutral-400), one colour per line."""
 BODY_TEXT = theme.hex_colour("#D4D4D4")
+LOADER_FADE_S = 0.25
+"""The loader (D49) fades in over the hero, and out, with this time constant."""
+LOADER_DIM = 0.92
+"""How much the loader's backing darkens the hero behind it (0-1)."""
 SPOTLIGHT_DELAY_S = 0.75
 SPOTLIGHT_FADE_S = 2.0
 """The beam fades in after this delay over this long (the original's animation)."""
@@ -168,9 +176,13 @@ LAMP_RADIUS_M = 0.35
 LAMP_REACH_M = 14.0
 """Lamps farther than this outside the window are left out (at most ``MAX_LAMPS``)."""
 LAMP_GLOW_M = 0.18
-BACKDROP_ALPHA = 0.30
-"""The red and blue backdrop behind the menu and the driving cars
-(``assets/hero/backdrop.webp``): it covers the window from its left edge, under the text."""
+BACKDROP_ALPHA = 0.09
+"""The red and blue backdrop behind the menu cards
+(``assets/hero/backdrop.webp``): it covers the window from its left edge, under the text.
+(0.30 under the old additive blend, which squared it; D47.)"""
+BACKDROP_FADE_PX = (40.0, 90.0)
+"""The backdrop fades out from this many pixels inside the menu column's right edge to this
+many outside it, so its streaks stay behind the menu and never reach the cars (D48)."""
 MAX_LAMPS = 12
 MAX_SHADOW_CARS = 6
 """The shaders' array sizes; the quality tier lights and shadows fewer."""
@@ -583,6 +595,7 @@ _BACKDROP_FS = """
 uniform sampler2D u_image;
 uniform vec2 u_size;
 uniform float u_alpha;
+uniform vec2 u_fade;  // full strength left of x0, gone right of x1 (pixels)
 in vec2 v_uv;
 out vec4 frag;
 void main() {
@@ -592,7 +605,9 @@ void main() {
     vec2 im = vec2(textureSize(u_image, 0));
     float s = max(u_size.x / im.x, u_size.y / im.y);
     vec2 uv = (p - vec2(0.0, 0.5 * (u_size.y - im.y * s))) / (im * s);
-    frag = vec4(texture(u_image, uv).rgb * u_alpha, u_alpha);  // premultiplied
+    float a = u_alpha * (1.0 - smoothstep(u_fade.x, u_fade.y, p.x));
+    if (a <= 0.0) discard;
+    frag = vec4(texture(u_image, uv).rgb * a, a);  // premultiplied
 }
 """
 
@@ -795,6 +810,11 @@ def _make_view_class():
             self.job_kind = ""
             self.job_track = ""
             self.job_then: str | None = None
+            self.loader = None  # (track_id, LoaderScene), built on first use
+            self.loader_preview = False  # L: show it without a job running
+            self.loader_alpha = 0.0
+            self.loader_t0 = 0.0
+            self.opening = None  # loading.Opening while a screen is being opened
             self.built = False
             self.ghost_name: str | None = None
             self.train_minutes = DEFAULT_TRAIN_MINUTES
@@ -1236,6 +1256,10 @@ def _make_view_class():
                     self.left + col_w + 10.0,
                     self.left + col_w + 10.0 + TRACK_FADE_PX,
                 )
+                self.backdrop_fade = (
+                    self.left + col_w - BACKDROP_FADE_PX[0],
+                    self.left + col_w + BACKDROP_FADE_PX[1],
+                )
             else:
                 size_m = (self.stage or self.maps).size_m
                 self.hero = hero_layout(w, h, size_m)
@@ -1266,6 +1290,8 @@ def _make_view_class():
             self.hover = None
 
         def on_mouse_press(self, x: int, y: int, button: int, modifiers: int) -> None:
+            if self.opening is not None:
+                return
             if self._strip_button() is not None and inside(
                 action_button_rect(self.cards.action), x, y
             ):
@@ -1288,6 +1314,10 @@ def _make_view_class():
         def on_key_press(self, symbol: int, modifiers: int) -> None:
 
             k = arcade.key
+            if self.opening is not None:
+                if symbol == k.ESCAPE and not self.opening.built:
+                    self.opening = None  # cancel: back to the menu
+                return
             if symbol == k.ESCAPE:
                 if self.job is not None and self.job.running:
                     self.job.cancel()
@@ -1295,6 +1325,8 @@ def _make_view_class():
                     self.close()
             elif symbol == k.G:
                 self._strip_action()
+            elif symbol == k.L:
+                self.loader_preview = not self.loader_preview
             elif symbol in (k.MINUS, k.NUM_SUBTRACT):
                 self.train_minutes = step_minutes(self.train_minutes, -1)
             elif symbol in (k.EQUAL, k.PLUS, k.NUM_ADD):
@@ -1377,8 +1409,8 @@ def _make_view_class():
                     self.open_item(then)
 
         def _open_screen(self, item: str, tid: str, name: str) -> None:
-            """Switch the window to the drive, replay or training screen; Esc there comes
-            back here."""
+            """Switch the window to the drive, replay or training screen through the loading
+            transition (:mod:`f1sim.app.loading`); Esc there comes back here."""
             from f1sim.data.track_pipeline import load_track
 
             if item == "Replay" and self.run is None:
@@ -1390,31 +1422,72 @@ def _make_view_class():
                 self._say(f"{name} needs its track data first")
                 return
             try:
+                scene = self._loader_scene(tid, track)
+            except (OSError, ValueError, KeyError) as exc:  # no loader: open it directly
+                self._say(f"Loader unavailable: {exc}")
+                scene = None
+            build = self._screen_builder(item, tid, track)
+            if scene is None:
+                screen = self._build_screen(item, build)
+                if screen is not None:
+                    self.light.off()
+                    self.window.show_view(screen)
+                return
+            self.opening = loading.Opening(scene, build, f"{item} · {name}")
+            self.light.off()
+
+        def _loader_scene(self, tid: str, track):
+            """The loader for ``tid`` (its baked asset, or one from the built track), kept for
+            the next time."""
+            if self.loader is None or self.loader[0] != tid:
+                asset = loader.asset_for(tid, track)
+                self.loader = (tid, loader.LoaderScene(self.ctx, asset))
+            return self.loader[1]
+
+        def _screen_builder(self, item: str, tid: str, track):
+            def build():
                 if item == "Drive":
                     from f1sim.app.drive import DriveView
 
-                    screen = DriveView(track, ghost_path=self.ghost, on_back=self.come_back)
-                elif item == "Train":
+                    return DriveView(track, ghost_path=self.ghost, on_back=self.come_back)
+                if item == "Train":
                     from f1sim.app.training import TrainingProcess, TrainingView, new_run_dir
 
                     process = TrainingProcess(
                         tid, new_run_dir(tid, self.runs_root), minutes=self.train_minutes
                     )
-                    screen = TrainingView(
+                    return TrainingView(
                         track, process.run_dir, process=process, on_back=self.come_back
                     )
-                else:
-                    from f1sim.app.replay import ReplayView, load_trace
+                from f1sim.app.replay import ReplayView, load_trace
 
-                    traces = [load_trace(self.run / "best_lap.npz")]
-                    if self.ghost is not None:
-                        traces.append(load_trace(self.ghost))
-                    screen = ReplayView(track, traces, on_back=self.come_back)
+                traces = [load_trace(self.run / "best_lap.npz")]
+                if self.ghost is not None:
+                    traces.append(load_trace(self.ghost))
+                return ReplayView(track, traces, on_back=self.come_back)
+
+            return build
+
+        def _build_screen(self, item: str, build):
+            try:
+                return build()
             except (ValueError, OSError) as exc:
                 self._say(f"Couldn't open {item.lower()}: {exc}")
+                return None
+
+        def _step_opening(self) -> None:
+            """Advance the loading transition; once the circuit is drawn and held, build the
+            screen (the frame on show is still, so the freeze can't be seen) and reveal it."""
+            op = self.opening
+            op.update()  # by the wall clock (D51)
+            if not op.ready or op.built:
                 return
-            self.light.off()
-            self.window.show_view(screen)
+            op.built = True
+            item = op.label.split(" · ")[0]
+            screen = self._build_screen(item, op.build)
+            self.opening = None
+            if screen is not None:
+                loading.reveal(self.window, screen, op)
 
         def come_back(self) -> None:
             """Back to the menu (this same view: its textures stay loaded)."""
@@ -1437,7 +1510,16 @@ def _make_view_class():
             now = time.perf_counter() - self.t0
             self.light.update(delta_time, ready=now > SPOTLIGHT_DELAY_S + 0.5)
             self.clock += delta_time
+            if self.opening is not None:
+                self._step_opening()
+                if self.opening is None:
+                    return
             self._poll_job()
+            want = 1.0 if self._loader_track() else 0.0
+            if want and self.loader_alpha < 0.01:
+                self.loader_t0 = self.clock  # each showing starts at the start line
+            k = 1.0 - math.exp(-min(delta_time, 0.1) / LOADER_FADE_S)
+            self.loader_alpha += k * (want - self.loader_alpha)
             if self.traffic is not None:
                 self.traffic.update(min(delta_time, 0.1))
                 k = 1.0 - math.exp(-min(delta_time, 0.1) / ZOOM_TAU_S)
@@ -1459,7 +1541,7 @@ def _make_view_class():
             self._stage_tex.use(0)
             self._ambient_tex.use(1)
             ctx.enable(ctx.BLEND)
-            ctx.blend_func = ctx.BLEND_PREMULTIPLIED_ALPHA
+            ctx.blend_func = (ctx.ONE, ctx.ONE_MINUS_SRC_ALPHA)  # premultiplied "over"
             self._unit_quad.render(p)
             ctx.blend_func = ctx.BLEND_DEFAULT
 
@@ -1566,7 +1648,7 @@ def _make_view_class():
             (x, y, _), anchor = hero_camera(lay, st.rear_axle_y, self.drive.pose())
             a = math.pi / 2 - hero_drive.VIEW_HEADING
             ctx.enable(ctx.BLEND)
-            ctx.blend_func = ctx.BLEND_PREMULTIPLIED_ALPHA
+            ctx.blend_func = (ctx.ONE, ctx.ONE_MINUS_SRC_ALPHA)  # premultiplied "over"
             t = self._p_track
             set_uniforms(
                 t,
@@ -1634,7 +1716,7 @@ def _make_view_class():
             for tex, unit_i in self._tex.values():
                 tex.use(unit_i)
             ctx.enable(ctx.BLEND)
-            ctx.blend_func = ctx.BLEND_PREMULTIPLIED_ALPHA
+            ctx.blend_func = (ctx.ONE, ctx.ONE_MINUS_SRC_ALPHA)  # premultiplied "over"
             self._unit_quad.render(p)
             ctx.blend_func = ctx.BLEND_DEFAULT
 
@@ -1649,8 +1731,9 @@ def _make_view_class():
                 u_image=0,
                 u_size=(float(self.width), float(self.height)),
                 u_alpha=BACKDROP_ALPHA,
+                u_fade=self.backdrop_fade,
             )
-            self.ctx.blend_func = self.ctx.BLEND_PREMULTIPLIED_ALPHA
+            self.ctx.blend_func = (self.ctx.ONE, self.ctx.ONE_MINUS_SRC_ALPHA)
             self._fs_quad.render(p)
             self.ctx.blend_func = self.ctx.BLEND_DEFAULT
 
@@ -1665,7 +1748,9 @@ def _make_view_class():
                 ctx.enable(ctx.BLEND)
                 self._draw_backdrop()
                 self._draw_hero()
+                self._draw_loader()
                 self._draw_text()
+                self._draw_opening()
                 return
             p = self._p_spot
             p["u_size"] = (float(self.width), float(self.height))
@@ -1678,7 +1763,59 @@ def _make_view_class():
             self._fs_quad.render(p)
             ctx.enable(ctx.BLEND)
             self._draw_hero()
+            self._draw_loader()
             self._draw_text()
+            self._draw_opening()
+
+        def _draw_opening(self) -> None:
+            """The loading transition over the whole window (:mod:`f1sim.app.loading`)."""
+            if self.opening is None:
+                return
+            fbo = self.ctx.active_framebuffer
+            old = fbo.viewport
+            fbo.viewport = (0, 0, self.width, self.height)  # window units (see _draw_loader)
+            self.opening.draw(self.window.get_framebuffer_size())
+            fbo.viewport = old
+
+        def _loader_track(self) -> str | None:
+            """The circuit the loader should draw now: the one on screen, while its fetch job
+            runs (or the L preview is on), if it has a loader asset."""
+            tid = self.tracks[self.track_i][0]
+            job = self._job_here()
+            busy = job is not None and job.state == "running"
+            return tid if (busy or self.loader_preview) and loader.has_asset(tid) else None
+
+        def _draw_loader(self) -> None:
+            """The loader over the hero, right of the menu column, on a dark backing."""
+            if self.loader_alpha < 0.005:
+                return
+            tid = self._loader_track() or (self.loader[0] if self.loader else None)
+            if tid is None:
+                return
+            if self.loader is None or self.loader[0] != tid:
+                try:
+                    self.loader = (tid, loader.LoaderScene(self.ctx, loader.load_asset(tid)))
+                except (OSError, ValueError, KeyError) as exc:
+                    self._say(f"Loader unavailable: {exc}")
+                    self.loader_preview = False
+                    self.loader_alpha = 0.0
+                    return
+            a = self.loader_alpha
+            x0 = self.left + self.col_w
+            arcade.draw_lrbt_rectangle_filled(
+                x0, self.width, 0, self.height, (*CARD_BG[:3], int(255 * LOADER_DIM * a))
+            )
+            fbo = self.ctx.active_framebuffer
+            old = fbo.viewport
+            # the window's own framebuffer takes its viewport in window units (arcade scales
+            # it by the pixel ratio); an offscreen one takes pixels
+            r = 1.0 if fbo is self.ctx.screen else self.window.get_pixel_ratio()
+            vp = (int(x0 * r), 0, int((self.width - x0) * r), int(self.height * r))
+            fbo.viewport = vp
+            px = self.window.get_pixel_ratio() / r  # pixels per viewport unit
+            size = (int(vp[2] * px), int(vp[3] * px))
+            self.loader[1].render(self.clock - self.loader_t0, size, alpha=a)
+            fbo.viewport = old
 
         def _texts(self) -> list:
             return [
@@ -1763,4 +1900,8 @@ def run() -> None:
     """Open the app window on the menu; returns when it closes."""
     from f1sim.app import shell
 
+    # The screens' imports and numba kernels, so the first click doesn't wait on them; started
+    # before the window, so they load while it and the menu set up rather than during the
+    # menu's first frames (they hold the GIL in long stretches)
+    loading.warm_up()
     shell.run(lambda window: MenuView())

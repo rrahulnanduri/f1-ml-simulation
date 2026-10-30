@@ -22,9 +22,9 @@ The pure-numpy part (no window) builds everything in world metres:
   white lines.
 
 :class:`TrackRenderer` (needs an open window) uploads it once. The filled shapes are two
-cached ``ShapeElementList`` s, one with kerbs and one where the kerbs are plain run-off (used
-zoomed out, below ``KERB_MIN_PPM``, where 3 m blocks would only flicker); a ``ShapeElementList``
-uploads its vertices once and is drawn with one call per primitive mode under the window's
+cached :class:`TrackMesh` es, one with kerbs and one where the kerbs are plain run-off (used
+zoomed out, below ``KERB_MIN_PPM``, where 3 m blocks would only flicker); a mesh
+uploads its vertices once and is drawn with one call under the window's
 current projection and view, set by an ``arcade.camera.Camera2D`` (``position`` = the
 :class:`~f1sim.app.camera.Camera` centre, ``zoom`` = pixels per metre), so panning and zooming
 never rebuild geometry. The white lines are a static vertex buffer drawn by a small shader that
@@ -499,41 +499,76 @@ void main() {
 """
 
 
-def _flat(tris: np.ndarray) -> list[tuple[float, float]]:
-    return [(float(x), float(y)) for x, y in np.asarray(tris).reshape(-1, 2)]
+def _colours(colours, n_tris: int) -> np.ndarray:
+    """``(3 * n_tris, 4)`` vertex colours (0-255) from one colour or one per triangle."""
+    c = np.asarray(colours, dtype=np.float32)
+    if c.ndim == 1:
+        c = np.broadcast_to(c, (n_tris, c.size))
+    if c.shape[1] == 3:
+        c = np.hstack([c, np.full((n_tris, 1), 255.0, np.float32)])
+    return np.repeat(c, 3, axis=0)
 
 
-def _append(shapes, tris: np.ndarray, colours) -> None:
-    from arcade import shape_list
+def track_mesh_data(track: Track, kerbs: bool = True) -> np.ndarray:
+    """The filled shapes as one ``(N, 6)`` float32 array of triangle vertices, ``x, y`` in
+    metres then ``r, g, b, a`` (0-255), in drawing order: run-off, kerbs (red/white blocks, or
+    plain run-off with ``kerbs=False``), asphalt and the chequered strip."""
+    parts = []
 
-    if len(tris) == 0:
-        return
-    pts = _flat(tris)
-    if isinstance(colours, tuple):
-        cols = [colours] * len(pts)
-    else:
-        cols = [c for c in colours for _ in range(3)]
-    shapes.append(shape_list.create_triangles_filled_with_colors(pts, cols))
+    def add(tris, colours) -> None:
+        tris = np.asarray(tris, dtype=np.float32).reshape(-1, 3, 2)
+        if len(tris):
+            parts.append(np.hstack([tris.reshape(-1, 2), _colours(colours, len(tris))]))
 
-
-def build_track_shapes(track: Track, kerbs: bool = True):
-    """One ``ShapeElementList`` in metres: run-off, kerbs (red/white blocks, or plain run-off
-    with ``kerbs=False``), asphalt and the chequered strip."""
-    from arcade import shape_list
-
-    shapes = shape_list.ShapeElementList()
     for side in ("left", "right"):
         g = kerb_geometry(track, side)
         if kerbs:
-            _append(shapes, g.runoff, theme.RUNOFF)
-            colours = [theme.KERB_RED if r else theme.KERB_WHITE for r in g.red]
-            _append(shapes, g.kerb, colours)
+            add(g.runoff, theme.RUNOFF)
+            add(g.kerb, [theme.KERB_RED if r else theme.KERB_WHITE for r in g.red])
         else:
-            _append(shapes, g.plain, theme.RUNOFF)
-    _append(shapes, road_triangles(track), ROAD_COLOUR)
+            add(g.plain, theme.RUNOFF)
+    add(road_triangles(track), ROAD_COLOUR)
     tris, light = chequer_triangles(track)
-    _append(shapes, tris, [CHEQUER_LIGHT if v else CHEQUER_DARK for v in light])
-    return shapes
+    add(tris, [CHEQUER_LIGHT if v else CHEQUER_DARK for v in light])
+    return np.vstack(parts).astype(np.float32) if parts else np.zeros((0, 6), np.float32)
+
+
+class TrackMesh:
+    """The filled shapes, uploaded once and drawn in one call with arcade's shape-list
+    program (so under the window's projection and view, like a ``ShapeElementList``). Built
+    from numpy arrays: a ``ShapeElementList`` converted each of the ~77k vertex colours in
+    Python, a third of a second of every screen's build (D51)."""
+
+    def __init__(self, ctx, data: np.ndarray):
+        from arcade.gl import BufferDescription
+
+        self.ctx = ctx
+        self.vertices = len(data)
+        self.program = ctx.shape_element_list_program
+        self._buf = ctx.buffer(data=np.ascontiguousarray(data, dtype=np.float32).tobytes())
+        self._geo = ctx.geometry(
+            [BufferDescription(self._buf, "2f 4f", ("in_vert", "in_color"))],
+            mode=ctx.TRIANGLES,
+        )
+
+    def draw(self) -> None:
+        if not self.vertices:
+            return
+        self.program["Position"] = 0.0, 0.0
+        self.program["Angle"] = 0.0
+        self.ctx.enable_only(self.ctx.BLEND)
+        self._geo.render(self.program)
+        self.ctx.disable(self.ctx.BLEND)
+
+
+def build_track_shapes(track: Track, kerbs: bool = True, ctx=None) -> TrackMesh:
+    """The filled shapes (:func:`track_mesh_data`) uploaded to ``ctx`` (default: the
+    window's)."""
+    if ctx is None:
+        import arcade
+
+        ctx = arcade.get_window().ctx
+    return TrackMesh(ctx, track_mesh_data(track, kerbs))
 
 
 class TrackRenderer:
@@ -544,8 +579,9 @@ class TrackRenderer:
 
         self.track = track
         self.ctx = ctx
-        self.near = build_track_shapes(track, kerbs=True)
-        self.far = build_track_shapes(track, kerbs=False) if track.has_limits else self.near
+        self.near = build_track_shapes(track, kerbs=True, ctx=ctx)
+        far = track.has_limits
+        self.far = build_track_shapes(track, kerbs=False, ctx=ctx) if far else self.near
         verts = np.vstack(
             [line_vertices(track.left_wall()), line_vertices(track.right_wall())]
         ).astype("f4")

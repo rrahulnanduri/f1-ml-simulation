@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-26 (leftovers: D36-D40, all circuits but Suzuka build, legacy gone). This section summarises
+*Last updated: 2026-10-30 (loading transition, D49-D51). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
@@ -31,15 +31,17 @@ laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
 - **The menu** (D33) is a card grid in the window's left 40%: logo bar, track picker and
   Drive / Replay / Train / Quit as squares. The older text below still describes the hero.
   Before D33: track picker and buttons on the left. On the right is a
-  metallic-black Ferrari SF-26 seen from above (55% of the window high, no logos), driving
+  satin-black Ferrari SF-26 (D48) seen from above (55% of the window high, no logos), driving
   endless laps of Marina Bay at Russell's 2025 pole-lap speed. It keeps overtaking five
   slower cars in gunmetal, graphite and satin grey, and red and blue lamps flash by the
   track, close together and 30% brighter (D24, D25, D46). The camera is a fixed top-down view that follows the car without turning,
   so the car drives and turns on screen (D41); every car's front wheels steer. One light model lights the cars, the floor and the track
   lines: photographed diffuse light from a Blender light stage, live GGX reflections, and
-  the cars' shadows cast away from the cursor (D25). Without the driving set the menu falls
+  the cars' shadows cast away from the cursor (D25). The cars composite over the floor, so
+  the black car reads black (D47; before, it was added onto the floor). Without the driving set the menu falls
   back to the still light stage, then relit maps, then the car drawn in code.
-  A red and blue backdrop runs from the window's left edge, under the menu and cars (D29).
+  A red and blue backdrop runs from the window's left edge behind the menu cards and fades out
+  just right of them, so it never reaches the cars (D29, D48).
   The mouse wheel dims or brightens the cursor light (0.25–1.10 of the default, D28).
   `python scripts/dev_menu.py` relaunches the app whenever the source or the renders change;
   `scripts\run_latest.bat` pulls the latest version first, then opens it.
@@ -66,7 +68,13 @@ laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
   the focus cards' style (D38; checked offscreen only).
 - **F1 Anatomy** (D35): `python f1_anatomy/launch.py` opens five interactive figures of how
   the car works, a static site beside the package.
-- **Tests:** 640 pass offline. `ruff check` is clean.
+- **Tests:** 684 pass offline. `ruff check` is clean.
+- **Loader** (D49-D51): the circuit drawn in 3D, as the loading screen when Drive, Train or
+  Replay opens (every circuit: Silverstone over its baked terrain from OpenStreetMap and AWS
+  Terrain Tiles, the others over a flat grid). It also covers the menu's hero during fetch
+  jobs; `L` previews it there. Measured in the real window (D51): no hitch while it draws,
+  the screen build (0.14-0.42 s) hidden under the still frame, Esc back works. The owner
+  hasn't judged the D51 version yet.
 - **Security** (D45): fixes for the audit in `docs/SECURITY_AUDIT.md`; the GitHub-side
   steps there are the owner's.
 
@@ -86,7 +94,9 @@ laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
 4. **Checks only the user can do:** the training view's focus overlay and the restyled
    drawer in the real window, and the 2× UI on their real 2× display (D26).
 
-**Next step:** the user tries the focus overlay (hold Enter) and the restyled drawer, and
+**Next step:** the owner tries the smoothed loading transition (D51), then terrain
+gets baked for more circuits (`scripts/geo`, one bbox each in `fetch.CIRCUITS`).
+Also, the user tries the focus overlay (hold Enter) and the restyled drawer, and
 says what a settings screen should hold. Likely tweaks in the training view: the default
 playback speed (`training.DEFAULT_SPEED`), the episode cut-off (`LEADER_GRACE_S`), and
 whether leaving the screen should keep training running. Retrain Silverstone with the
@@ -853,6 +863,119 @@ cycle apart (+-0.08 s) and the leading colour swaps every two units; `LAMP_RATE`
 `menu.py` and `drive_shaders.py`; the high quality tier lights 12 per car. Not checked by eye in
 the live window, only tests and ruff.
 
+**D47 · The menu's premultiplied draws composite "over", not additively** (2026-10-30)
+arcade's `ctx.BLEND_PREMULTIPLIED_ALPHA` is `(SRC_ALPHA, ONE)`: additive, despite its name.
+The menu drew the cars, the track lines, the backdrop and the still-stage hero with it, so
+every car was *added* on top of the floor and the backdrop's red/blue streaks: the black car
+could never be darker than the floor under it, and the streaks showed through the body. All
+four now use `(ONE, ONE_MINUS_SRC_ALPHA)`, as `ui/glass.py` already did. Measured on fixed
+frames (pinned clock and light): the hero body's median went from 55/255 to 11/255, and with
+the cursor light off from 25 to 5. `BACKDROP_ALPHA` 0.30 -> 0.09, which gives the floor the
+same backdrop strength as before (the old blend multiplied by alpha twice). The track lines'
+brightness is about the same. Don't use arcade's `BLEND_PREMULTIPLIED_ALPHA`.
+
+**D48 · Backdrop only behind the menu; a satin-black hero** (2026-10-30)
+The backdrop's streaks were meant for the menu side only. `_BACKDROP_FS` now fades it from
+40 px inside the menu column's right edge to 90 px outside it (`BACKDROP_FADE_PX`); on a
+captured frame it adds nothing from 46% of the width rightwards. Once D47 made the hero
+really black, its gloss metallic finish (colour x1.0, roughness 0.30, metallic 0.85, coat 1.0)
+lost its shape wherever the light wasn't on a highlight. The owner wanted a slightly matte
+look that still shows detail, so `HERO_FINISH` is now "satin black": colour x1.6,
+roughness 0.50, metallic 0.50, coat 0.35. It was picked from four candidates captured on the
+same frames; the matte one (x2.0, 0.58, 0.30, 0.20) started to read as the graphite rival.
+Body median on a lit frame: 14/255 (gloss) -> 18/255; before D47 it was 55.
+
+**D49 · A "track being drawn" loader, baked from OpenStreetMap and open terrain** (2026-10-30)
+A small animation to play while the app fetches a lap or track data, or while a run starts: the
+circuit drawn from the start line with a red head, over a faint wireframe of the land, under
+an orbiting 35° camera (3.6 s a loop; terrain heights ×4). Silverstone only so far. It lives
+in `f1sim.app.ui.loader`. The menu fades it in over the hero, on a dark backing, while a Get
+track data / Get real lap job runs for a circuit that has an asset, and `L` previews it.
+`scripts/geo/loader_demo.py` runs it on its own (live, or `--record DIR` for PNG stills, a WebP
+of the full orbit and a one-loop GIF).
+- **Gotcha:** arcade's window framebuffer takes `viewport` in window units and scales it by
+  the pixel ratio itself; passing pixels drew the loader 2× too big on a 2× display.
+- **Data:** only OSM (ODbL) and AWS Terrain Tiles, fetched at build time by
+  `scripts/geo/fetch.py`, then baked by `scripts/geo/bake.py` into a committed 45 kB
+  `src/f1sim/app/assets/geo/<id>.npz` (data-formats §7). No GIS libraries: a small GeoTIFF
+  reader in `scripts/geo/geodata.py`.
+- **Aleph** (`alephgeo`) was the owner's suggestion. `fetch.py` uses it when it's on PATH,
+  with `--sources osm terrain` only: its satellite, mesh and Street View sources are Google data,
+  which a public repo can't use. Installing it from git was blocked in the agent session, so the
+  Silverstone asset came from the direct path: the OSM API's `map` call (all Overpass servers
+  were busy) and the same terrain GeoTIFF tiles Aleph downloads.
+- **Alignment:** track files have no geographic anchor. The centre line is fitted onto the
+  raceway ways with a rigid search (36 rotations × a 150 m grid of starts, trimmed ICP),
+  then refined with the scale free. Silverstone: scale 0.9994, rotation −1.5°, RMS 1.46 m,
+  p95 2.4 m, max 7.8 m. A similarity fit straight from a centroid start shrank to scale
+  0.52 onto the karting tracks nearby, so the search is rigid.
+- **The OSM loop:** the bake also finds the circuit in the OSM ways alone: it splits them where
+  they meet and takes the simple cycle whose length is nearest the track's. At Silverstone that
+  cycle is 5,889 m against 5,887 m, 1.47 m RMS from the centre line. `--source osm` draws it, the
+  way to show a circuit that hasn't been built.
+- **Elevation:** Silverstone's centre line runs from 145.3 to 158.0 m (12.7 m range), smoothed
+  over 15 m.
+- **Not yet:** the training screen before the first `generation.npz` arrives.
+- Rejected: Google 3D tiles or satellite imagery (terms); depending on Aleph at runtime;
+  rasterio, GDAL or tifffile (too heavy for a two-tag GeoTIFF).
+
+**D50 · Opening Drive, Train or Replay goes through the loader** (2026-10-30)
+The owner wanted the loader (D49) as the loading screen between the menu and those screens,
+for every circuit, drawn 50% slower so it doesn't look rushed. `f1sim.app.loading`:
+- **Every circuit:** Silverstone uses its baked terrain asset; the others draw their built
+  centre line over a flat grid (`loader.asset_for`), so the loader shows the chosen circuit.
+- **Slower:** a loop is now 5.4 s (drawing 3.75 s, was 2.5 s; fade 0.75 s).
+- **No visible freeze:** building a screen takes 0.6-1.3 s on the main thread (about 90 text
+  labels, track shapes; then numba's cache on the first update), and GL work can't move to
+  another thread. So the transition hides it. The menu fades to the loader (0.4 s), the
+  circuit draws once, and the camera's orbit slows evenly to a stop as the lap closes. The
+  finished circuit then holds still for 0.45 s, and the screen is built under that still frame.
+  The new screen's first two frames are covered by the same frame, which then fades out over
+  0.6 s. About 4.8 s from click to screen; Esc during the drawing cancels.
+- Offscreen, frame by frame (Silverstone and Monaco): the only slow frames are the build
+  frame and the new screen's first update, both under the opaque held frame.
+- Rejected: building the screen while the loader animates (it stutters for the whole build);
+  cutting the drawing short when loading finishes (it reads as a glitch).
+
+**D51 · The loading transition, made smooth: root causes measured in the real window** (2026-10-30)
+The owner found D50's transition "still so buggy" in the real window (D50 had been checked
+offscreen only). A frame log of the real window (menu, Drive, Esc, Drive again) found four
+causes. Fixes:
+- **Esc out of Drive, Train or Replay raised, every time.** `loading.reveal` set a plain
+  function as the screen's `on_draw`. arcade's `show_view` removes a view's handlers as
+  bound methods and raised on it, so the window stayed on the screen and the menu's update
+  never ran again: a second opening froze at its first frame. Now the fade-out is a handler
+  object pushed on the window above the screen's; it draws the screen and the loader, then
+  removes itself. A test reproduces arcade's handler switching.
+- **The click froze the menu for 0.71 s**, importing scipy and numba (`track_pipeline`) in
+  the click handler. Now `loading.warm_up` imports the screens' modules and compiles the
+  numba kernels on a background thread started before the window. Started from the menu
+  instead, its imports held the GIL and the menu's first frames hitched (up to 128 ms).
+  The cost is 0.2-0.4 s more before the window appears. Click to first loader frame: 23 ms.
+- **The drawing juddered.** It advanced by the update tick (8.3 ms) while frames were
+  presented 4-15 ms apart; 1140 of 1599 frames disagreed by over 4 ms. `Opening` now reads
+  the wall clock each frame (still clamped to 1/30 s a frame). Disagreements: 54 of 945.
+- **The still frame lasted 1.7 s after the hold:** a 1.27 s build, then 0.2 s and 0.24 s
+  first frames. Three causes:
+  - **Text** (`theme.make_text`): each label was laid out up to five times (default face,
+    then weight, stretch, DPI and tracking each re-laid it out), and pyglet keeps only its
+    last four fonts, so every screen rasterised its glyphs again. Labels are now created
+    empty and styled inside one update, and their fonts are kept alive. Metrics are
+    identical for 180 test labels.
+  - **Track shapes** (`render_track`): arcade's `ShapeElementList` converted ~77k vertex
+    colours in Python. `TrackMesh` uploads the same vertices from numpy (bit-identical
+    data) and draws them with arcade's shape-list program: 146 ms down to 27 ms at
+    Silverstone.
+  - **numba:** `Track.project` compiled on the screen's first update (0.35 s); now it is
+    compiled in the warm-up.
+
+  The build is now 0.42 s cold and 0.14 s warm, still under the still frame. `HOLD_S` went
+  from 0.45 s to 0.3 s, the time the head's glow takes to settle.
+- Real window, Silverstone: no menu frame over 17 ms, the drawing's longest frame is 24 ms,
+  Esc works every time. Click to screen is about 4.5 s.
+- Rejected: building the screen on a thread (pyglet text and GL must stay on the main
+  thread); caching built screens (the first visit would still freeze).
+
 ## Change log
 
 | Date | Commit | Change |
@@ -913,3 +1036,9 @@ the live window, only tests and ruff.
 | 2026-10-29 | uncommitted | Menu: all circuits listed, Get track data / Get real lap buttons as background jobs, Train time control (D44) |
 | 2026-10-29 | uncommitted | Security hardening (D45): launcher asks before updating, safe CMA-ES unpickling, download caps, docs scrubbed |
 | 2026-10-29 | uncommitted | Menu lamps: even 9-15 m gaps on alternating sides, alternating phase and colour order, gain +30%, cap 12 (D46) |
+| 2026-10-30 | uncommitted | Menu: cars, track lines and backdrop composite "over" instead of additively, so the black car is black (D47) |
+| 2026-10-30 | uncommitted | Menu: backdrop streaks only behind the menu cards; hero in satin black (D48) |
+| 2026-10-30 | uncommitted | Loader prototype: `scripts/geo` fetch, bake and demo; Silverstone asset from OSM and terrain (D49) |
+| 2026-10-30 | uncommitted | Loader in the menu over the hero during fetch jobs, `L` previews it (D49) |
+| 2026-10-30 | uncommitted | Opening Drive / Train / Replay plays the loader for the chosen circuit, 50% slower, the build hidden under a still frame (D50) |
+| 2026-10-30 | uncommitted | Transition smoothed in the real window: Esc out of a screen fixed, imports and numba warmed ahead, wall-clock drawing, text laid out once, numpy track mesh (D51) |

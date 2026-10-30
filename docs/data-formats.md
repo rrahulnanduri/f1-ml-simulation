@@ -118,3 +118,30 @@ profile is computed for the car's parameters. v2 added 19–28; 0–18 are v1 un
 checkpoints don't load.
 
 **Actions:** `steer ∈ [−1, 1]` sets the steering target (rate-limited). `pedal ∈ [−1, 1]`: values above 0 are throttle and below 0 are brake. Changing any of this bumps `obs_spec_version`.
+
+## 7. Loader asset: `src/f1sim/app/assets/geo/<track_id>.npz` (`f1sim.geo` v1)
+
+A small, committed asset per circuit for the "track being drawn" loading animation
+(`scripts/geo/loader_demo.py`, D49). Baked at build time by `scripts/geo/bake.py` from
+OpenStreetMap and AWS Terrain Tiles (attribution in `THIRD_PARTY.md` and the `attribution`
+field). NPZ, loads with `allow_pickle=False`; Silverstone is 45 kB.
+
+| Array | Type, shape | Notes |
+|---|---|---|
+| `format`, `version` | str, int | `"f1sim.geo"`, 1 |
+| `track_id`, `attribution` | str | |
+| `anchor_latlon` | f8 (2,) | origin of the local east/north frame (EPSG:3857 × cos lat0) |
+| `track_to_local` | f8 (3, 3) | similarity, track metres → local metres: `p' = s R p + t` |
+| `fit` | f8 (6,) | RMS, p95 and max distance (m) of the centre line to the OSM ways; scale; rotation (deg); RMS to the OSM loop |
+| `centre_xy` | f4 (n, 2) | centre line, every 4 m, track frame |
+| `length_m` | f8 | track length |
+| `elev_base_m` | f8 | lowest point of the centre line, metres above sea level |
+| `elev_rel_m` | f2 (ceil(length),) | centre-line height above the base, every metre from s = 0, smoothed over 15 m |
+| `grid_origin`, `grid_step_m` | f8 (2,), f8 | lower-left corner and spacing of the terrain grid (track frame) |
+| `grid_rel_m` | f2 (ny, nx) | terrain height above the base; row = y, column = x |
+| `osm_xy` | f4 (m, 2) | every OSM raceway way inside the grid, every 10 m, NaN rows between ways |
+| `loop_xy` | f4 (k, 2) | the circuit's loop found in the OSM ways alone (the cycle whose length is nearest the track's), every 6 m, from the start line in the driving direction |
+
+`loop_xy` and the grid need no built track, so a circuit that hasn't been built can be drawn
+from them. Not implemented yet: `bake.py` still needs the built track; for an unbuilt one it
+would take the circuit length instead and skip the centre-line fit and profile.
