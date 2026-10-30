@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-26 (leftovers: D36-D40, all circuits but Suzuka build, legacy gone). This section summarises
+*Last updated: 2026-10-30 (menu blend fix and satin hero, D47-D48). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
@@ -31,15 +31,17 @@ laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
 - **The menu** (D33) is a card grid in the window's left 40%: logo bar, track picker and
   Drive / Replay / Train / Quit as squares. The older text below still describes the hero.
   Before D33: track picker and buttons on the left. On the right is a
-  metallic-black Ferrari SF-26 seen from above (55% of the window high, no logos), driving
+  satin-black Ferrari SF-26 (D48) seen from above (55% of the window high, no logos), driving
   endless laps of Marina Bay at Russell's 2025 pole-lap speed. It keeps overtaking five
   slower cars in gunmetal, graphite and satin grey, and red and blue lamps flash by the
   track, close together and 30% brighter (D24, D25, D46). The camera is a fixed top-down view that follows the car without turning,
   so the car drives and turns on screen (D41); every car's front wheels steer. One light model lights the cars, the floor and the track
   lines: photographed diffuse light from a Blender light stage, live GGX reflections, and
-  the cars' shadows cast away from the cursor (D25). Without the driving set the menu falls
+  the cars' shadows cast away from the cursor (D25). The cars composite over the floor, so
+  the black car reads black (D47; before, it was added onto the floor). Without the driving set the menu falls
   back to the still light stage, then relit maps, then the car drawn in code.
-  A red and blue backdrop runs from the window's left edge, under the menu and cars (D29).
+  A red and blue backdrop runs from the window's left edge behind the menu cards and fades out
+  just right of them, so it never reaches the cars (D29, D48).
   The mouse wheel dims or brightens the cursor light (0.25–1.10 of the default, D28).
   `python scripts/dev_menu.py` relaunches the app whenever the source or the renders change;
   `scripts\run_latest.bat` pulls the latest version first, then opens it.
@@ -853,6 +855,28 @@ cycle apart (+-0.08 s) and the leading colour swaps every two units; `LAMP_RATE`
 `menu.py` and `drive_shaders.py`; the high quality tier lights 12 per car. Not checked by eye in
 the live window, only tests and ruff.
 
+**D47 · The menu's premultiplied draws composite "over", not additively** (2026-10-30)
+arcade's `ctx.BLEND_PREMULTIPLIED_ALPHA` is `(SRC_ALPHA, ONE)`: additive, despite its name.
+The menu drew the cars, the track lines, the backdrop and the still-stage hero with it, so
+every car was *added* on top of the floor and the backdrop's red/blue streaks: the black car
+could never be darker than the floor under it, and the streaks showed through the body. All
+four now use `(ONE, ONE_MINUS_SRC_ALPHA)`, as `ui/glass.py` already did. Measured on fixed
+frames (pinned clock and light): the hero body's median went from 55/255 to 11/255, and with
+the cursor light off from 25 to 5. `BACKDROP_ALPHA` 0.30 -> 0.09, which gives the floor the
+same backdrop strength as before (the old blend multiplied by alpha twice). The track lines'
+brightness is about the same. Don't use arcade's `BLEND_PREMULTIPLIED_ALPHA`.
+
+**D48 · Backdrop only behind the menu; a satin-black hero** (2026-10-30)
+The backdrop's streaks were meant for the menu side only. `_BACKDROP_FS` now fades it from
+40 px inside the menu column's right edge to 90 px outside it (`BACKDROP_FADE_PX`); on a
+captured frame it adds nothing from 46% of the width rightwards. Once D47 made the hero
+really black, its gloss metallic finish (colour x1.0, roughness 0.30, metallic 0.85, coat 1.0)
+lost its shape wherever the light wasn't on a highlight. The owner wanted a slightly matte
+look that still shows detail, so `HERO_FINISH` is now "satin black": colour x1.6,
+roughness 0.50, metallic 0.50, coat 0.35. It was picked from four candidates captured on the
+same frames; the matte one (x2.0, 0.58, 0.30, 0.20) started to read as the graphite rival.
+Body median on a lit frame: 14/255 (gloss) -> 18/255; before D47 it was 55.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -913,3 +937,5 @@ the live window, only tests and ruff.
 | 2026-10-29 | uncommitted | Menu: all circuits listed, Get track data / Get real lap buttons as background jobs, Train time control (D44) |
 | 2026-10-29 | uncommitted | Security hardening (D45): launcher asks before updating, safe CMA-ES unpickling, download caps, docs scrubbed |
 | 2026-10-29 | uncommitted | Menu lamps: even 9-15 m gaps on alternating sides, alternating phase and colour order, gain +30%, cap 12 (D46) |
+| 2026-10-30 | uncommitted | Menu: cars, track lines and backdrop composite "over" instead of additively, so the black car is black (D47) |
+| 2026-10-30 | uncommitted | Menu: backdrop streaks only behind the menu cards; hero in satin black (D48) |

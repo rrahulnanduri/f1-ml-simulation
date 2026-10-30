@@ -168,9 +168,13 @@ LAMP_RADIUS_M = 0.35
 LAMP_REACH_M = 14.0
 """Lamps farther than this outside the window are left out (at most ``MAX_LAMPS``)."""
 LAMP_GLOW_M = 0.18
-BACKDROP_ALPHA = 0.30
-"""The red and blue backdrop behind the menu and the driving cars
-(``assets/hero/backdrop.webp``): it covers the window from its left edge, under the text."""
+BACKDROP_ALPHA = 0.09
+"""The red and blue backdrop behind the menu cards
+(``assets/hero/backdrop.webp``): it covers the window from its left edge, under the text.
+(0.30 under the old additive blend, which squared it; D47.)"""
+BACKDROP_FADE_PX = (40.0, 90.0)
+"""The backdrop fades out from this many pixels inside the menu column's right edge to this
+many outside it, so its streaks stay behind the menu and never reach the cars (D48)."""
 MAX_LAMPS = 12
 MAX_SHADOW_CARS = 6
 """The shaders' array sizes; the quality tier lights and shadows fewer."""
@@ -583,6 +587,7 @@ _BACKDROP_FS = """
 uniform sampler2D u_image;
 uniform vec2 u_size;
 uniform float u_alpha;
+uniform vec2 u_fade;  // full strength left of x0, gone right of x1 (pixels)
 in vec2 v_uv;
 out vec4 frag;
 void main() {
@@ -592,7 +597,9 @@ void main() {
     vec2 im = vec2(textureSize(u_image, 0));
     float s = max(u_size.x / im.x, u_size.y / im.y);
     vec2 uv = (p - vec2(0.0, 0.5 * (u_size.y - im.y * s))) / (im * s);
-    frag = vec4(texture(u_image, uv).rgb * u_alpha, u_alpha);  // premultiplied
+    float a = u_alpha * (1.0 - smoothstep(u_fade.x, u_fade.y, p.x));
+    if (a <= 0.0) discard;
+    frag = vec4(texture(u_image, uv).rgb * a, a);  // premultiplied
 }
 """
 
@@ -1236,6 +1243,10 @@ def _make_view_class():
                     self.left + col_w + 10.0,
                     self.left + col_w + 10.0 + TRACK_FADE_PX,
                 )
+                self.backdrop_fade = (
+                    self.left + col_w - BACKDROP_FADE_PX[0],
+                    self.left + col_w + BACKDROP_FADE_PX[1],
+                )
             else:
                 size_m = (self.stage or self.maps).size_m
                 self.hero = hero_layout(w, h, size_m)
@@ -1459,7 +1470,7 @@ def _make_view_class():
             self._stage_tex.use(0)
             self._ambient_tex.use(1)
             ctx.enable(ctx.BLEND)
-            ctx.blend_func = ctx.BLEND_PREMULTIPLIED_ALPHA
+            ctx.blend_func = (ctx.ONE, ctx.ONE_MINUS_SRC_ALPHA)  # premultiplied "over"
             self._unit_quad.render(p)
             ctx.blend_func = ctx.BLEND_DEFAULT
 
@@ -1566,7 +1577,7 @@ def _make_view_class():
             (x, y, _), anchor = hero_camera(lay, st.rear_axle_y, self.drive.pose())
             a = math.pi / 2 - hero_drive.VIEW_HEADING
             ctx.enable(ctx.BLEND)
-            ctx.blend_func = ctx.BLEND_PREMULTIPLIED_ALPHA
+            ctx.blend_func = (ctx.ONE, ctx.ONE_MINUS_SRC_ALPHA)  # premultiplied "over"
             t = self._p_track
             set_uniforms(
                 t,
@@ -1634,7 +1645,7 @@ def _make_view_class():
             for tex, unit_i in self._tex.values():
                 tex.use(unit_i)
             ctx.enable(ctx.BLEND)
-            ctx.blend_func = ctx.BLEND_PREMULTIPLIED_ALPHA
+            ctx.blend_func = (ctx.ONE, ctx.ONE_MINUS_SRC_ALPHA)  # premultiplied "over"
             self._unit_quad.render(p)
             ctx.blend_func = ctx.BLEND_DEFAULT
 
@@ -1649,8 +1660,9 @@ def _make_view_class():
                 u_image=0,
                 u_size=(float(self.width), float(self.height)),
                 u_alpha=BACKDROP_ALPHA,
+                u_fade=self.backdrop_fade,
             )
-            self.ctx.blend_func = self.ctx.BLEND_PREMULTIPLIED_ALPHA
+            self.ctx.blend_func = (self.ctx.ONE, self.ctx.ONE_MINUS_SRC_ALPHA)
             self._fs_quad.render(p)
             self.ctx.blend_func = self.ctx.BLEND_DEFAULT
 
