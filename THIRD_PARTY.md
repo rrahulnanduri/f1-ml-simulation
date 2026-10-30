@@ -50,3 +50,32 @@
 - **License:** SIL Open Font License 1.1, in `src/f1sim/app/assets/fonts/JetBrainsMono/OFL.txt`.
 - **Used for:** tabular numbers in the HUD (lap times, gaps, sector times). The static
   `JetBrainsMono-Regular.ttf` (version 2.304) is bundled unmodified as package data.
+
+## OpenStreetMap (ODbL 1.0)
+
+- **Source:** <https://www.openstreetmap.org>, © OpenStreetMap contributors.
+- **License:** Open Data Commons Open Database License 1.0
+  (<https://opendatacommons.org/licenses/odbl/1-0/>).
+- **Used for:** the `highway=raceway` ways in the loader assets
+  (`src/f1sim/app/assets/geo/<track_id>.npz`): the raceway outline and the circuit loop,
+  projected to the track's metres. `scripts/geo/fetch.py` downloads them at build time (through
+  Aleph, the Overpass API or the OSM API); `scripts/geo/bake.py` makes the asset. Each asset
+  carries this attribution in its `attribution` field. The asset is a produced work with
+  derived data; the raw downloads stay in git-ignored `assets_src/geo/`.
+
+## AWS Terrain Tiles (Tilezen joerd, open elevation data)
+
+- **Source:** <https://registry.opendata.aws/terrain-tiles/>, the Mapzen/Tilezen terrain set on
+  AWS Open Data, built from several public elevation sources.
+- **License and attribution:** per source, as listed in
+  <https://github.com/tilezen/joerd/blob/master/docs/attribution.md> (for Great Britain, the
+  Environment Agency's open LIDAR and SRTM among others).
+- **Used for:** the elevation profile and the coarse terrain grid in the loader assets, sampled
+  from the `geotiff/` tiles (EPSG:3857 metres) at build time.
+
+## Aleph (MIT, optional build-time tool)
+
+- **Source:** <https://github.com/Belluxx/Aleph> (`alephgeo`), MIT. Not a dependency of
+  `f1sim` and not vendored: `scripts/geo/fetch.py` runs it if it is on PATH, and then only with
+  its `osm` and `terrain` sources. Its `satellite`, `mesh` and `streetview` sources are Google
+  data and must not be used for anything in this repository.

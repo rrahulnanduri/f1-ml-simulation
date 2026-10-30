@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-30 (menu blend fix and satin hero, D47-D48). This section summarises
+*Last updated: 2026-10-30 (loader prototype, D49). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
@@ -68,7 +68,10 @@ laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
   the focus cards' style (D38; checked offscreen only).
 - **F1 Anatomy** (D35): `python f1_anatomy/launch.py` opens five interactive figures of how
   the car works, a static site beside the package.
-- **Tests:** 640 pass offline. `ruff check` is clean.
+- **Tests:** 679 pass offline. `ruff check` is clean.
+- **Loader prototype** (D49): `python scripts/geo/loader_demo.py silverstone` draws the circuit
+  over the terrain in 3D, from a 45 kB asset baked from OpenStreetMap and AWS Terrain Tiles
+  (`scripts/geo/fetch.py`, `bake.py`). It's Silverstone only, and not in the app yet.
 - **Security** (D45): fixes for the audit in `docs/SECURITY_AUDIT.md`; the GitHub-side
   steps there are the owner's.
 
@@ -88,7 +91,9 @@ laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
 4. **Checks only the user can do:** the training view's focus overlay and the restyled
    drawer in the real window, and the 2× UI on their real 2× display (D26).
 
-**Next step:** the user tries the focus overlay (hold Enter) and the restyled drawer, and
+**Next step:** the owner reviews the loader prototype (D49): its look, and whether to wire it
+into the menu's fetch jobs and the training screen's wait, then bake more circuits.
+Also, the user tries the focus overlay (hold Enter) and the restyled drawer, and
 says what a settings screen should hold. Likely tweaks in the training view: the default
 playback speed (`training.DEFAULT_SPEED`), the episode cut-off (`LEADER_GRACE_S`), and
 whether leaving the screen should keep training running. Retrain Silverstone with the
@@ -877,6 +882,37 @@ roughness 0.50, metallic 0.50, coat 0.35. It was picked from four candidates cap
 same frames; the matte one (x2.0, 0.58, 0.30, 0.20) started to read as the graphite rival.
 Body median on a lit frame: 14/255 (gloss) -> 18/255; before D47 it was 55.
 
+**D49 · A "track being drawn" loader, baked from OpenStreetMap and open terrain** (2026-10-30)
+A small animation to play while the app fetches a lap or track data, or while a run starts: the
+circuit drawn from the start line with a red head, over a faint wireframe of the land, under
+an orbiting 35° camera (3.6 s a loop; terrain heights ×4). Prototype only, Silverstone only:
+`scripts/geo/loader_demo.py` (live, or `--record DIR` for PNG stills, a WebP of the full orbit
+and a one-loop GIF). Not in the app yet.
+- **Data:** only OSM (ODbL) and AWS Terrain Tiles, fetched at build time by
+  `scripts/geo/fetch.py`, then baked by `scripts/geo/bake.py` into a committed 45 kB
+  `src/f1sim/app/assets/geo/<id>.npz` (data-formats §7). No GIS libraries: a small GeoTIFF
+  reader in `scripts/geo/geodata.py`.
+- **Aleph** (`alephgeo`) was the owner's suggestion. `fetch.py` uses it when it's on PATH,
+  with `--sources osm terrain` only: its satellite, mesh and Street View sources are Google data,
+  which a public repo can't use. Installing it from git was blocked in the agent session, so the
+  Silverstone asset came from the direct path: the OSM API's `map` call (all Overpass servers
+  were busy) and the same terrain GeoTIFF tiles Aleph downloads.
+- **Alignment:** track files have no geographic anchor. The centre line is fitted onto the
+  raceway ways with a rigid search (36 rotations × a 150 m grid of starts, trimmed ICP),
+  then refined with the scale free. Silverstone: scale 0.9994, rotation −1.5°, RMS 1.46 m,
+  p95 2.4 m, max 7.8 m. A similarity fit straight from a centroid start shrank to scale
+  0.52 onto the karting tracks nearby, so the search is rigid.
+- **The OSM loop:** the bake also finds the circuit in the OSM ways alone: it splits them where
+  they meet and takes the simple cycle whose length is nearest the track's. At Silverstone that
+  cycle is 5,889 m against 5,887 m, 1.47 m RMS from the centre line. `--source osm` draws it, the
+  way to show a circuit that hasn't been built.
+- **Elevation:** Silverstone's centre line runs from 145.3 to 158.0 m (12.7 m range), smoothed
+  over 15 m.
+- **Where it would plug in:** the menu's Get real lap / Get track data jobs (D44,
+  `f1sim.app.jobs`) while they run, and the training screen before the first `generation.npz`.
+- Rejected: Google 3D tiles or satellite imagery (terms); depending on Aleph at runtime;
+  rasterio, GDAL or tifffile (too heavy for a two-tag GeoTIFF).
+
 ## Change log
 
 | Date | Commit | Change |
@@ -939,3 +975,4 @@ Body median on a lit frame: 14/255 (gloss) -> 18/255; before D47 it was 55.
 | 2026-10-29 | uncommitted | Menu lamps: even 9-15 m gaps on alternating sides, alternating phase and colour order, gain +30%, cap 12 (D46) |
 | 2026-10-30 | uncommitted | Menu: cars, track lines and backdrop composite "over" instead of additively, so the black car is black (D47) |
 | 2026-10-30 | uncommitted | Menu: backdrop streaks only behind the menu cards; hero in satin black (D48) |
+| 2026-10-30 | uncommitted | Loader prototype: `scripts/geo` fetch, bake and demo; Silverstone asset from OSM and terrain (D49) |
