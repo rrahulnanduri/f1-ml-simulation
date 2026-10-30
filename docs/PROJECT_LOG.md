@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-30 (loader prototype, D49). This section summarises
+*Last updated: 2026-10-30 (loading transition, D49-D50). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
@@ -68,11 +68,12 @@ laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
   the focus cards' style (D38; checked offscreen only).
 - **F1 Anatomy** (D35): `python f1_anatomy/launch.py` opens five interactive figures of how
   the car works, a static site beside the package.
-- **Tests:** 679 pass offline. `ruff check` is clean.
-- **Loader** (D49): the circuit drawn in 3D over the terrain, from a 45 kB asset baked from
-  OpenStreetMap and AWS Terrain Tiles (`scripts/geo/fetch.py`, `bake.py`). The menu shows it
-  over the hero during fetch jobs; `L` previews it. Silverstone only. Checked offscreen at 2×;
-  the owner hasn't judged it in the real window yet.
+- **Tests:** 683 pass offline. `ruff check` is clean.
+- **Loader** (D49, D50): the circuit drawn in 3D, as the loading screen when Drive, Train or
+  Replay opens (every circuit: Silverstone over its baked terrain from OpenStreetMap and AWS
+  Terrain Tiles, the others over a flat grid). It also covers the menu's hero during fetch
+  jobs; `L` previews it there. Checked offscreen; the owner hasn't judged it in the real
+  window yet.
 - **Security** (D45): fixes for the audit in `docs/SECURITY_AUDIT.md`; the GitHub-side
   steps there are the owner's.
 
@@ -92,8 +93,8 @@ laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
 4. **Checks only the user can do:** the training view's focus overlay and the restyled
    drawer in the real window, and the 2× UI on their real 2× display (D26).
 
-**Next step:** the owner reviews the loader in the menu (D49, `L` on Silverstone), then it
-gets baked for more circuits and added to the training screen's wait.
+**Next step:** the owner tries the loading transition (D50) in the real window, then terrain
+gets baked for more circuits (`scripts/geo`, one bbox each in `fetch.CIRCUITS`).
 Also, the user tries the focus overlay (hold Enter) and the restyled drawer, and
 says what a settings screen should hold. Likely tweaks in the training view: the default
 playback speed (`training.DEFAULT_SPEED`), the episode cut-off (`LEADER_GRACE_S`), and
@@ -917,6 +918,24 @@ of the full orbit and a one-loop GIF).
 - Rejected: Google 3D tiles or satellite imagery (terms); depending on Aleph at runtime;
   rasterio, GDAL or tifffile (too heavy for a two-tag GeoTIFF).
 
+**D50 · Opening Drive, Train or Replay goes through the loader** (2026-10-30)
+The owner wanted the loader (D49) as the loading screen between the menu and those screens,
+for every circuit, drawn 50% slower so it doesn't look rushed. `f1sim.app.loading`:
+- **Every circuit:** Silverstone uses its baked terrain asset; the others draw their built
+  centre line over a flat grid (`loader.asset_for`), so the loader shows the chosen circuit.
+- **Slower:** a loop is now 5.4 s (drawing 3.75 s, was 2.5 s; fade 0.75 s).
+- **No visible freeze:** building a screen takes 0.6-1.3 s on the main thread (about 90 text
+  labels, track shapes; then numba's cache on the first update), and GL work can't move to
+  another thread. So the transition hides it. The menu fades to the loader (0.4 s), the
+  circuit draws once, and the camera's orbit slows evenly to a stop as the lap closes. The
+  finished circuit then holds still for 0.45 s, and the screen is built under that still frame.
+  The new screen's first two frames are covered by the same frame, which then fades out over
+  0.6 s. About 4.8 s from click to screen; Esc during the drawing cancels.
+- Offscreen, frame by frame (Silverstone and Monaco): the only slow frames are the build
+  frame and the new screen's first update, both under the opaque held frame.
+- Rejected: building the screen while the loader animates (it stutters for the whole build);
+  cutting the drawing short when loading finishes (it reads as a glitch).
+
 ## Change log
 
 | Date | Commit | Change |
@@ -981,3 +1000,4 @@ of the full orbit and a one-loop GIF).
 | 2026-10-30 | uncommitted | Menu: backdrop streaks only behind the menu cards; hero in satin black (D48) |
 | 2026-10-30 | uncommitted | Loader prototype: `scripts/geo` fetch, bake and demo; Silverstone asset from OSM and terrain (D49) |
 | 2026-10-30 | uncommitted | Loader in the menu over the hero during fetch jobs, `L` previews it (D49) |
+| 2026-10-30 | uncommitted | Opening Drive / Train / Replay plays the loader for the chosen circuit, 50% slower, the build hidden under a still frame (D50) |

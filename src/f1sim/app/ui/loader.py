@@ -21,9 +21,12 @@ from pathlib import Path
 import numpy as np
 
 ASSET_DIR = Path(__file__).resolve().parents[1] / "assets" / "geo"
-LOOP_S = 3.6
-DRAW_S = 2.5  # of LOOP_S: drawing; then hold, then fade
-FADE_S = 0.5
+LOOP_S = 5.4
+DRAW_S = 3.75  # of LOOP_S: drawing; then hold, then fade
+FADE_S = 0.75
+HOLD_S = 0.45
+"""As a loading screen (:class:`f1sim.app.loading.Opening`) the circuit draws once, then holds
+still this long (the head's glow settles in 0.3 s) before the next screen is built."""
 ORBIT_LOOPS = 4
 ELEVATION_DEG = 35.0
 FOV_DEG = 28.0
@@ -109,12 +112,71 @@ void main() {
 """
 
 
+_BACK_VS = """
+#version 330
+in vec2 in_corner;
+void main() { gl_Position = vec4(in_corner, 0.0, 1.0); }
+"""
+
+_BACK_FS = """
+#version 330
+uniform vec4 u_colour;     // premultiplied
+out vec4 f;
+void main() { f = u_colour; }
+"""
+
+
 def asset_path(track_id: str) -> Path:
     return ASSET_DIR / f"{track_id}.npz"
 
 
 def has_asset(track_id: str) -> bool:
     return asset_path(track_id).is_file()
+
+
+def asset_from_track(track_id: str, x: np.ndarray, y: np.ndarray, length_m: float) -> dict:
+    """A loader asset for a circuit without a baked one: its built centre line (``x``, ``y``
+    from s = 0, metres) over flat ground, no OSM ghost."""
+    xy = np.stack([np.asarray(x, float), np.asarray(y, float)], axis=1)
+    closed = np.vstack([xy, xy[:1]])
+    d = np.r_[0.0, np.cumsum(np.hypot(*np.diff(closed, axis=0).T))]
+    s = np.linspace(0.0, d[-1], max(int(d[-1] // 4.0), 8), endpoint=False)
+    centre = np.stack([np.interp(s, d, closed[:, 0]), np.interp(s, d, closed[:, 1])], axis=1)
+    margin = 250.0
+    lo, hi = centre.min(0) - margin, centre.max(0) + margin
+    step = float(np.ceil((hi - lo).max() / 48))
+    nx, ny = (np.ceil((hi - lo) / step).astype(int) + 1).tolist()
+    return {
+        "track_id": np.array(track_id),
+        "centre_xy": centre.astype(np.float32),
+        "length_m": np.array(float(length_m)),
+        "elev_rel_m": np.zeros(int(np.ceil(length_m)), dtype=np.float16),
+        "grid_origin": lo,
+        "grid_step_m": np.array(step),
+        "grid_rel_m": np.zeros((ny, nx), dtype=np.float16),
+        "osm_xy": np.zeros((0, 2), dtype=np.float32),
+        "loop_xy": centre.astype(np.float32),
+    }
+
+
+def asset_for(track_id: str, track=None) -> dict:
+    """The baked asset if there is one, else one from ``track`` (a :class:`f1sim.track.Track`
+    or :class:`~f1sim.track.track.TrackData`); ValueError if neither."""
+    if has_asset(track_id):
+        return load_asset(track_id)
+    data = getattr(track, "data", track)
+    if data is None:
+        raise ValueError(f"{track_id}: no loader asset and no track")
+    return asset_from_track(track_id, data.x, data.y, data.length_m)
+
+
+def opening_clock(t: float) -> tuple[float, float]:
+    """``(loader_t, orbit_t)`` for the loader as a loading screen, ``t`` seconds in: the
+    circuit draws once and then holds, and the orbit starts at the loop's speed and slows
+    evenly to a stop as the lap closes, so the held frame is still."""
+    loader_t = min(t, DRAW_S + HOLD_S)
+    u = min(t, DRAW_S)
+    return loader_t, u - u * u / (2.0 * DRAW_S)
 
 
 def load_asset(track_id: str) -> dict:
@@ -234,9 +296,11 @@ class LoaderScene:
         for w in ways:
             p = np.hstack([w, ((heights(w) + lift) * EXAGGERATION)[:, None]])
             ghost.append(np.stack([p[:-1], p[1:]], 1).reshape(-1, 3))
-        g = np.vstack(ghost)
-        g = np.hstack([g, np.zeros((len(g), 1))])
-        self.ghost = geometry(None, g, "3f 1f", ["in_pos", "in_s"], ctx.LINES)
+        self.ghost = None
+        if ghost:
+            g = np.vstack(ghost)
+            g = np.hstack([g, np.zeros((len(g), 1))])
+            self.ghost = geometry(None, g, "3f 1f", ["in_pos", "in_s"], ctx.LINES)
 
         # the ribbon(s): s in metres along the line (track) or a fraction (osm, scaled to
         # the circuit's length so the head moves at the same pace)
@@ -264,14 +328,30 @@ class LoaderScene:
         self.p_grid = ctx.program(vertex_shader=_VS, fragment_shader=_GRID_FS)
         self.p_ribbon = ctx.program(vertex_shader=_VS, fragment_shader=_RIBBON_FS)
         self.p_glow = ctx.program(vertex_shader=_GLOW_VS, fragment_shader=_GLOW_FS)
+        self.p_back = ctx.program(vertex_shader=_BACK_VS, fragment_shader=_BACK_FS)
 
-    def render(self, t: float, size: tuple[int, int], alpha: float = 1.0) -> None:
+    def backdrop(self, alpha: float, rgb=BG) -> None:
+        """Cover the bound viewport with ``rgb`` at ``alpha`` (its own shader, so it doesn't
+        depend on the projection whatever drew before left behind)."""
+        ctx = self.ctx
+        ctx.enable(ctx.BLEND)
+        ctx.blend_func = (ctx.ONE, ctx.ONE_MINUS_SRC_ALPHA)
+        ctx.disable(ctx.DEPTH_TEST)
+        self.p_back["u_colour"] = (*(c * alpha for c in rgb), alpha)
+        self.head.render(self.p_back)
+        ctx.blend_func = ctx.BLEND_DEFAULT
+
+    def render(
+        self, t: float, size: tuple[int, int], alpha: float = 1.0, orbit_t: float | None = None
+    ) -> None:
         """Draw frame ``t`` (seconds) into the bound viewport of ``size`` pixels; ``alpha``
-        fades the whole loader in and out."""
+        fades the whole loader in and out. The camera's orbit follows ``orbit_t`` (default
+        ``t``; see :func:`opening_clock`)."""
         ctx = self.ctx
         w, h = size
         loop_t = t % LOOP_S
-        az = math.radians(-60.0) + 2 * math.pi * t / (LOOP_S * ORBIT_LOOPS)
+        orbit = t if orbit_t is None else orbit_t
+        az = math.radians(-60.0) + 2 * math.pi * orbit / (LOOP_S * ORBIT_LOOPS)
         el = math.radians(ELEVATION_DEG)
         # framed for a FIT_ASPECT frame; narrower ones back off so the circuit's width fits
         fit = 0.82 * max(1.0, FIT_ASPECT / (w / h))
@@ -296,7 +376,8 @@ class LoaderScene:
         self.p_grid["u_alpha"] = 0.10 * alpha
         self.grid.render(self.p_grid)
         self.p_grid["u_alpha"] = 0.16 * alpha
-        self.ghost.render(self.p_grid)
+        if self.ghost is not None:
+            self.ghost.render(self.p_grid)
 
         self.p_ribbon["u_head"] = head
         self.p_ribbon["u_trail"] = TRAIL_M
