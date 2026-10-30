@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import types
+
 import numpy as np
+import pyglet
 import pytest
 
 from f1sim.app import loading
@@ -19,18 +22,77 @@ def test_orbit_slows_to_a_stop_and_the_hold_is_still():
     assert np.ptp(lt[held]) == 0 and np.ptp(ot[ts >= loader.DRAW_S]) == 0
 
 
-def test_opening_is_ready_after_draw_and_hold_whatever_the_frame_rate():
-    op = loading.Opening(scene=None, build=lambda: None)
-    op.update(0.0)
-    assert op.alpha == 0.0
+class FakeClock:
+    def __init__(self):
+        self.now = 100.0
+
+    def __call__(self):
+        return self.now
+
+
+def test_opening_runs_on_the_wall_clock_and_is_ready_after_draw_and_hold():
+    clock = FakeClock()
+    op = loading.Opening(scene=None, build=lambda: None, clock=clock)
+    op.update()  # the first frame starts the clock
+    assert op.t == 0.0 and op.alpha == 0.0
     frames = 0
+    rng = np.random.default_rng(0)
     while not op.ready:
-        op.update(1 / 60)
+        clock.now += rng.uniform(0.004, 0.015)  # frames presented unevenly, as measured
+        op.update()
         frames += 1
-    assert abs(frames - (loader.DRAW_S + loader.HOLD_S) * 60) <= 1 and op.alpha == 1.0
-    slow = loading.Opening(scene=None, build=lambda: None)
-    slow.update(5.0)  # one long frame doesn't skip the drawing
-    assert slow.t == pytest.approx(loading.MAX_STEP_S)
+    assert op.t == pytest.approx(clock.now - 100.0)  # follows the wall clock exactly
+    assert op.t >= loader.DRAW_S + loader.HOLD_S and op.alpha == 1.0
+    clock.now += 5.0
+    t = op.t
+    op.update()  # one long frame doesn't skip the drawing
+    assert op.t - t == pytest.approx(loading.MAX_STEP_S)
+
+
+class FakeWindow(pyglet.event.EventDispatcher):
+    """arcade's view switching: a view's handlers pushed as bound methods, then removed."""
+
+    def __init__(self):
+        self.current_view = None
+        self.width, self.height = 640, 360
+        self.ctx = types.SimpleNamespace(
+            screen=types.SimpleNamespace(use=lambda: None, viewport=(0, 0, 640, 360))
+        )
+
+    def get_framebuffer_size(self):
+        return 640, 360
+
+    def show_view(self, view):
+        if self.current_view is not None:
+            self.remove_handlers(self.current_view)
+        self.current_view = view
+        self.push_handlers(on_draw=view.on_draw)
+
+
+FakeWindow.register_event_type("on_draw")
+
+
+class FakeView:
+    def __init__(self):
+        self.draws = 0
+
+    def on_draw(self):
+        self.draws += 1
+
+
+def test_reveal_draws_the_screen_once_a_frame_and_esc_can_leave_it():
+    scene = types.SimpleNamespace(backdrop=lambda a: None, render=lambda *a, **k: None)
+    window, menu, screen = FakeWindow(), FakeView(), FakeView()
+    window.show_view(menu)
+    loading.reveal(window, screen, loading.Opening(scene, build=lambda: screen))
+    for _ in range(3):
+        window.dispatch_event("on_draw")
+    assert screen.draws == 3 and menu.draws == 0  # the overlay draws it, not twice
+    window.show_view(menu)  # Esc: this raised with the old wrapper, leaving Esc dead
+    window.dispatch_event("on_draw")
+    window.dispatch_event("on_draw")
+    assert menu.draws == 2 and screen.draws == 3
+    assert not loading._live  # the overlay took itself off
 
 
 def test_asset_from_a_built_track():

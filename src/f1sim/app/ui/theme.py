@@ -681,8 +681,11 @@ def make_text(
     import arcade
 
     style = FACES[face]
+    # Created empty and styled inside one update, so the text is laid out (and its glyphs
+    # rasterised) once, in its final face, DPI and tracking: styling a laid-out label
+    # re-lays it out per change, which made building a screen's HUD take a second (D51)
     t = arcade.Text(
-        text,
+        "",
         0,
         0,
         colour,
@@ -693,14 +696,32 @@ def make_text(
         multiline=multiline,
         width=int(width) if width is not None else None,
     )
+    label = t.label
+    label.begin_update()
     if style.weight != "normal":
-        t.label.weight = style.weight
+        label.weight = style.weight
     if style.stretch:
-        t.label.set_style("stretch", style.stretch)
+        label.set_style("stretch", style.stretch)
     sharp = SharpText(t, tracking_px)
     if width is not None:
         sharp.width = width
+    label.text = text
+    label.end_update()
+    _hold_font(label)
     return sharp
+
+
+_held_fonts: dict[tuple, object] = {}
+
+
+def _hold_font(label) -> None:
+    """Keep the label's font alive. pyglet holds only its last few fonts, so each new screen
+    rasterised its glyphs again; the app uses a few dozen (face, size, DPI) fonts at most."""
+    d = label.document
+    styles = (d.get_style(k) for k in ("font_name", "font_size", "weight", "stretch", "italic"))
+    key = (*(tuple(s) if isinstance(s, list) else s for s in styles), label.dpi)
+    if key not in _held_fonts:
+        _held_fonts[key] = d.get_font(dpi=label.dpi)
 
 
 def micro(text: str, colour: Colour = TEXT_LABEL, anchor_x: str = "left"):

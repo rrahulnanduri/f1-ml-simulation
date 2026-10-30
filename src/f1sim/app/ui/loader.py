@@ -24,7 +24,7 @@ ASSET_DIR = Path(__file__).resolve().parents[1] / "assets" / "geo"
 LOOP_S = 5.4
 DRAW_S = 3.75  # of LOOP_S: drawing; then hold, then fade
 FADE_S = 0.75
-HOLD_S = 0.45
+HOLD_S = 0.3
 """As a loading screen (:class:`f1sim.app.loading.Opening`) the circuit draws once, then holds
 still this long (the head's glow settles in 0.3 s) before the next screen is built."""
 ORBIT_LOOPS = 4

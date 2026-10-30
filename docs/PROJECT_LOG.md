@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-30 (loading transition, D49-D50). This section summarises
+*Last updated: 2026-10-30 (loading transition, D49-D51). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
@@ -68,12 +68,13 @@ laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
   the focus cards' style (D38; checked offscreen only).
 - **F1 Anatomy** (D35): `python f1_anatomy/launch.py` opens five interactive figures of how
   the car works, a static site beside the package.
-- **Tests:** 683 pass offline. `ruff check` is clean.
-- **Loader** (D49, D50): the circuit drawn in 3D, as the loading screen when Drive, Train or
+- **Tests:** 684 pass offline. `ruff check` is clean.
+- **Loader** (D49-D51): the circuit drawn in 3D, as the loading screen when Drive, Train or
   Replay opens (every circuit: Silverstone over its baked terrain from OpenStreetMap and AWS
   Terrain Tiles, the others over a flat grid). It also covers the menu's hero during fetch
-  jobs; `L` previews it there. Checked offscreen; the owner hasn't judged it in the real
-  window yet.
+  jobs; `L` previews it there. Measured in the real window (D51): no hitch while it draws,
+  the screen build (0.14-0.42 s) hidden under the still frame, Esc back works. The owner
+  hasn't judged the D51 version yet.
 - **Security** (D45): fixes for the audit in `docs/SECURITY_AUDIT.md`; the GitHub-side
   steps there are the owner's.
 
@@ -93,7 +94,7 @@ laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
 4. **Checks only the user can do:** the training view's focus overlay and the restyled
    drawer in the real window, and the 2× UI on their real 2× display (D26).
 
-**Next step:** the owner tries the loading transition (D50) in the real window, then terrain
+**Next step:** the owner tries the smoothed loading transition (D51), then terrain
 gets baked for more circuits (`scripts/geo`, one bbox each in `fetch.CIRCUITS`).
 Also, the user tries the focus overlay (hold Enter) and the restyled drawer, and
 says what a settings screen should hold. Likely tweaks in the training view: the default
@@ -936,6 +937,45 @@ for every circuit, drawn 50% slower so it doesn't look rushed. `f1sim.app.loadin
 - Rejected: building the screen while the loader animates (it stutters for the whole build);
   cutting the drawing short when loading finishes (it reads as a glitch).
 
+**D51 · The loading transition, made smooth: root causes measured in the real window** (2026-10-30)
+The owner found D50's transition "still so buggy" in the real window (D50 had been checked
+offscreen only). A frame log of the real window (menu, Drive, Esc, Drive again) found four
+causes. Fixes:
+- **Esc out of Drive, Train or Replay raised, every time.** `loading.reveal` set a plain
+  function as the screen's `on_draw`. arcade's `show_view` removes a view's handlers as
+  bound methods and raised on it, so the window stayed on the screen and the menu's update
+  never ran again: a second opening froze at its first frame. Now the fade-out is a handler
+  object pushed on the window above the screen's; it draws the screen and the loader, then
+  removes itself. A test reproduces arcade's handler switching.
+- **The click froze the menu for 0.71 s**, importing scipy and numba (`track_pipeline`) in
+  the click handler. Now `loading.warm_up` imports the screens' modules and compiles the
+  numba kernels on a background thread started before the window. Started from the menu
+  instead, its imports held the GIL and the menu's first frames hitched (up to 128 ms).
+  The cost is 0.2-0.4 s more before the window appears. Click to first loader frame: 23 ms.
+- **The drawing juddered.** It advanced by the update tick (8.3 ms) while frames were
+  presented 4-15 ms apart; 1140 of 1599 frames disagreed by over 4 ms. `Opening` now reads
+  the wall clock each frame (still clamped to 1/30 s a frame). Disagreements: 54 of 945.
+- **The still frame lasted 1.7 s after the hold:** a 1.27 s build, then 0.2 s and 0.24 s
+  first frames. Three causes:
+  - **Text** (`theme.make_text`): each label was laid out up to five times (default face,
+    then weight, stretch, DPI and tracking each re-laid it out), and pyglet keeps only its
+    last four fonts, so every screen rasterised its glyphs again. Labels are now created
+    empty and styled inside one update, and their fonts are kept alive. Metrics are
+    identical for 180 test labels.
+  - **Track shapes** (`render_track`): arcade's `ShapeElementList` converted ~77k vertex
+    colours in Python. `TrackMesh` uploads the same vertices from numpy (bit-identical
+    data) and draws them with arcade's shape-list program: 146 ms down to 27 ms at
+    Silverstone.
+  - **numba:** `Track.project` compiled on the screen's first update (0.35 s); now it is
+    compiled in the warm-up.
+
+  The build is now 0.42 s cold and 0.14 s warm, still under the still frame. `HOLD_S` went
+  from 0.45 s to 0.3 s, the time the head's glow takes to settle.
+- Real window, Silverstone: no menu frame over 17 ms, the drawing's longest frame is 24 ms,
+  Esc works every time. Click to screen is about 4.5 s.
+- Rejected: building the screen on a thread (pyglet text and GL must stay on the main
+  thread); caching built screens (the first visit would still freeze).
+
 ## Change log
 
 | Date | Commit | Change |
@@ -1001,3 +1041,4 @@ for every circuit, drawn 50% slower so it doesn't look rushed. `f1sim.app.loadin
 | 2026-10-30 | uncommitted | Loader prototype: `scripts/geo` fetch, bake and demo; Silverstone asset from OSM and terrain (D49) |
 | 2026-10-30 | uncommitted | Loader in the menu over the hero during fetch jobs, `L` previews it (D49) |
 | 2026-10-30 | uncommitted | Opening Drive / Train / Replay plays the loader for the chosen circuit, 50% slower, the build hidden under a still frame (D50) |
+| 2026-10-30 | uncommitted | Transition smoothed in the real window: Esc out of a screen fixed, imports and numba warmed ahead, wall-clock drawing, text laid out once, numpy track mesh (D51) |

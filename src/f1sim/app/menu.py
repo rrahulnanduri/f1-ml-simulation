@@ -1475,11 +1475,11 @@ def _make_view_class():
                 self._say(f"Couldn't open {item.lower()}: {exc}")
                 return None
 
-        def _step_opening(self, delta_time: float) -> None:
+        def _step_opening(self) -> None:
             """Advance the loading transition; once the circuit is drawn and held, build the
             screen (the frame on show is still, so the freeze can't be seen) and reveal it."""
             op = self.opening
-            op.update(delta_time)
+            op.update()  # by the wall clock (D51)
             if not op.ready or op.built:
                 return
             op.built = True
@@ -1511,7 +1511,7 @@ def _make_view_class():
             self.light.update(delta_time, ready=now > SPOTLIGHT_DELAY_S + 0.5)
             self.clock += delta_time
             if self.opening is not None:
-                self._step_opening(delta_time)
+                self._step_opening()
                 if self.opening is None:
                     return
             self._poll_job()
@@ -1900,4 +1900,8 @@ def run() -> None:
     """Open the app window on the menu; returns when it closes."""
     from f1sim.app import shell
 
+    # The screens' imports and numba kernels, so the first click doesn't wait on them; started
+    # before the window, so they load while it and the menu set up rather than during the
+    # menu's first frames (they hold the GIL in long stretches)
+    loading.warm_up()
     shell.run(lambda window: MenuView())
