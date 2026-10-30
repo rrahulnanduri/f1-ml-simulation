@@ -41,7 +41,7 @@ gamma 2.2.
 
 COMMON = """
 const float PI = 3.14159265;
-const int MAX_LAMPS = 8;
+const int MAX_LAMPS = 12;
 uniform float u_white;     // a white floor u_h0 under the softbox reads this, linear
 uniform float u_h0;        // the softbox's height, metres
 uniform float u_r0;        // its radius, metres

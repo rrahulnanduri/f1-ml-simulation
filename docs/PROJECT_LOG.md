@@ -34,7 +34,7 @@ laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
   metallic-black Ferrari SF-26 seen from above (55% of the window high, no logos), driving
   endless laps of Marina Bay at Russell's 2025 pole-lap speed. It keeps overtaking five
   slower cars in gunmetal, graphite and satin grey, and red and blue lamps flash by the
-  track (D24, D25). The camera is a fixed top-down view that follows the car without turning,
+  track, close together and 30% brighter (D24, D25, D46). The camera is a fixed top-down view that follows the car without turning,
   so the car drives and turns on screen (D41); every car's front wheels steer. One light model lights the cars, the floor and the track
   lines: photographed diffuse light from a Blender light stage, live GGX reflections, and
   the cars' shadows cast away from the cursor (D25). Without the driving set the menu falls
@@ -845,6 +845,14 @@ GPU models or the Claude app's package ID, and this repo commits with the GitHub
 Added `SECURITY.md` and Dependabot. Left to the owner: GitHub settings (2FA, branch protection,
 email privacy, secret scanning) and removing old pickles and paths from history.
 
+**D46 · More trackside lamps, even, both sides, alternating, 30% brighter** (2026-10-29)
+`LAMP_GAP_M` 23-108 -> 9-15 m with sides strictly alternating (was a random side at random
+gaps): 405 units on Marina Bay, was 66, so a lamp every ~24 m per side. Neighbours flash half a
+cycle apart (+-0.08 s) and the leading colour swaps every two units; `LAMP_RATE` is narrowed to
+0.97-1.03 so that alternation holds. `LAMP_GAIN` 60 -> 78 (+30%). `MAX_LAMPS` 8 -> 12 in
+`menu.py` and `drive_shaders.py`; the high quality tier lights 12 per car. Not checked by eye in
+the live window, only tests and ruff.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -904,3 +912,4 @@ email privacy, secret scanning) and removing old pickles and paths from history.
 | 2026-10-29 | uncommitted | Packaging plan for a Windows/macOS app with no terminal steps: `docs/packaging-plan.md` (plan only) |
 | 2026-10-29 | uncommitted | Menu: all circuits listed, Get track data / Get real lap buttons as background jobs, Train time control (D44) |
 | 2026-10-29 | uncommitted | Security hardening (D45): launcher asks before updating, safe CMA-ES unpickling, download caps, docs scrubbed |
+| 2026-10-29 | uncommitted | Menu lamps: even 9-15 m gaps on alternating sides, alternating phase and colour order, gain +30%, cap 12 (D46) |

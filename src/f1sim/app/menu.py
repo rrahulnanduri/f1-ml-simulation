@@ -161,7 +161,7 @@ FLOOR_ALBEDO = 0.06
 """The floor (dark asphalt): lit by the same light as the cars."""
 LINE_LIT = 0.55
 """The painted lines' and kerbs' reflectance (they're lit by the floor light too)."""
-LAMP_GAIN = 60.0
+LAMP_GAIN = 78.0
 """The trackside lamps' strength at the peak of a flash, in softbox units (strobes: bright
 enough to tint a car several metres away)."""
 LAMP_RADIUS_M = 0.35
@@ -171,7 +171,7 @@ LAMP_GLOW_M = 0.18
 BACKDROP_ALPHA = 0.30
 """The red and blue backdrop behind the menu and the driving cars
 (``assets/hero/backdrop.webp``): it covers the window from its left edge, under the text."""
-MAX_LAMPS = 8
+MAX_LAMPS = 12
 MAX_SHADOW_CARS = 6
 """The shaders' array sizes; the quality tier lights and shadows fewer."""
 FLOOR_LIGHT_UNIT = 12

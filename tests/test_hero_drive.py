@@ -216,7 +216,8 @@ def test_trackside_lamps_sit_outside_the_limits_in_red_and_blue_pairs():
     lamps = hd.trackside_lamps(c, room=room)
     units = len(lamps) // 2
     assert c.length / hd.LAMP_GAP_M[1] < units < c.length / hd.LAMP_GAP_M[0]
-    assert [lp.colour for lp in lamps[:4]] == ["red", "blue", "red", "blue"]
+    assert [lp.colour for lp in lamps[:8]] == ["red", "blue"] * 2 + ["blue", "red"] * 2
+    assert lamps[0].phase != lamps[2].phase  # neighbours flash out of step
     assert hd.trackside_lamps(c, room=room) == lamps  # seeded
     assert hd.trackside_lamps(c, room=room, seed=1) != lamps
     import shapely

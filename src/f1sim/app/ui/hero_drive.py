@@ -676,12 +676,14 @@ def load_stage(directory: Path | None = None) -> DriveStage | None:
 
 # ------------------------------------------------------------------- trackside lamps
 
-LAMP_GAP_M = (23.0, 108.0)
+LAMP_GAP_M = (9.0, 15.0)
 LAMP_OUTSIDE_M = (0.6, 4.5)
-"""Lamp units are scattered: each a random gap after the last along the line, on a random
-side, a random distance outside the track limit."""
-LAMP_RATE = (0.8, 1.25)
-"""Each unit flashes at its own rate (times the cycle's)."""
+"""Lamp units stand a fairly even gap after the last along the line, alternating left and
+right, a random distance outside the track limit."""
+LAMP_RATE = (0.97, 1.03)
+"""Each unit flashes at nearly the cycle's rate, so the alternation between neighbours holds."""
+LAMP_PHASE_JITTER_S = 0.08
+"""Neighbouring units flash half a cycle apart, red-first then blue-first, give or take this."""
 LAMP_HEIGHT_M = 0.7
 LAMP_HEADS_M = (0.6, 1.5)
 """Each unit has a red and a blue head, this far apart along the track."""
@@ -703,27 +705,31 @@ class Lamp:
 
 
 def trackside_lamps(circuit: Circuit, room=None, seed: int = 0) -> list[Lamp]:
-    """Flashing lamp units scattered by the track (seeded: see ``LAMP_GAP_M``), a red and a
-    blue head each, each unit at its own rate and phase."""
+    """Flashing lamp units along both sides of the track (seeded: see ``LAMP_GAP_M``), a red and
+    a blue head each; neighbours alternate side, phase and which colour leads."""
     left_room, right_room = room if room is not None else track_room(circuit)
     rng = np.random.default_rng(seed)
     out = []
     n = int(circuit.length)
     s0 = float(rng.uniform(*LAMP_GAP_M))
+    unit = 0
     while s0 < n - 0.5 * LAMP_GAP_M[0]:
         i = int(s0) % n
-        side = float(rng.choice((-1.0, 1.0)))
+        side = 1.0 if unit % 2 == 0 else -1.0
         dist = (left_room[i] if side > 0 else right_room[i]) + rng.uniform(*LAMP_OUTSIDE_M)
-        phase = float(rng.uniform(0.0, LAMP_CYCLE_S))
+        jitter = float(rng.uniform(-1.0, 1.0)) * LAMP_PHASE_JITTER_S
+        phase = (0.5 * LAMP_CYCLE_S * (unit % 2) + jitter) % LAMP_CYCLE_S
         rate = float(rng.uniform(*LAMP_RATE))
         heads = float(rng.uniform(*LAMP_HEADS_M))
-        for k, colour in enumerate(("red", "blue")):
+        order = ("red", "blue") if unit % 4 < 2 else ("blue", "red")
+        for k, colour in enumerate(order):
             s = s0 + (k - 0.5) * heads
             h = _sample(circuit.heading, s)
             x = _sample(circuit.line[:, 0], s) - math.sin(h) * side * dist
             y = _sample(circuit.line[:, 1], s) + math.cos(h) * side * dist
             out.append(Lamp(x, y, colour, phase, rate))
         s0 += float(rng.uniform(*LAMP_GAP_M))
+        unit += 1
     return out
 
 

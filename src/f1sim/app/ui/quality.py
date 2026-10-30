@@ -41,7 +41,7 @@ class Tier:
 TIERS = (
     Tier("low", 0.25, 2, 1, 0, 4),
     Tier("medium", 0.35, 4, 3, 2, 4),
-    Tier("high", 0.5, 8, 6, 4, 2),
+    Tier("high", 0.5, 12, 6, 4, 2),
 )
 NAMES = tuple(t.name for t in TIERS)
 
