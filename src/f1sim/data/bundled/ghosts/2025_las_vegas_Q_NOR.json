@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "NOR",
+  "team": "McLaren",
+  "lap_time_s": 107.934,
+  "year": 2025,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "las_vegas",
+    "length_m": 6191.4647,
+    "builder_version": 1,
+    "geometry_commit": null
+  },
+  "track_id": "las_vegas",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 5.168689769828578,
+  "max_accel_g": 4.251751479270331,
+  "p99_accel_g": 3.2460166114138937,
+  "max_total_accel_g": 4.298200662148009,
+  "near_edge_ratio": 1.0
+}

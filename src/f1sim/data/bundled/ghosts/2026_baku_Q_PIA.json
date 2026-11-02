@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "PIA",
+  "team": "McLaren",
+  "lap_time_s": 103.364,
+  "year": 2026,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "baku",
+    "length_m": 5992.4585,
+    "builder_version": 1,
+    "geometry_commit": null
+  },
+  "track_id": "baku",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 7.577692403598698,
+  "max_accel_g": 4.232648108658987,
+  "p99_accel_g": 3.054214366804656,
+  "max_total_accel_g": 5.924619422584114,
+  "near_edge_ratio": 1.0
+}

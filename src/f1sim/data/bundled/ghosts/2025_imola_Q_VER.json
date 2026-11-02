@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "VER",
+  "team": "Red Bull Racing",
+  "lap_time_s": 74.704,
+  "year": 2025,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "imola",
+    "length_m": 4902.7102,
+    "builder_version": 1,
+    "geometry_commit": null
+  },
+  "track_id": "imola",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 7.910287587232469,
+  "max_accel_g": 5.652106500984905,
+  "p99_accel_g": 4.7583803936733915,
+  "max_total_accel_g": 6.140216854272288,
+  "near_edge_ratio": 1.0
+}

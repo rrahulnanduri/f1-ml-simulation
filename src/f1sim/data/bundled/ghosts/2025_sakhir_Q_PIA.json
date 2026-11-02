@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "PIA",
+  "team": "McLaren",
+  "lap_time_s": 89.841,
+  "year": 2025,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "sakhir",
+    "length_m": 5406.6208,
+    "builder_version": 1,
+    "geometry_commit": "e59595d1f3573b30d1ded6a08984935b957688e0"
+  },
+  "track_id": "sakhir",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 5.164139657264456,
+  "max_accel_g": 3.589656320792263,
+  "p99_accel_g": 3.2956311721764453,
+  "max_total_accel_g": 4.672982533080343,
+  "near_edge_ratio": 0.9799777530589544
+}

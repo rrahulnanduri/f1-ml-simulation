@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "NOR",
+  "team": "McLaren",
+  "lap_time_s": 77.207,
+  "year": 2026,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "budapest",
+    "length_m": 4377.4987,
+    "builder_version": 1,
+    "geometry_commit": "e59595d1f3573b30d1ded6a08984935b957688e0"
+  },
+  "track_id": "budapest",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 7.148511092316979,
+  "max_accel_g": 4.964164784094961,
+  "p99_accel_g": 4.010632036642292,
+  "max_total_accel_g": 5.896144674599631,
+  "near_edge_ratio": 0.9922380336351876
+}

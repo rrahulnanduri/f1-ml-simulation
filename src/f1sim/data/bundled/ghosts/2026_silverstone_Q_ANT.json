@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "ANT",
+  "team": "Mercedes",
+  "lap_time_s": 88.111,
+  "year": 2026,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "silverstone",
+    "length_m": 5887.369,
+    "builder_version": 1,
+    "geometry_commit": "e59595d1f3573b30d1ded6a08984935b957688e0"
+  },
+  "track_id": "silverstone",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 6.127953931341082,
+  "max_accel_g": 3.5156978939160943,
+  "p99_accel_g": 2.6978229076581877,
+  "max_total_accel_g": 5.669838582338437,
+  "near_edge_ratio": 0.9892290249433107
+}

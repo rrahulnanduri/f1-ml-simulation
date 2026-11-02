@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "NOR",
+  "team": "McLaren",
+  "lap_time_s": 83.405,
+  "year": 2024,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "sao_paulo",
+    "length_m": 4305.1598,
+    "builder_version": 1,
+    "geometry_commit": "e59595d1f3573b30d1ded6a08984935b957688e0"
+  },
+  "track_id": "sao_paulo",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 5.536867985075203,
+  "max_accel_g": 3.331209249426112,
+  "p99_accel_g": 2.7044378849077217,
+  "max_total_accel_g": 3.628868865861947,
+  "near_edge_ratio": 0.9760479041916168
+}

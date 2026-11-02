@@ -52,8 +52,9 @@ def track_path(track_id: str) -> Path:
 
 
 def load_track(track_id: str) -> Track:
-    """Load a built track from the cache. Raises FileNotFoundError if it hasn't been built."""
-    return Track(read_track_json(track_path(track_id)))
+    """Load a built track: the user's cache, else the copy that ships with the app. Raises
+    FileNotFoundError if neither has it."""
+    return Track(read_track_json(paths.find_track(track_id) or track_path(track_id)))
 
 
 def build_and_cache(

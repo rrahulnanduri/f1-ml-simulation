@@ -293,11 +293,13 @@ def _stored_alignment(track: Track) -> Alignment:
 
 
 def _track_build(track: Track) -> dict:
+    from f1sim import paths
     from f1sim.data.io import read_track_builder_version
     from f1sim.data.track_pipeline import track_path
 
     try:
-        builder_version = read_track_builder_version(track_path(track.data.id))
+        built = paths.find_track(track.data.id) or track_path(track.data.id)
+        builder_version = read_track_builder_version(built)
     except (OSError, ValueError):
         builder_version = None
     return {

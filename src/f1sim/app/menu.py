@@ -289,7 +289,7 @@ def built_tracks() -> list[tuple[str, str]]:
     return [
         (e.id, e.name)
         for e in sorted(catalog.CATALOG.values(), key=lambda e: e.id)
-        if paths.track_file(e.id).exists()
+        if paths.find_track(e.id) is not None
     ]
 
 
@@ -303,7 +303,7 @@ def circuits() -> list[tuple[str, str]]:
 def is_built(track_id: str) -> bool:
     from f1sim import paths
 
-    return paths.track_file(track_id).exists()
+    return paths.find_track(track_id) is not None
 
 
 def ghost_label(ghost: Path | None) -> str | None:
@@ -376,18 +376,22 @@ def latest_run(track_id: str, runs_root: Path) -> Path | None:
     return None if best is None else best[1]
 
 
-def latest_ghost(track_id: str, ghosts: Path) -> Path | None:
-    """The newest ghost lap ``<year>_<track>_<session>_<driver>.npz`` of ``track_id``."""
-    if not ghosts.is_dir():
-        return None
-    found = []
-    for p in ghosts.glob(f"*_{track_id}_*.npz"):
-        year, _, rest = p.stem.partition("_")
-        if not (year.isdigit() and rest.startswith(f"{track_id}_")):
+def latest_ghost(track_id: str, ghosts: Path | list[Path]) -> Path | None:
+    """The newest ghost lap ``<year>_<track>_<session>_<driver>.npz`` of ``track_id``. With a
+    list of folders, the first that has one wins (the user's own laps before the shipped)."""
+    for folder in [ghosts] if isinstance(ghosts, Path) else ghosts:
+        if not folder.is_dir():
             continue
-        if len(rest[len(track_id) + 1 :].split("_")) == 2:  # session and driver, nothing more
-            found.append(p)
-    return max(found, key=lambda p: p.stat().st_mtime, default=None)
+        found = []
+        for p in folder.glob(f"*_{track_id}_*.npz"):
+            year, _, rest = p.stem.partition("_")
+            if not (year.isdigit() and rest.startswith(f"{track_id}_")):
+                continue
+            if len(rest[len(track_id) + 1 :].split("_")) == 2:  # session and driver, no more
+                found.append(p)
+        if found:
+            return max(found, key=lambda p: p.stat().st_mtime)
+    return None
 
 
 def command(item: str, track_id: str, *, run: Path | None, ghost: Path | None) -> list[str] | None:
@@ -1077,7 +1081,7 @@ def _make_view_class():
             self._flag = flags.flag_for(tid)
             self._fit_track()
             self.run = latest_run(tid, self.runs_root)
-            self.ghost = latest_ghost(tid, paths.ghosts_dir())
+            self.ghost = latest_ghost(tid, paths.ghost_dirs())
             self.built = is_built(tid)
             self.ghost_name = ghost_label(self.ghost)
             notes = {

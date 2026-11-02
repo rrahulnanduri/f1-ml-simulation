@@ -608,7 +608,7 @@ def real_lap(track_id: str) -> tuple[float, str, Path | None]:
         from f1sim.app.menu import latest_ghost
         from f1sim.app.replay import load_trace
 
-        ghost = latest_ghost(track_id, paths.ghosts_dir())
+        ghost = latest_ghost(track_id, paths.ghost_dirs())
         if ghost is not None:
             tr = load_trace(ghost)
             return float(tr.lap_time_s), ghost_label(ghost, tr.meta, tr.label), ghost

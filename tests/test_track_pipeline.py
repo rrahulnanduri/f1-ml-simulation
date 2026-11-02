@@ -163,6 +163,7 @@ def test_cli_plot_track(fake_sources, tmp_path, capsys):
 
 def test_cli_plot_unbuilt_track_is_an_error(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("F1SIM_CACHE_DIR", str(tmp_path))
+    monkeypatch.setenv("F1SIM_BUNDLED_DIR", str(tmp_path / "bundled"))  # nothing shipped
     assert cli.main(["plot-track", "silverstone"]) == 1
     assert "isn't built" in capsys.readouterr().err
 

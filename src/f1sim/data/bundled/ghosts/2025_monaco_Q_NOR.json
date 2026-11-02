@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "NOR",
+  "team": "McLaren",
+  "lap_time_s": 69.954,
+  "year": 2025,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "monaco",
+    "length_m": 3311.8667,
+    "builder_version": 1,
+    "geometry_commit": null
+  },
+  "track_id": "monaco",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 7.688976341916933,
+  "max_accel_g": 6.967782332052035,
+  "p99_accel_g": 4.5681773807294705,
+  "max_total_accel_g": 6.986767556824884,
+  "near_edge_ratio": 1.0
+}

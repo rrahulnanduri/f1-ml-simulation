@@ -48,6 +48,12 @@ include = ["f1sim*"]
     "assets/hero/*.webp",
     "assets/geo/*.npz",
 ]
+# Built tracks and real laps that ship with the app (scripts/bundle_data.py, D52)
+"f1sim.data" = [
+    "bundled/tracks/*.track.json",
+    "bundled/ghosts/*.npz",
+    "bundled/ghosts/*.json",
+]
 
 [tool.ruff]
 line-length = 100

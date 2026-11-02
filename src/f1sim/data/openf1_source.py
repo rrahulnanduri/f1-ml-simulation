@@ -198,6 +198,16 @@ def find_session(year: int, track_id: str, kind: str = "Q") -> dict:
     return matches[0]
 
 
+def ranked_drivers(session: dict) -> list[int]:
+    """Driver numbers of ``session``, fastest timed lap first."""
+    best: dict[int, float] = {}
+    for lap in _get("laps", {"session_key": session["session_key"]}):
+        if lap.get("lap_duration") and not lap.get("is_pit_out_lap"):
+            n = int(lap["driver_number"])
+            best[n] = min(best.get(n, math.inf), float(lap["lap_duration"]))
+    return sorted(best, key=best.__getitem__)
+
+
 def fastest_lap_xy(session: dict, driver: str | int | None = None) -> LapXY:
     """Position trace of the session's fastest lap, overall or for one driver."""
     key = session["session_key"]

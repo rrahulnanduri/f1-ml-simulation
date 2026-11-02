@@ -14,6 +14,7 @@ from pathlib import Path
 import platformdirs
 
 ENV_VAR = "F1SIM_CACHE_DIR"
+BUNDLED_ENV_VAR = "F1SIM_BUNDLED_DIR"
 APP_NAME = "f1sim"
 _TRACK_ID = re.compile(r"[A-Za-z0-9_-]+")
 
@@ -51,9 +52,33 @@ def track_file(track_id: str) -> Path:
     return tracks_dir() / f"{track_id}.track.json"
 
 
+def find_track(track_id: str) -> Path | None:
+    """The built track ``track_id`` to load: the user's own build, else the one that ships
+    with the app, else None."""
+    own = track_file(track_id)
+    if own.exists():
+        return own
+    shipped = bundled_dir() / "tracks" / own.name
+    return shipped if shipped.exists() else None
+
+
 def ghosts_dir() -> Path:
     """Ghost laps (``.npz`` + ``.json``)."""
     return _ensure(cache_dir() / "ghosts")
+
+
+def ghost_dirs() -> list[Path]:
+    """Where to look for ghost laps, the user's own first, then the ones that ship."""
+    return [ghosts_dir(), bundled_dir() / "ghosts"]
+
+
+def bundled_dir() -> Path:
+    """Tracks and real laps that ship with the app (``f1sim/data/bundled``, written by
+    ``scripts/bundle_data.py``; D52). Read-only. ``$F1SIM_BUNDLED_DIR`` overrides it."""
+    override = os.environ.get(BUNDLED_ENV_VAR, "").strip()
+    if override:
+        return Path(override).expanduser()
+    return Path(__file__).resolve().parent / "data" / "bundled"
 
 
 def fastf1_dir() -> Path:

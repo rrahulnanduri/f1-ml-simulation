@@ -8,8 +8,12 @@
 - **Used for:** circuit centre lines and track widths (`tracks/`) and minimum-curvature racing
   lines (`racelines/`).
 - **How:** `f1sim.data.tum_source` downloads the CSV files at build time from the pinned commit
-  `e59595d1f3573b30d1ded6a08984935b957688e0` into the user cache folder. The data is not
-  redistributed with this repository, and tracks built from it are not committed.
+  `e59595d1f3573b30d1ded6a08984935b957688e0` into the user cache folder. The raw CSVs are
+  not redistributed.
+- **Redistributed:** the circuits built from it ship with the app in
+  `src/f1sim/data/bundled/tracks/` (files whose `source.geometry` is
+  `tum-racetrack-database`), so a fresh install needs no download (D52). They are a modified
+  work of the TUM data and stay under LGPL-3.0.
 - **Exception:** `tests/fixtures/tum/` holds two 20-row excerpts of the Silverstone files, used
   only for offline parser tests (see the README in that folder).
 
@@ -19,8 +23,13 @@
   Formula 1.
 - **License:** data under CC BY-NC-SA 4.0, intended for non-commercial and educational use.
 - **Used for:** reference-lap positions and sector times from 2023 onwards
-  (`f1sim.data.openf1_source`). Responses are cached in the user cache folder and not
+  (`f1sim.data.openf1_source`). Raw responses are cached in the user cache folder and not
   redistributed.
+- **Redistributed:** data derived from it ships with the app in `src/f1sim/data/bundled/`
+  (D52): the circuits built from real laps (`source.geometry` is `openf1-laps`), the
+  alignment and track limits in every bundled circuit, and the real-driver ghost laps in
+  `bundled/ghosts/`. These derived files are shared under the same CC BY-NC-SA 4.0 licence,
+  with attribution to OpenF1, for non-commercial use only.
 
 ## FastF1 (MIT)
 

@@ -2,7 +2,7 @@
 
 ## Current state
 
-*Last updated: 2026-10-30 (loading transition, D49-D51). This section summarises
+*Last updated: 2026-11-02 (bundled tracks and real laps, D52). This section summarises
 where things stand right now. Rewrite it, don't append to it, whenever something important
 changes.*
 
@@ -11,6 +11,10 @@ changes.*
 laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
 
 **What works:**
+- **Data ships with the app** (D52): 24 built tracks and 22 real laps in
+  `src/f1sim/data/bundled`, so a fresh install needs no fetch. Mexico City and Spielberg
+  have no real lap (every lap fails the ghost checks); Suzuka isn't supported. Refresh with
+  `python scripts/bundle_data.py`.
 - **Tracks:** every calendar circuit but Suzuka builds. `f1sim build-track <id> --limits`
   builds from TUM's centre line and widths, aligned to a real qualifying lap, with track
   limits from 60 real laps; 11 TUM circuits pass the alignment check (D39). Circuits TUM
@@ -976,6 +980,31 @@ causes. Fixes:
 - Rejected: building the screen on a thread (pyglet text and GL must stay on the main
   thread); caching built screens (the first visit would still freeze).
 
+**D52 · Built tracks and real laps ship with the app** (2026-11-02)
+
+The owner asked that a fresh download needs no "Get track data" / "Get real lap" presses.
+- **Where:** `src/f1sim/data/bundled/tracks/*.track.json` and `bundled/ghosts/*.npz|json`
+  (3.4 MB + 1.7 MB), package data in `pyproject.toml`. Read-only.
+- **Lookup, not seeding:** `paths.find_track` takes the user's cache, else the bundled copy;
+  `paths.ghost_dirs` lists the user's ghosts before the bundled ones, and `latest_ghost`
+  takes the first folder that has one. A user's own build or newer lap always wins, and a
+  new release's data reaches users without copying anything. Rejected: copying the bundle
+  into the cache at start-up (stale copies would shadow newer releases).
+  `$F1SIM_BUNDLED_DIR` overrides the folder.
+- **Made by `scripts/bundle_data.py`**, in a fresh cache (network caches copied over), with
+  the documented flags: TUM circuits `--limits` (2023-2025), the rest and Melbourne,
+  Catalunya, Zandvoort and Yas Marina from laps (D40). Then the newest pole lap per circuit;
+  where every pole fails the ghost checks (gappy OpenF1 positions: 8-80 g spikes), the next
+  ten fastest drivers of each season (`openf1_source.ranked_drivers`).
+- **Result:** 24 circuits (all but Suzuka), 22 real laps. Not the pole at Baku (PIA 2026),
+  Imola (VER 2025), Jeddah (PIA 2025) and Zandvoort (RUS 2026). Yas Marina is VER 2023.
+  **Mexico City and Spielberg have no real lap:** every lap of 2024-2026 fails either the
+  8 g check or the 95%-within-1 m-of-the-edges check (93.7%, 92.5%), which points at those
+  TUM layouts or alignments. Their "Get real lap" button stays and fails the same way.
+- **Licences (THIRD_PARTY.md):** this reverses "not redistributed". TUM-derived tracks are
+  LGPL-3.0; everything derived from OpenF1 (lap-built tracks, alignments, limits, ghosts)
+  is CC BY-NC-SA 4.0: non-commercial use only.
+
 ## Change log
 
 | Date | Commit | Change |
@@ -1042,3 +1071,4 @@ causes. Fixes:
 | 2026-10-30 | uncommitted | Loader in the menu over the hero during fetch jobs, `L` previews it (D49) |
 | 2026-10-30 | uncommitted | Opening Drive / Train / Replay plays the loader for the chosen circuit, 50% slower, the build hidden under a still frame (D50) |
 | 2026-10-30 | uncommitted | Transition smoothed in the real window: Esc out of a screen fixed, imports and numba warmed ahead, wall-clock drawing, text laid out once, numpy track mesh (D51) |
+| 2026-11-02 | uncommitted | 24 built tracks and 22 real laps ship with the app (`f1sim/data/bundled`, `scripts/bundle_data.py`); cache first, then bundle (D52) |

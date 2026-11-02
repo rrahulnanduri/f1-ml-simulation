@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "VER",
+  "team": "Red Bull Racing",
+  "lap_time_s": 78.792,
+  "year": 2025,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "monza",
+    "length_m": 5790.6938,
+    "builder_version": 1,
+    "geometry_commit": "e59595d1f3573b30d1ded6a08984935b957688e0"
+  },
+  "track_id": "monza",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 7.321600897244497,
+  "max_accel_g": 5.158276271429616,
+  "p99_accel_g": 3.89288529843795,
+  "max_total_accel_g": 5.8869254033908,
+  "near_edge_ratio": 0.9860494610019024
+}

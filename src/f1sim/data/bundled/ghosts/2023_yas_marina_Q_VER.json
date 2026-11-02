@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "VER",
+  "team": "Red Bull Racing",
+  "lap_time_s": 83.445,
+  "year": 2023,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "yas_marina",
+    "length_m": 5285.2779,
+    "builder_version": 1,
+    "geometry_commit": null
+  },
+  "track_id": "yas_marina",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 7.256582284670077,
+  "max_accel_g": 4.032592577293333,
+  "p99_accel_g": 3.6041203599744946,
+  "max_total_accel_g": 5.870588079128295,
+  "near_edge_ratio": 1.0
+}
