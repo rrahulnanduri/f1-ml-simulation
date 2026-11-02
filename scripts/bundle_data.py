@@ -80,8 +80,16 @@ def main() -> int:
     os.environ["F1SIM_CACHE_DIR"] = str(cache)
 
     from f1sim import paths
-    from f1sim.data import catalog
-    from f1sim.data.track_pipeline import build_and_cache
+    from f1sim.data import catalog, tum_source
+    from f1sim.data.track_pipeline import build_and_cache, load_track
+
+    def tum_raceline_file(tid: str) -> Path | None:
+        """TUM's raceline CSV, for a track built on TUM's geometry (the only place it's used,
+        ``raceline.raceline_for``); None otherwise."""
+        geometry = load_track(tid).data.source.get("geometry")
+        if geometry != "tum-racetrack-database":
+            return None
+        return tum_source.fetch_tum_raceline(catalog.CATALOG[tid].tum_name)
 
     ids = args.tracks or sorted(set(catalog.CATALOG) - SKIP)
     failed: list[str] = []
@@ -101,6 +109,16 @@ def main() -> int:
             failed.append(tid)
             continue
         shutil.copy2(paths.track_file(tid), BUNDLE / "tracks")
+        try:
+            raceline = tum_raceline_file(tid)
+            if raceline is not None:
+                dest = BUNDLE / "tum" / tum_source.TUM_COMMIT / "racelines"
+                dest.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(raceline, dest)
+                print("  line: ", raceline.name, flush=True)
+        except OSError as exc:  # the app computes a line instead
+            print(f"  FAILED raceline: {exc}", flush=True)
+            failed.append(tid)
         try:
             if not any(paths.ghosts_dir().glob(f"*_{tid}_*.npz")):
                 print("  lap:  ", real_lap(tid), flush=True)

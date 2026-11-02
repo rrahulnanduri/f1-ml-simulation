@@ -13,7 +13,8 @@
 - **Redistributed:** the circuits built from it ship with the app in
   `src/f1sim/data/bundled/tracks/` (files whose `source.geometry` is
   `tum-racetrack-database`), so a fresh install needs no download (D52). They are a modified
-  work of the TUM data and stay under LGPL-3.0.
+  work of the TUM data and stay under LGPL-3.0. TUM's raceline CSVs for those circuits ship
+  unmodified in `src/f1sim/data/bundled/tum/` (see the `NOTICE.md` there).
 - **Exception:** `tests/fixtures/tum/` holds two 20-row excerpts of the Silverstone files, used
   only for offline parser tests (see the README in that folder).
 

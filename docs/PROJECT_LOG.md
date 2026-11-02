@@ -12,7 +12,8 @@ laps, and arcade viewers for driving and replay. The legacy app is deleted (M4).
 
 **What works:**
 - **Data ships with the app** (D52): 24 built tracks and 22 real laps in
-  `src/f1sim/data/bundled`, so a fresh install needs no fetch. Mexico City and Spielberg
+  `src/f1sim/data/bundled` (with TUM's racelines), so a fresh install needs no fetch; a
+  wheel test build runs every track offline. Mexico City and Spielberg
   have no real lap (every lap fails the ghost checks); Suzuka isn't supported. Refresh with
   `python scripts/bundle_data.py`.
 - **Tracks:** every calendar circuit but Suzuka builds. `f1sim build-track <id> --limits`
@@ -984,7 +985,9 @@ causes. Fixes:
 
 The owner asked that a fresh download needs no "Get track data" / "Get real lap" presses.
 - **Where:** `src/f1sim/data/bundled/tracks/*.track.json` and `bundled/ghosts/*.npz|json`
-  (3.4 MB + 1.7 MB), package data in `pyproject.toml`. Read-only.
+  (3.4 MB + 1.7 MB), plus TUM's raceline CSVs for the 11 TUM-geometry circuits in
+  `bundled/tum/<commit>/racelines` (264 KB, unmodified, with a `NOTICE.md`); package data in
+  `pyproject.toml`. Read-only. `tum_source` reads a shipped CSV before downloading.
 - **Lookup, not seeding:** `paths.find_track` takes the user's cache, else the bundled copy;
   `paths.ghost_dirs` lists the user's ghosts before the bundled ones, and `latest_ghost`
   takes the first folder that has one. A user's own build or newer lap always wins, and a
@@ -1004,6 +1007,11 @@ The owner asked that a fresh download needs no "Get track data" / "Get real lap"
 - **Licences (THIRD_PARTY.md):** this reverses "not redistributed". TUM-derived tracks are
   LGPL-3.0; everything derived from OpenF1 (lap-built tracks, alignments, limits, ghosts)
   is CC BY-NC-SA 4.0: non-commercial use only.
+- **Test build (wheel installed apart from the source, empty cache, network blocked by a dead
+  proxy):** 24 tracks and 22 laps load, nothing is downloaded, Silverstone's reference lap is
+  86.433 s as before. The first test build found the racelines missing: offline, the app
+  quietly swapped TUM's line for a computed one (a different observation for the policy) and
+  `reference-lap` failed. Hence the racelines in the bundle.
 
 ## Change log
 
@@ -1071,4 +1079,5 @@ The owner asked that a fresh download needs no "Get track data" / "Get real lap"
 | 2026-10-30 | uncommitted | Loader in the menu over the hero during fetch jobs, `L` previews it (D49) |
 | 2026-10-30 | uncommitted | Opening Drive / Train / Replay plays the loader for the chosen circuit, 50% slower, the build hidden under a still frame (D50) |
 | 2026-10-30 | uncommitted | Transition smoothed in the real window: Esc out of a screen fixed, imports and numba warmed ahead, wall-clock drawing, text laid out once, numpy track mesh (D51) |
-| 2026-11-02 | uncommitted | 24 built tracks and 22 real laps ship with the app (`f1sim/data/bundled`, `scripts/bundle_data.py`); cache first, then bundle (D52) |
+| 2026-11-02 | `6ba69d5` | 24 built tracks and 22 real laps ship with the app (`f1sim/data/bundled`, `scripts/bundle_data.py`); cache first, then bundle (D52) |
+| 2026-11-02 | uncommitted | TUM racelines ship too, found missing by an offline test build of the wheel (D52) |

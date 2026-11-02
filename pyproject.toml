@@ -53,6 +53,8 @@ include = ["f1sim*"]
     "bundled/tracks/*.track.json",
     "bundled/ghosts/*.npz",
     "bundled/ghosts/*.json",
+    "bundled/tum/*/racelines/*.csv",
+    "bundled/tum/NOTICE.md",
 ]
 
 [tool.ruff]
