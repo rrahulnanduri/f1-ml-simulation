@@ -14,13 +14,13 @@ from f1sim import __version__
 
 
 def _cmd_tracks(args: argparse.Namespace) -> int:
+    from f1sim import paths
     from f1sim.data import catalog
-    from f1sim.data.track_pipeline import track_path
 
     print(f"{'id':<16} {'circuit':<36} {'geometry':<10} built")
     for entry in sorted(catalog.CATALOG.values(), key=lambda e: e.id):
         geometry = "TUM" if entry.tum_name else "fallback"
-        built = "yes" if track_path(entry.id).exists() else ""
+        built = "yes" if paths.find_track(entry.id) else ""
         print(f"{entry.id:<16} {entry.name:<36} {geometry:<10} {built}")
     return 0
 

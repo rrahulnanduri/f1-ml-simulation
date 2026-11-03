@@ -91,6 +91,9 @@ def _fetch(kind: str, name: str, valid: tuple[str, ...]) -> Path:
     dest = paths.tum_dir() / TUM_COMMIT / kind / f"{name}.csv"
     if dest.is_file():
         return dest
+    shipped = paths.bundled_dir() / "tum" / TUM_COMMIT / kind / f"{name}.csv"
+    if shipped.is_file():  # ships with the app (D52)
+        return shipped
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     url = tum_url(kind, name)

@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "RUS",
+  "team": "Mercedes",
+  "lap_time_s": 78.518,
+  "year": 2026,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "melbourne",
+    "length_m": 5273.2564,
+    "builder_version": 1,
+    "geometry_commit": null
+  },
+  "track_id": "melbourne",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 7.155587602954597,
+  "max_accel_g": 4.280816446837953,
+  "p99_accel_g": 3.050960758520482,
+  "max_total_accel_g": 5.971259020410142,
+  "near_edge_ratio": 1.0
+}

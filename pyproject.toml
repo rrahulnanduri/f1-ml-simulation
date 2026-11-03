@@ -46,6 +46,15 @@ include = ["f1sim*"]
     "assets/hero/drive/*.json",
     "assets/hero/*.npz",
     "assets/hero/*.webp",
+    "assets/geo/*.npz",
+]
+# Built tracks and real laps that ship with the app (scripts/bundle_data.py, D52)
+"f1sim.data" = [
+    "bundled/tracks/*.track.json",
+    "bundled/ghosts/*.npz",
+    "bundled/ghosts/*.json",
+    "bundled/tum/*/racelines/*.csv",
+    "bundled/tum/NOTICE.md",
 ]
 
 [tool.ruff]

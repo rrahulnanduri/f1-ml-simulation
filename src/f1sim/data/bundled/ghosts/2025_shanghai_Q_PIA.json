@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "PIA",
+  "team": "McLaren",
+  "lap_time_s": 90.641,
+  "year": 2025,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "shanghai",
+    "length_m": 5446.3932,
+    "builder_version": 1,
+    "geometry_commit": "e59595d1f3573b30d1ded6a08984935b957688e0"
+  },
+  "track_id": "shanghai",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 8.528615098663373,
+  "max_accel_g": 5.092210151598486,
+  "p99_accel_g": 3.6652603800290873,
+  "max_total_accel_g": 5.8926735022105285,
+  "near_edge_ratio": 0.954244762954796
+}

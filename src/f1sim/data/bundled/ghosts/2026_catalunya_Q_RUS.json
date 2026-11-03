@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "RUS",
+  "team": "Mercedes",
+  "lap_time_s": 74.679,
+  "year": 2026,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "catalunya",
+    "length_m": 4657.2784,
+    "builder_version": 1,
+    "geometry_commit": null
+  },
+  "track_id": "catalunya",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 6.5375294006282845,
+  "max_accel_g": 4.386383813814276,
+  "p99_accel_g": 3.526634565579657,
+  "max_total_accel_g": 5.276982159917054,
+  "near_edge_ratio": 1.0
+}

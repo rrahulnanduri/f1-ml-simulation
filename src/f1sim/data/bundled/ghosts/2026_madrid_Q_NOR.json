@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "NOR",
+  "team": "McLaren",
+  "lap_time_s": 91.824,
+  "year": 2026,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "madrid",
+    "length_m": 5382.1186,
+    "builder_version": 1,
+    "geometry_commit": null
+  },
+  "track_id": "madrid",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 8.603678458043031,
+  "max_accel_g": 5.7238551964945135,
+  "p99_accel_g": 4.082382729045616,
+  "max_total_accel_g": 6.251103825081782,
+  "near_edge_ratio": 1.0
+}

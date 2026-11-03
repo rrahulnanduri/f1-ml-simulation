@@ -317,6 +317,7 @@ def test_run_reports_missing_trace_file(tmp_path, capsys):
 
 def test_run_reports_unbuilt_track(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("F1SIM_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("F1SIM_BUNDLED_DIR", str(tmp_path / "bundled"))  # nothing shipped
     p = tmp_path / "a.npz"
     np.savez(p, t=np.arange(3.0), x=np.zeros(3), y=np.zeros(3))
     replay.run("silverstone", [p])

@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "ANT",
+  "team": "Mercedes",
+  "lap_time_s": 94.035,
+  "year": 2026,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "austin",
+    "length_m": 5508.6257,
+    "builder_version": 1,
+    "geometry_commit": "e59595d1f3573b30d1ded6a08984935b957688e0"
+  },
+  "track_id": "austin",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 7.552829100838554,
+  "max_accel_g": 5.112966996110769,
+  "p99_accel_g": 4.189993169117068,
+  "max_total_accel_g": 6.411689427904566,
+  "near_edge_ratio": 0.9925611052072264
+}

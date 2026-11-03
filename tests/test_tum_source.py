@@ -17,6 +17,7 @@ RACELINE_FIXTURE = FIXTURES / "racelines" / "Silverstone.csv"
 @pytest.fixture
 def cache(tmp_path, monkeypatch):
     monkeypatch.setenv(paths.ENV_VAR, str(tmp_path))
+    monkeypatch.setenv(paths.BUNDLED_ENV_VAR, str(tmp_path / "bundled"))  # nothing shipped
     return tmp_path
 
 
@@ -193,3 +194,15 @@ def test_fetch_refuses_oversized_download(tmp_path, monkeypatch):
     monkeypatch.setattr(tum.urllib.request, "urlopen", FakeUrlopen(payload=b"# x_m\n" + b"1" * 64))
     with pytest.raises(OSError, match="over 16 bytes"):
         tum.fetch_tum_csv("Spa")
+
+
+def test_fetch_uses_a_shipped_file_before_downloading(cache, monkeypatch):
+    shipped = cache / "bundled" / "tum" / tum.TUM_COMMIT / "racelines" / "Silverstone.csv"
+    shipped.parent.mkdir(parents=True)
+    shipped.write_bytes(RACELINE_FIXTURE.read_bytes())
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("downloaded a file that ships with the app")
+
+    monkeypatch.setattr(tum.urllib.request, "urlopen", no_network)
+    assert tum.fetch_tum_raceline("Silverstone") == shipped

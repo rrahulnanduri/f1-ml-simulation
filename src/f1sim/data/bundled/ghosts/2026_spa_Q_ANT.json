@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "ANT",
+  "team": "Mercedes",
+  "lap_time_s": 104.361,
+  "year": 2026,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "spa",
+    "length_m": 7000.7665,
+    "builder_version": 1,
+    "geometry_commit": "e59595d1f3573b30d1ded6a08984935b957688e0"
+  },
+  "track_id": "spa",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 5.492051248290989,
+  "max_accel_g": 3.7872554534205083,
+  "p99_accel_g": 2.950618071445075,
+  "max_total_accel_g": 6.700941839260615,
+  "near_edge_ratio": 0.9717568214456678
+}

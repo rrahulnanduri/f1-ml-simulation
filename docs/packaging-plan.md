@@ -17,7 +17,7 @@ pick a track, get its data, drive, train, replay. No Python, no terminal.
 | 3 | Real-driver ghost laps are made only by `f1sim ghost` | `cli.py` | Same screen: a "Get real lap" button |
 | 4 | Training starts a child process with `sys.executable -m f1sim.cli` | `app/training.py` `train_command`, `app/menu.py` `command` | In a packaged app `sys.executable` is the app itself. Run the same app with a hidden `--worker train ...` argument, and call `multiprocessing.freeze_support()` first |
 | 5 | Training options (minutes, optimiser, seed) are flags only | `cli.py` | A small "Train" settings panel with safe defaults |
-| 6 | Data needs the internet at first use (TUM, OpenF1, FastF1) | `data/*` | Show progress and clear errors in the window; work offline once built |
+| 6 | Data needs the internet at first use (TUM, OpenF1, FastF1) | `data/*` | Done (D52): built tracks and real laps ship with the app. The buttons remain for circuits without them and for newer laps |
 | 7 | numba compiles on first run and writes a cache next to the code | `_accel.py` | Point the cache at the user cache folder; show "Preparing (first start only)" |
 
 CLI-only commands left after this: `plot-track`, `reference-lap`, `watch`, `bench`.
@@ -46,7 +46,7 @@ progress, can be cancelled, and shows a plain-English error with a Retry button.
 - **One build per system.** PyInstaller cannot cross-build. Use GitHub Actions with a
   Windows runner and a macOS runner (also build Apple Silicon and Intel, or a universal2 build).
 - **Include as data files:** `src/f1sim/app/assets` (5 MB: fonts, hero images, stage),
-  `configs/*.toml`.
+  `src/f1sim/data/bundled` (5 MB: built tracks and real laps, D52), `configs/*.toml`.
 - **Likely hidden imports:** arcade/pyglet backends, scipy and shapely native libraries,
   numba and llvmlite. Expect a few build-and-test rounds.
 - **Size:** estimate 250-400 MB with numba. If too big, ship without numba (the code already

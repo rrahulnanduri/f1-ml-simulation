@@ -64,3 +64,22 @@ def test_track_file_refuses_ids_that_are_not_plain_names(tmp_path, monkeypatch, 
 def test_track_file_takes_catalogue_ids(tmp_path, monkeypatch):
     monkeypatch.setenv(paths.ENV_VAR, str(tmp_path))
     assert paths.track_file("marina_bay") == tmp_path / "tracks" / "marina_bay.track.json"
+
+
+def test_find_track_prefers_the_users_build_over_the_shipped(tmp_path, monkeypatch):
+    monkeypatch.setenv(paths.ENV_VAR, str(tmp_path / "cache"))
+    monkeypatch.setenv(paths.BUNDLED_ENV_VAR, str(tmp_path / "bundled"))
+    assert paths.find_track("monza") is None
+    shipped = tmp_path / "bundled" / "tracks" / "monza.track.json"
+    shipped.parent.mkdir(parents=True)
+    shipped.write_text("{}")
+    assert paths.find_track("monza") == shipped
+    own = paths.track_file("monza")
+    own.write_text("{}")
+    assert paths.find_track("monza") == own
+
+
+def test_ghost_dirs_list_the_users_folder_first(tmp_path, monkeypatch):
+    monkeypatch.setenv(paths.ENV_VAR, str(tmp_path / "cache"))
+    monkeypatch.setenv(paths.BUNDLED_ENV_VAR, str(tmp_path / "bundled"))
+    assert paths.ghost_dirs() == [tmp_path / "cache" / "ghosts", tmp_path / "bundled" / "ghosts"]

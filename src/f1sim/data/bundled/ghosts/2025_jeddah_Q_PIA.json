@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "PIA",
+  "team": "McLaren",
+  "lap_time_s": 87.304,
+  "year": 2025,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "jeddah",
+    "length_m": 6152.3881,
+    "builder_version": 1,
+    "geometry_commit": null
+  },
+  "track_id": "jeddah",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 10.292049695696976,
+  "max_accel_g": 7.902613499251206,
+  "p99_accel_g": 5.984000712177537,
+  "max_total_accel_g": 9.933757549874565,
+  "near_edge_ratio": 1.0
+}

@@ -481,3 +481,14 @@ def test_training_is_started_for_the_chosen_time():
     cmd = train_command("monza", Path("runs/x"), minutes=20)
     assert cmd[-2:] == ["--minutes", "20"]
     assert "--minutes" not in train_command("monza", Path("runs/x"))
+
+
+def test_latest_ghost_takes_the_users_lap_before_a_shipped_one(tmp_path):
+    own, shipped = tmp_path / "own", tmp_path / "shipped"
+    own.mkdir()
+    shipped.mkdir()
+    (shipped / "2026_monza_Q_NOR.npz").write_bytes(b"x")
+    assert menu.latest_ghost("monza", [own, shipped]).parent == shipped
+    (own / "2025_monza_Q_VER.npz").write_bytes(b"x")
+    assert menu.latest_ghost("monza", [own, shipped]).parent == own
+    assert menu.latest_ghost("spa", [own, tmp_path / "missing"]) is None

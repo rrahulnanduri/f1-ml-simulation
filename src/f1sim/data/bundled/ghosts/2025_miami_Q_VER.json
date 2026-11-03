@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "VER",
+  "team": "Red Bull Racing",
+  "lap_time_s": 86.204,
+  "year": 2025,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "miami",
+    "length_m": 5402.2402,
+    "builder_version": 1,
+    "geometry_commit": null
+  },
+  "track_id": "miami",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 7.098118092126123,
+  "max_accel_g": 4.359750508742226,
+  "p99_accel_g": 4.004542599386944,
+  "max_total_accel_g": 6.52717964607289,
+  "near_edge_ratio": 1.0
+}

@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "VER",
+  "team": "Red Bull Racing",
+  "lap_time_s": 80.52,
+  "year": 2024,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "lusail",
+    "length_m": 5444.8421,
+    "builder_version": 1,
+    "geometry_commit": null
+  },
+  "track_id": "lusail",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 8.704022115651933,
+  "max_accel_g": 4.565365773210875,
+  "p99_accel_g": 3.655698333672315,
+  "max_total_accel_g": 7.211983494182092,
+  "near_edge_ratio": 1.0
+}

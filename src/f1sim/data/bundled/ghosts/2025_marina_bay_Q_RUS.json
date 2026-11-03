@@ -1,0 +1,23 @@
+{
+  "format": "f1sim.ghost",
+  "version": 1,
+  "driver": "RUS",
+  "team": "Mercedes",
+  "lap_time_s": 89.158,
+  "year": 2025,
+  "session": "Q",
+  "lap_source": "openf1",
+  "track_build": {
+    "track_id": "marina_bay",
+    "length_m": 4924.6787,
+    "builder_version": 1,
+    "geometry_commit": null
+  },
+  "track_id": "marina_bay",
+  "rate_hz": 20.0,
+  "speed_check_kmh": 7.111204470167386,
+  "max_accel_g": 6.987425361186472,
+  "p99_accel_g": 4.33161370021879,
+  "max_total_accel_g": 7.13662265288267,
+  "near_edge_ratio": 1.0
+}
